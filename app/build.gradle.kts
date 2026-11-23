@@ -1,8 +1,23 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+/**
+ * 正式签名的凭据只从 local.properties 读（该文件不入库）。
+ *
+ * 缺这个文件时 release 会退化成未签名产物，`scripts/verify.sh` 的签名校验会失败，
+ * 这是有意的：宁可构建报错，也不要悄悄发布一个用 debug key 签的包。
+ */
+val signingProps = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+
+val hasReleaseKey = signingProps.getProperty("release.storeFile")?.isNotBlank() == true
 
 android {
     namespace = "cn.cloudbuddy.app"
@@ -12,9 +27,20 @@ android {
         applicationId = "cn.cloudbuddy.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "1.0.10"
+        versionCode = 12
+        versionName = "1.1.0"
         vectorDrawables { useSupportLibrary = true }
+    }
+
+    signingConfigs {
+        if (hasReleaseKey) {
+            create("release") {
+                storeFile = rootProject.file(signingProps.getProperty("release.storeFile"))
+                storePassword = signingProps.getProperty("release.storePassword")
+                keyAlias = signingProps.getProperty("release.keyAlias")
+                keyPassword = signingProps.getProperty("release.keyPassword")
+            }
+        }
     }
 
     buildTypes {
@@ -23,6 +49,7 @@ android {
         }
         release {
             isMinifyEnabled = false
+            signingConfig = if (hasReleaseKey) signingConfigs.getByName("release") else null
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }

@@ -1,5 +1,9 @@
 package cn.cloudbuddy.app.ui.screens
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -29,6 +33,7 @@ import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -38,6 +43,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -50,12 +56,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cn.cloudbuddy.app.BuildConfig
 import cn.cloudbuddy.app.data.AppSettings
 import cn.cloudbuddy.app.data.AppUiState
 import cn.cloudbuddy.app.data.BuddyRepository
+import cn.cloudbuddy.app.data.ReleaseInfo
+import cn.cloudbuddy.app.data.UpdateChecker
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -71,6 +82,29 @@ fun SettingsScreen(
     var showThoughts by remember { mutableStateOf(repo.settings.showThoughts) }
     var historyTurns by remember { mutableStateOf(repo.settings.historyTurns) }
     var historyTimeout by remember { mutableStateOf(repo.settings.historyTimeoutSec) }
+    var updateState by remember { mutableStateOf<UpdateCheck>(UpdateCheck.Idle) }
+
+    /**
+     * 检查更新。四种结果必须分开呈现：把「网络失败」显示成「已是最新」，
+     * 等于骗用户说当前版本不用升。
+     */
+    fun checkUpdate() {
+        if (updateState is UpdateCheck.Checking) return
+        updateState = UpdateCheck.Checking
+        scope.launch {
+            updateState = try {
+                val info = withContext(Dispatchers.IO) { UpdateChecker.fetchLatest() }
+                when {
+                    info == null -> UpdateCheck.UpToDate
+                    UpdateChecker.isNewer(info.version, BuildConfig.VERSION_NAME) ->
+                        UpdateCheck.Available(info)
+                    else -> UpdateCheck.UpToDate
+                }
+            } catch (e: Exception) {
+                UpdateCheck.Failed(e.message ?: "网络不可用")
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         repo.refreshUsage()
@@ -321,19 +355,58 @@ fun SettingsScreen(
             item { SectionTitle("关于", Icons.Filled.Info) }
             item {
                 SettingCard {
-                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("云伴 WorkBuddy", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "版本 ${BuildConfig.VERSION_NAME} · 第三方客户端",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                    Column {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text("云伴 WorkBuddy", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                "版本 ${BuildConfig.VERSION_NAME} · 第三方客户端",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                "本客户端直接对接 WorkBuddy 官方云端会话协议（console 接口 + ACP 事件流 + 沙箱文件网关），" +
+                                    "任务在官方云端沙箱内执行，产物保存在沙箱 /workspace 中，" +
+                                    "不会把模型能力反向代理成本地 API。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Divider()
+                        AboutRow(
+                            title = "检查更新",
+                            subtitle = when (val s = updateState) {
+                                UpdateCheck.Idle -> "从 GitHub Releases 获取最新版本"
+                                UpdateCheck.Checking -> "正在连接 GitHub…"
+                                UpdateCheck.UpToDate -> "当前 ${BuildConfig.VERSION_NAME} 已是最新"
+                                is UpdateCheck.Available -> "发现新版本 ${s.info.version}，点击查看"
+                                is UpdateCheck.Failed -> "检查失败：${s.message}"
+                            },
+                            trailing = when (val s = updateState) {
+                                UpdateCheck.Idle -> "检查"
+                                UpdateCheck.Checking -> "…"
+                                UpdateCheck.UpToDate -> "已是最新"
+                                is UpdateCheck.Available -> "v${s.info.version}"
+                                is UpdateCheck.Failed -> "重试"
+                            },
+                            accent = updateState is UpdateCheck.Available,
+                            onClick = {
+                                val current = updateState
+                                if (current is UpdateCheck.Available) {
+                                    openUrl(context, current.info.apkUrl ?: current.info.pageUrl)
+                                } else {
+                                    checkUpdate()
+                                }
+                            }
                         )
-                        Text(
-                            "本客户端直接对接 WorkBuddy 官方云端会话协议（console 接口 + ACP 事件流 + 沙箱文件网关），" +
-                                "任务在官方云端沙箱内执行，产物保存在沙箱 /workspace 中，" +
-                                "不会把模型能力反向代理成本地 API。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        Divider()
+                        AboutRow(
+                            title = "GitHub 仓库",
+                            subtitle = UpdateChecker.REPO_SLUG,
+                            trailing = "打开",
+                            onClick = { openUrl(context, UpdateChecker.REPO_URL) }
                         )
                     }
                 }
@@ -362,6 +435,85 @@ fun SettingsScreen(
             item { Spacer(Modifier.height(24.dp)) }
         }
     }
+
+    (updateState as? UpdateCheck.Available)?.let { available ->
+        AlertDialog(
+            onDismissRequest = { updateState = UpdateCheck.UpToDate },
+            title = { Text("发现新版本 ${available.info.version}") },
+            text = {
+                Text(
+                    available.info.notes.ifBlank { "前往 GitHub Releases 下载新版安装包。" },
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 12,
+                    overflow = TextOverflow.Ellipsis
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        openUrl(context, available.info.apkUrl ?: available.info.pageUrl)
+                        updateState = UpdateCheck.UpToDate
+                    }
+                ) { Text("去下载") }
+            },
+            dismissButton = {
+                TextButton(onClick = { updateState = UpdateCheck.UpToDate }) { Text("稍后") }
+            }
+        )
+    }
+}
+
+/** 关于板块里的一行：标题 + 说明 + 右侧状态文字，整行可点。 */
+@Composable
+private fun AboutRow(
+    title: String,
+    subtitle: String,
+    trailing: String,
+    accent: Boolean = false,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(
+            trailing,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (accent) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/** 检查更新的界面状态。Failed 与 UpToDate 必须分开，否则网络不通会被显示成「已是最新」。 */
+private sealed interface UpdateCheck {
+    data object Idle : UpdateCheck
+    data object Checking : UpdateCheck
+    data object UpToDate : UpdateCheck
+    data class Available(val info: ReleaseInfo) : UpdateCheck
+    data class Failed(val message: String) : UpdateCheck
+}
+
+/** 用系统浏览器打开链接；没有可用应用时提示，而不是静默失败。 */
+private fun openUrl(context: Context, url: String) {
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching { context.startActivity(intent) }
+        .onFailure {
+            Toast.makeText(context, "没有可以打开链接的应用", Toast.LENGTH_SHORT).show()
+        }
 }
 
 @Composable

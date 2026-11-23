@@ -25,23 +25,58 @@ CloudBuddy：WorkBuddy 云端 Agent 的第三方 Android 客户端。Kotlin + Je
 # lint
 /opt/gradle/gradle-8.9/bin/gradle :app:lintDebug --offline
 
-# 交付前必跑：编译 + 单测 + lint + APK 体检，任一失败非 0 退出
-scripts/verify.sh
+# 交付前必跑：编译 + 单测 + lint + APK 体检 + 签名比对，任一失败非 0 退出
+bash scripts/verify.sh
+
+# 需要 debug 包时（默认出正式包）
+bash scripts/verify.sh --debug
 
 # 指定版本号校验（默认读 build.gradle.kts）
-scripts/verify.sh 1.0.9
+bash scripts/verify.sh 1.1.0
 ```
 
-`scripts/verify.sh` 会把 APK 复制成 `dist/CloudBuddy-<versionName>-debug.apk`，
-并打印 versionCode / 大小 / sha256 —— **这是唯一该抄进文档的数字**，别自己另算一遍。
+`scripts/verify.sh` 默认构建 release，复制成 `dist/CloudBuddy-<versionName>-release.apk`，
+并打印 versionCode / 大小 / sha256 / 签名指纹 —— **这是唯一该抄进文档的数字**，别自己另算。
+
+正式包里额外比对证书 DN：`apksigner verify` 只验「签名自洽」，用 debug key 签也能过，
+所以脚本会拒收 `CN=Android Debug` 的包。这是在 1.1.0 引入的闸门，不要删。
 
 改这个脚本时注意 `set -o pipefail`：`grep` 没匹配到、`aapt2 ... | head -1` 里的 `head`
-提前关管道，都会让脚本以 1 或 141 退出。前者已用 `|| true` 包住，后者改成先取全量再截首行。
+提前关管道，都会让脚本以 1 或 141 退出。前者已用 `|| true` 包住，后者改成先取全量再截首行；
+带条件判断的 grep 一律写成 `if ... then ... fi`，别用 `cmd && {}`（grep 失败会让整个语句返回 1，
+set -e 直接退出）。
 
 - `local.properties` 必须存在且指向 `sdk.dir=/opt/android-sdk`，否则 Gradle 直接失败。
 - 依赖已全部缓存，**必须带 `--offline`**；不带会去连阿里云镜像，超时后构建失败。
 - 不要升级 AGP / Kotlin / Compose BOM。离线缓存里没有新版本，升了就编不过。
-- **这个目录不是 git 仓库**（没有 `.git`）。不要跑 `git status`、`git commit`，也不要建议开 PR。
+- 这个目录**现在是 git 仓库**，远端 `origin` 指向 GitHub（`silverwolf-lv9999/CloudBuddy`）。
+  推送前先确认 `git status` 干净、`dist/` 没有被 add 进来。
+
+## 正式签名
+
+1.1.0 起对外只分发正式签名的包。密钥在 `keystore/cloudbuddy-release.jks`
+（4096 位 RSA，别名 `cloudbuddy`，有效期到 2054 年），**该文件被 `.gitignore` 排除，
+不能入库，也不要贴进任何文档**。
+
+凭据四项写在 `local.properties`（同样不入库）：
+
+```
+release.storeFile=keystore/cloudbuddy-release.jks
+release.storePassword=...
+release.keyAlias=cloudbuddy
+release.keyPassword=...
+```
+
+`app/build.gradle.kts` 从这份 properties 里读，缺任何一项 release 会构建成未签名包，
+`verify.sh` 会因此失败——这是有意的，宁可构建报错，也不要悄悄发一个 debug key 签的「正式版」。
+
+证书指纹（换 key 会导致老用户无法覆盖安装，且没有补救手段）：
+
+```
+SHA-256 59:29:B6:F4:7F:2B:C4:6F:B9:F5:4B:2F:15:BD:42:C4:37:55:81:76:06:38:C0:66:49:93:B8:4A:2B:46:8F:90
+```
+
+**丢失 keystore 等于这个应用再也升不了级**，只能换包名重发。备份责任在仓库所有者。
 
 ## 交付规则
 
@@ -52,7 +87,9 @@ scripts/verify.sh 1.0.9
 1. **只要用户可能装上不同内容，就必须同时升这两个号**，不能复用。
 2. 需求没变也要升——曾经一版内容被否、回退后用同一个 1.0.6 重新构建，
    手机上装了两份内容不同的同号包，无法区分，只能返工。
-3. 产物命名跟版本走：`dist/CloudBuddy-<versionName>-debug.apk`，旧的不要删（1.0.5 已发布）。
+3. 产物命名跟版本走：`dist/CloudBuddy-<versionName>-release.apk`，旧的不要删（已经发过 Release 的版本要留着对照）。
+4. 发布走的顺序是：升版本号 → `bash scripts/verify.sh` 全绿 → 提交推送 → `gh release create`
+   带上 APK 资产和 sha256。跳过任何一步都会出现「GitHub 上的包和仓库源码对不上」。
 
 ### 文档同步
 

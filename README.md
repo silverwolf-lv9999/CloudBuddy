@@ -49,15 +49,27 @@
 - **产物**：`agent://` / `file:///workspace|root/` 链接仍会识别并挂到会话上，产物文件统一在工作区查看（对话页不再单独占一条产物栏）。
 - **设置**：账号资料、站点、当前模型、积分、主题（跟随系统/浅色/深色）、动态取色、思考过程默认折叠、
   一次渲染多少轮对话（10/20/50/全部）、历史加载超时（60/120/180/300 秒）。
+- **关于与更新**：版本号、GitHub 仓库入口，以及「检查更新」——直接读 GitHub Releases
+  比对版本（逐段按数字比，`1.0.10 > 1.0.9`），有新版给出发布说明和下载入口。
+  网络不通时明确显示「检查失败」，不会伪装成「已是最新」。
 
 ## 已构建产物
 
-仓库不保存 APK（`dist/` 在 `.gitignore` 里），跑一次 `scripts/verify.sh` 就会在 `dist/`
-下生成 `CloudBuddy-<版本>-debug.apk` 并打印 sha256。当前版本 1.0.10（versionCode 11），
-debug 签名，可直接侧载安装。
+仓库不保存 APK（`dist/` 在 `.gitignore` 里），安装包从
+[Releases](https://github.com/silverwolf-lv9999/CloudBuddy/releases) 下载。
+自己构建就用 `scripts/verify.sh`，它会编译、跑单测、验签名并归档到 `dist/`：
+
+```bash
+bash scripts/verify.sh           # 正式包（release），归档 dist/CloudBuddy-<版本>-release.apk
+bash scripts/verify.sh --debug   # 需要 debug 包时
+```
+
+当前版本 1.1.0（versionCode 12），4096 位 RSA 正式密钥签名，有效期到 2054 年。
+签名指纹（后续版本必须一致，否则无法覆盖安装）：
 
 ```
-bash scripts/verify.sh    # 编译 + 80 个单测 + lint + APK 体检，完成后归档到 dist/
+SHA-256  59:29:B6:F4:7F:2B:C4:6F:B9:F5:4B:2F:15:BD:42:C4
+         37:55:81:76:06:38:C0:66:49:93:B8:4A:2B:46:8F:90
 ```
 
 已通过 `:app:assembleDebug`、`80 个 JVM 单测`、`:app:lintDebug`（0 error），并用
@@ -70,6 +82,8 @@ bash scripts/verify.sh    # 编译 + 80 个单测 + lint + APK 体检，完成�
 1.0.8 补齐云端的「提问/选择」交互：多问题、多选、选项说明、自定义回答，权限确认不再被丢弃，答过的选择会留在对话里；
 1.0.9 折叠改成持久化开关（新步骤也自动折叠）、断网启动不再被踢回登录页、去掉与工作区重复的产物栏和输入框下方提示；
 1.0.10 修好「提问卡片根本不弹」：服务端反向请求（`_codebuddy.ai/question`）与 `AskUserQuestion` 工具调用两条通道都接上了，回答按协议回结构化 `answers`。
+1.1.0 关于板块加了 GitHub 仓库入口与「检查更新」（读 Releases 比对版本）；改用 4096 位 RSA
+正式密钥签名并发布 Release，从此不再用 debug key 对外分发。
 详见 [docs/FIXLOG.md](docs/FIXLOG.md) 与 [docs/PERFLOG.md](docs/PERFLOG.md)。
 
 构建环境没有 KVM、也没有可用账号，所以编译和单测之外的部分只能靠真机复核：1.0.10 的
@@ -90,12 +104,16 @@ sdk.dir=/path/to/android-sdk
 ./gradlew :app:assembleDebug
 # 产物：app/build/outputs/apk/debug/app-debug.apk
 
-# 交付前校验：编译 + 单测 + lint + APK 体检，任一失败非 0 退出
-scripts/verify.sh
+# 交付前校验：编译 + 单测 + lint + APK 体检 + 签名比对，任一失败非 0 退出
+bash scripts/verify.sh
 ```
 
-`scripts/verify.sh` 会顺带把 APK 归档成 `dist/CloudBuddy-<版本>-debug.apk`，
-并打印 versionCode、大小与 sha256。
+`scripts/verify.sh` 默认出**正式包**，归档成 `dist/CloudBuddy-<版本>-release.apk`，
+并打印 versionCode、大小、sha256 与签名指纹；加 `--debug` 才构建 debug 包。
+
+签名凭据从 `local.properties` 读（`release.storeFile` / `release.storePassword` /
+`release.keyAlias` / `release.keyPassword`），**密钥和密码都不入库**。没有这四项时
+release 构建会直接失败——这是有意的，不给出一个用 debug key 签的「正式版」。
 
 依赖源默认走阿里云镜像（`settings.gradle.kts`），如需官方源可自行替换。
 

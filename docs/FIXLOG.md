@@ -778,3 +778,69 @@ if (root.has("method") && root.has("id")) { onServerRequest(root); return }
   sha256 `f18f4f6a16ad8c02eb8ff65c1fab98a87611f3f14af4aabc72cd8ee4f524567a`。
 - **仍未做真机验证**：`_codebuddy.ai/question` 与工具调用哪条会先到、`answers` 的 key
   用的是问题 `id` 还是序号，都只能按官方 Web 端的实现推断。1.0.10 装上后再发一次提问卡片即可确认。
+
+> 后续补记：1.0.10 已在真实设备上测过，卡片能弹、单选回字符串、多选回数组且保序、
+> 未作答的题不出现在 `answers` 里，服务端接受后能继续跑。实测口径见 AGENTS.md。
+
+---
+
+# 1.1.0 · 关于板块、检查更新、正式签名与首个 Release
+
+## 1. 关于板块加两个入口
+
+`SettingsScreen` 的「关于」卡片原本只有版本号和三段说明，现在补两行可点条目：
+
+- **GitHub 仓库** → `https://github.com/silverwolf-lv9999/CloudBuddy`
+- **检查更新** → 读 GitHub Releases 比对版本
+
+跳转统一走 `openUrl()`：`ACTION_VIEW` + `FLAG_ACTIVITY_NEW_TASK`，没有浏览器时 Toast 提示，
+不静默失败（静默失败最常见的原因是用户点了没反应，然后以为功能坏了）。
+
+## 2. 检查更新：把「网络失败」和「已是最新」分开
+
+新增 `data/UpdateChecker.kt`，只碰一个外部地址：`api.github.com/repos/<slug>/releases/latest`。
+独立 OkHttpClient，连接 8 秒 / 读 12 秒——这条请求不该拖住设置页。
+
+界面状态是五态而不是布尔：
+
+```
+Idle → Checking → UpToDate | Available(info) | Failed(msg)
+```
+
+**`Failed` 必须单独存在**。把网络不通显示成「已是最新」等于骗用户说不用升级，
+而国内网络下 `api.github.com` 恰恰经常不通。这是本轮唯一一个「看起来能用但会误导」的坑。
+
+版本比较写成纯函数 `compare(latest, current)`：逐段按数字比，缺位按 0 补齐。
+字符串比较会得出 `1.0.9 > 1.0.10`，这是必须避开的经典错误，单测里专门钉了一条。
+
+`parseRelease()` 对异常载荷一律返回 null（空体、`{}`、502 的 HTML），不抛异常：
+GitHub 偶尔返回错误页，解析崩了会让整个设置页挂掉。
+
+## 3. 正式签名
+
+- `keytool` 生成 4096 位 RSA，别名 `cloudbuddy`，有效期 10000 天（到 2054-04-11）；
+- 密钥落在 `keystore/cloudbuddy-release.jks`，被 `.gitignore` 排除；
+- 凭据四项写进 `local.properties`（同样不入库），`app/build.gradle.kts` 读它；
+- 缺凭据时 release 构建出未签名包，`verify.sh` 会拒收——故意的。
+
+`scripts/verify.sh` 同时改了两处：
+
+1. 默认出 **release** 包（`--debug` 才回退），归档名改 `CloudBuddy-<版本>-release.apk`；
+2. 正式包额外比对证书 DN。`apksigner verify` 只验签名自洽，**debug key 签的包照样能过**，
+   所以脚本显式拒收 `CN=Android Debug`，并要求 `CN=CloudBuddy`。
+
+## 4. 发布
+
+首个 Release `v1.1.0`，APK 作为资产上传，说明里给出 sha256 与安装方式。
+
+## 验证（1.1.0）
+
+- `bash scripts/verify.sh` 全绿：**88 个单测**（新增 8 项：release 解析去 `v` 前缀、
+  无 apk 资产回退、异常载荷返回 null、版本号逐段按数字比、相同版本不算更新、
+  缺位补零、预发布低于正式版、`html_url` 缺失回退），lint 0 error。
+- APK：`dist/CloudBuddy-1.1.0-release.apk`，versionCode 12，minSdk 26，
+  4096 位 RSA 正式签名，sha256 `d6e91b11d18cdc0b05d28cd8b960868b524a5b5038b6162981f05d073c3fd96c`。
+- 证书 SHA-256：`59:29:B6:F4:7F:2B:C4:6F:B9:F5:4B:2F:15:BD:42:C4:37:55:81:76:06:38:C0:66:49:93:B8:4A:2B:46:8F:90`。
+- **未做真机验证**：检查更新的界面流转（点击 → 检查中 → 发现新版 → 对话框 → 跳浏览器）
+  只经过代码路径与单测，没有在设备上点过。已知风险是 `api.github.com` 在国内网络下不通时
+  会落到 `Failed` 分支，文案已经按「检查失败」写。
