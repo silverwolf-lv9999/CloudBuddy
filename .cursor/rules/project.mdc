@@ -1,0 +1,14 @@
+---
+description: CloudBuddy 项目约定（唯一真源是仓库根的 AGENTS.md）
+alwaysApply: true
+---
+
+约定以仓库根目录的 `AGENTS.md` 为准，这里只做摘要。
+
+- 构建：`/opt/gradle/gradle-8.9/bin/gradle :app:assembleDebug --offline`，必须带 `--offline`。
+- 交付前：`assembleDebug` + `testDebugUnitTest` + `lintDebug` 全绿，lint 0 error。
+- 每次内容变化都升 `versionCode` / `versionName`，产物进 `dist/CloudBuddy-<版本>-debug.apk`。
+- 目录不是 git 仓库，不要跑 git 命令。
+- 协议解析、事件归约写成纯函数并配单测，不要塞进 Composable。
+- 不要引入 Hilt，不要拆 Gradle 模块。
+- KDoc 里不要出现 `/root/*` 这类路径通配，会开启嵌套块注释把代码注释掉。

@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="780" viewBox="0 0 1180 780" font-family="'Noto Sans CJK SC', 'Noto Serif CJK SC', 'PingFang SC', sans-serif">
+  <rect width="1180" height="780" fill="#EEF2F8"/>
+  <text x="40" y="46" font-size="22" font-weight="600" fill="#0E1524">云伴 WorkBuddy · 界面结构（线框示意，非截图）</text>
+  <text x="40" y="72" font-size="13" fill="#5A6376">Material 3 · 底部三栏：会话 / 工作区 / 设置；对话页为会话栏的二级页</text>
+
+  <!-- Phone 1: sessions -->
+  <g transform="translate(40,100)">
+    <rect width="340" height="620" rx="26" fill="#0D1117" opacity="0.08"/>
+    <rect x="4" y="4" width="332" height="612" rx="22" fill="#F7F9FC" stroke="#D8E0EC"/>
+    <text x="20" y="42" font-size="19" font-weight="600" fill="#0E1524">云端会话</text>
+    <text x="20" y="62" font-size="11" fill="#6B7690">阿岚 · 云沙箱</text>
+    <circle cx="300" cy="44" r="13" fill="#E3EAF6"/>
+    <path d="M296 40l8 0M300 36l0 8" stroke="#34507C" stroke-width="1.6"/>
+    <rect x="20" y="82" width="300" height="84" rx="16" fill="#FFFFFF" stroke="#E1E8F2"/>
+    <text x="36" y="108" font-size="13" font-weight="600" fill="#111A2B">整理本期财报要点并出图表</text>
+    <rect x="36" y="120" width="70" height="20" rx="10" fill="#DCE7FF"/>
+    <circle cx="47" cy="130" r="3" fill="#0B63F6"/>
+    <text x="55" y="134" font-size="9" fill="#0B63F6">云端执行中</text>
+    <text x="118" y="134" font-size="9" fill="#6B7690">3 个产物</text>
+    <text x="250" y="134" font-size="9" fill="#6B7690">2 分钟前</text>
+    <text x="36" y="156" font-size="9" fill="#8792A8">hy4-preview</text>
+
+    <rect x="20" y="176" width="300" height="84" rx="16" fill="#FFFFFF" stroke="#E1E8F2"/>
+    <text x="36" y="202" font-size="13" font-weight="600" fill="#111A2B">把 sandbox/report.md 改成对外版本</text>
+    <rect x="36" y="214" width="52" height="20" rx="10" fill="#DCF3EC"/>
+    <circle cx="47" cy="224" r="3" fill="#17805F"/>
+    <text x="55" y="228" font-size="9" fill="#17805F">已完成</text>
+    <text x="98" y="228" font-size="9" fill="#6B7690">1 个产物</text>
+    <text x="250" y="228" font-size="9" fill="#6B7690">今天 09:12</text>
+
+    <rect x="20" y="270" width="300" height="56" rx="16" fill="#FFFFFF" stroke="#E1E8F2"/>
+    <text x="36" y="296" font-size="13" font-weight="600" fill="#111A2B">爬取竞品定价并汇总</text>
+    <rect x="36" y="304" width="52" height="16" rx="8" fill="#EEF1F6"/>
+    <text x="46" y="315" font-size="8" fill="#6B7690">空闲</text>
+
+    <rect x="196" y="536" width="124" height="42" rx="21" fill="#0B63F6"/>
+    <text x="230" y="562" font-size="12" fill="#FFFFFF">+ 新建会话</text>
+    <rect x="4" y="592" width="332" height="24" rx="12" fill="#FFFFFF" stroke="#E1E8F2"/>
+    <circle cx="96" cy="604" r="4" fill="#0B63F6"/>
+    <text x="106" y="608" font-size="9" fill="#0B63F6">会话</text>
+    <text x="182" y="608" font-size="9" fill="#8792A8">工作区</text>
+    <text x="258" y="608" font-size="9" fill="#8792A8">设置</text>
+    <text x="20" y="646" font-size="10" fill="#8792A8">① 会话列表：状态角标 / 产物数 / 轻量刷新</text>
+  </g>
+
+  <!-- Phone 2: chat -->
+  <g transform="translate(410,100)">
+    <rect width="340" height="620" rx="26" fill="#0D1117" opacity="0.08"/>
+    <rect x="4" y="4" width="332" height="612" rx="22" fill="#F7F9FC" stroke="#D8E0EC"/>
+    <text x="20" y="40" font-size="13" font-weight="600" fill="#111A2B">整理本期财报要点并出图表</text>
+    <text x="20" y="58" font-size="9" fill="#0B63F6">云 · 云端沙箱 · /workspace</text>
+    <rect x="238" y="26" width="62" height="20" rx="10" fill="#DCE7FF"/>
+    <circle cx="249" cy="36" r="3" fill="#0B63F6"/>
+    <text x="257" y="40" font-size="8" fill="#0B63F6">执行中</text>
+
+    <rect x="176" y="76" width="148" height="42" rx="16" fill="#DCE7FF"/>
+    <text x="190" y="94" font-size="10" fill="#001A43">把 /workspace/q3.xlsx</text>
+    <text x="190" y="108" font-size="10" fill="#001A43">的要点整理成报告</text>
+
+    <rect x="20" y="132" width="300" height="34" rx="9" fill="#F0F3F8"/>
+    <text x="32" y="147" font-size="9" fill="#6B7690">◌ 思考过程 · 先读表格再算同比…</text>
+    <text x="32" y="159" font-size="8" fill="#98A2B5">先读表格再算同比，最后画图</text>
+
+    <text x="20" y="192" font-size="8" fill="#8792A8">› 读取 /workspace/q3.xlsx</text>
+    <text x="20" y="212" font-size="10" fill="#111A2B">本期营收 4.82 亿，同比 +18.4%，</text>
+    <text x="20" y="228" font-size="10" fill="#111A2B">毛利率提升 1.7pp 至 41.2%。</text>
+    <rect x="20" y="240" width="300" height="66" rx="8" fill="#0F1720"/>
+    <text x="32" y="258" font-size="8" fill="#8FA3BC">python · 复制</text>
+    <text x="32" y="274" font-size="9" fill="#E6EDF3">rev = q3["revenue"].sum()</text>
+    <text x="32" y="290" font-size="9" fill="#E6EDF3">yoy = rev / q2_rev - 1   # 18.4%</text>
+
+    <text x="20" y="326" font-size="8" fill="#8792A8">› 写入 /workspace/report.md</text>
+    <text x="20" y="346" font-size="10" fill="#111A2B">报告与图表已生成，放在</text>
+    <text x="20" y="362" font-size="10" fill="#111A2B">/workspace/out 下。</text>
+
+    <text x="20" y="392" font-size="8" fill="#8792A8">▣ 云端产物 · 3</text>
+    <rect x="20" y="400" width="104" height="26" rx="9" fill="#EDF1F8"/>
+    <text x="30" y="417" font-size="9" fill="#34507C">report.md</text>
+    <rect x="132" y="400" width="96" height="26" rx="9" fill="#EDF1F8"/>
+    <text x="142" y="417" font-size="9" fill="#34507C">chart.png</text>
+    <rect x="236" y="400" width="84" height="26" rx="9" fill="#EDF1F8"/>
+    <text x="246" y="417" font-size="9" fill="#34507C">data.csv</text>
+
+    <rect x="16" y="470" width="308" height="96" rx="20" fill="#FFFFFF" stroke="#E1E8F2"/>
+    <text x="32" y="496" font-size="10" fill="#98A2B5">继续追问，或直接说「把图表换成柱状图」…</text>
+    <text x="30" y="540" font-size="9" fill="#34507C">+</text>
+    <rect x="48" y="526" width="70" height="18" rx="9" fill="#EDF1F8"/>
+    <text x="57" y="539" font-size="8" fill="#34507C">hy4-preview</text>
+    <circle cx="296" cy="536" r="17" fill="#0B63F6"/>
+    <text x="291" y="541" font-size="12" fill="#FFFFFF">↑</text>
+    <text x="20" y="592" font-size="9" fill="#8792A8">任务在云端沙箱执行 · 附件先写入沙箱</text>
+    <text x="20" y="646" font-size="10" fill="#8792A8">② 对话：ACP 流式 + 思考折叠 + 工具状态 + 产物条</text>
+  </g>
+
+  <!-- Phone 3: workspace -->
+  <g transform="translate(780,100)">
+    <rect width="340" height="620" rx="26" fill="#0D1117" opacity="0.08"/>
+    <rect x="4" y="4" width="332" height="612" rx="22" fill="#F7F9FC" stroke="#D8E0EC"/>
+    <text x="20" y="42" font-size="19" font-weight="600" fill="#0E1524">沙箱工作区</text>
+    <text x="20" y="62" font-size="10" fill="#6B7690">/workspace/out</text>
+    <circle cx="300" cy="44" r="13" fill="#E3EAF6"/>
+    <text x="295" y="49" font-size="11" fill="#34507C">↻</text>
+
+    <rect x="20" y="78" width="86" height="26" rx="13" fill="#EDF1F8"/>
+    <text x="30" y="95" font-size="9" fill="#34507C">▣ /workspace</text>
+    <rect x="114" y="78" width="66" height="26" rx="13" fill="#EDF1F8"/>
+    <text x="124" y="95" font-size="9" fill="#34507C">↑ 上一级</text>
+    <text x="288" y="95" font-size="11" fill="#34507C">＋</text>
+
+    <rect x="20" y="116" width="300" height="48" rx="12" fill="#FFFFFF" stroke="#E1E8F2"/>
+    <text x="34" y="138" font-size="15" fill="#0B63F6">▣</text>
+    <text x="58" y="136" font-size="11" fill="#111A2B">charts</text>
+    <text x="58" y="150" font-size="8" fill="#8792A8">2 小时前</text>
+    <text x="292" y="145" font-size="11" fill="#8792A8">⋮</text>
+
+    <rect x="20" y="170" width="300" height="48" rx="12" fill="#FFFFFF" stroke="#E1E8F2"/>
+    <text x="34" y="192" font-size="14" fill="#6B7690">▤</text>
+    <text x="58" y="190" font-size="11" fill="#111A2B">report.md</text>
+    <text x="58" y="204" font-size="8" fill="#8792A8">18.4 KB · 1 小时前</text>
+    <text x="292" y="198" font-size="11" fill="#8792A8">⋮</text>
+
+    <rect x="20" y="224" width="300" height="48" rx="12" fill="#FFFFFF" stroke="#E1E8F2"/>
+    <text x="34" y="246" font-size="14" fill="#6B7690">▤</text>
+    <text x="58" y="244" font-size="11" fill="#111A2B">chart.png</text>
+    <text x="58" y="258" font-size="8" fill="#8792A8">246 KB · 1 小时前</text>
+    <text x="292" y="252" font-size="11" fill="#8792A8">⋮</text>
+
+    <rect x="20" y="278" width="300" height="48" rx="12" fill="#FFFFFF" stroke="#E1E8F2"/>
+    <text x="34" y="300" font-size="14" fill="#6B7690">▤</text>
+    <text x="58" y="298" font-size="11" fill="#111A2B">data.csv</text>
+    <text x="58" y="312" font-size="8" fill="#8792A8">12.1 KB · 1 小时前</text>
+    <text x="292" y="306" font-size="11" fill="#8792A8">⋮</text>
+
+    <rect x="16" y="352" width="308" height="98" rx="14" fill="#EDF3FF"/>
+    <text x="30" y="374" font-size="10" font-weight="600" fill="#0B3E92">文件网关诊断</text>
+    <text x="30" y="392" font-size="9" fill="#34507C">端点 https://49983-{sandbox}.e2b…</text>
+    <text x="30" y="408" font-size="9" fill="#34507C">枚举命中 /filesystem/list</text>
+    <text x="30" y="424" font-size="9" fill="#34507C">条目 12 · 读取正常</text>
+    <text x="30" y="440" font-size="8" fill="#6B7690">探测失败时这里会显示状态码，便于反馈</text>
+
+    <rect x="196" y="536" width="124" height="42" rx="21" fill="#0B63F6"/>
+    <text x="228" y="562" font-size="12" fill="#FFFFFF">↑ 上传</text>
+    <text x="20" y="610" font-size="10" fill="#8792A8">③ 工作区：沙箱目录、预览、上传/下载/删除</text>
+    <text x="20" y="630" font-size="10" fill="#8792A8">   预览支持 Markdown / HTML / 图片 / 代码</text>
+  </g>
+</svg>
