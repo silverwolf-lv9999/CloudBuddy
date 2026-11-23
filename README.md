@@ -31,7 +31,7 @@
 ![界面结构线框](docs/ui-wireframe.svg)
 
 > 用 AI 编码工具打开这个仓库时，先读 **[AGENTS.md](AGENTS.md)**：里面有构建命令、
-> 版本号规则、以及六个踩过的坑。各工具的适配文件（`CLAUDE.md`、`.github/copilot-instructions.md`、
+> 版本号规则、以及八个踩过的坑。各工具的适配文件（`CLAUDE.md`、`.github/copilot-instructions.md`、
 > `.cursor/rules/`）都指向它这一份真源。
 
 ## 功能
@@ -52,9 +52,12 @@
 
 ## 已构建产物
 
+仓库不保存 APK（`dist/` 在 `.gitignore` 里），跑一次 `scripts/verify.sh` 就会在 `dist/`
+下生成 `CloudBuddy-<版本>-debug.apk` 并打印 sha256。当前版本 1.0.10（versionCode 11），
+debug 签名，可直接侧载安装。
+
 ```
-dist/CloudBuddy-1.0.10-debug.apk  17M   debug 签名，可直接安装（versionCode 11）
-sha256 f18f4f6a16ad8c02eb8ff65c1fab98a87611f3f14af4aabc72cd8ee4f524567a
+bash scripts/verify.sh    # 编译 + 80 个单测 + lint + APK 体检，完成后归档到 dist/
 ```
 
 已通过 `:app:assembleDebug`、`80 个 JVM 单测`、`:app:lintDebug`（0 error），并用
@@ -68,13 +71,19 @@ sha256 f18f4f6a16ad8c02eb8ff65c1fab98a87611f3f14af4aabc72cd8ee4f524567a
 1.0.9 折叠改成持久化开关（新步骤也自动折叠）、断网启动不再被踢回登录页、去掉与工作区重复的产物栏和输入框下方提示；
 1.0.10 修好「提问卡片根本不弹」：服务端反向请求（`_codebuddy.ai/question`）与 `AskUserQuestion` 工具调用两条通道都接上了，回答按协议回结构化 `answers`。
 详见 [docs/FIXLOG.md](docs/FIXLOG.md) 与 [docs/PERFLOG.md](docs/PERFLOG.md)。
-**未做真机/模拟器验证**（构建环境无 KVM 且无可用账号）。
+
+构建环境没有 KVM、也没有可用账号，所以编译和单测之外的部分只能靠真机复核：1.0.10 的
+提问卡片（单选 / 多选 / 部分作答）已在真实设备上实测通过，仍待覆盖的分支与实测口径
+见 [AGENTS.md](AGENTS.md) 的「提问通道实测」一节。
 
 ## 构建
 
 要求 JDK 17+、Android SDK（compileSdk 35、build-tools 35.0.0）。
 
 ```bash
+git clone https://github.com/silverwolf-lv9999/CloudBuddy.git
+cd CloudBuddy
+
 # local.properties
 sdk.dir=/path/to/android-sdk
 
