@@ -165,7 +165,7 @@ SHA-256 59:29:B6:F4:7F:2B:C4:6F:B9:F5:4B:2F:15:BD:42:C4:37:55:81:76:06:38:C0:66:
 - 单测用真的 `org.json`，不要 mock；不引 Robolectric，不写依赖 Android framework 的测试。
 - 新增行为至少配 1 个用例；改协议解析必须同时覆盖旧载荷。
 
-## 八个坑（都真踩过）
+## 九个坑（都真踩过）
 
 1. **KDoc 里不要写 `/root/*`**。`/*` 会开启嵌套块注释，一直吞到后面的 `*/`，
    编译器报错位置会离谱到完全不相干的行。同理避免 `/** ... /path/* ... */` 这种。
@@ -188,6 +188,14 @@ SHA-256 59:29:B6:F4:7F:2B:C4:6F:B9:F5:4B:2F:15:BD:42:C4:37:55:81:76:06:38:C0:66:
    （`VALID` / `INVALID` / `UNREACHABLE`），只有 401、403 和 `SessionExpiredException` 才算失效；
    超时、DNS、断网、5xx 一律按离线处理、直接进主页。这条线上曾有四处
    `runCatching{}.getOrDefault(false)` 把异常吞成 false，结果网络一差就把已登录用户踢回登录页。
+9. **`git push` 走 HTTP/2 会被出口网关打成 502，必须显式降级**。同一份改动
+   `git push` 连续 502 三次、卡住七分钟，加 `-c http.version=HTTP/1.1` 后一次通过。
+   同理 `gh release create` 带上资产也容易 502——**先建 release 本体，再
+   `gh release upload` 单独传文件**，比一次做完成功率高得多；创建失败时 GitHub 会回滚，
+   表现为「返回了一个 release id，但 `gh release view` 说 not found」，不要被那个 id 骗了。
+
+   另外别用 `if git push | tail -3; then` 判断成败：管道退出码是 `tail` 的，
+   push 失败了照样进 then 分支。要看 `$?`/`PIPESTATUS` 或者干脆不接管道。
 
 ## 协议速查
 
