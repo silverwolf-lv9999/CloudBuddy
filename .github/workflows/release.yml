@@ -1,0 +1,92 @@
+name: release
+
+# 打 tag 自动出正式包并发 Release；也可以手动触发，只构建不发版。
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      # tag 和 build.gradle.kts 的版本号必须一致，否则会出现「Release 标的 v1.2.0，
+      # 装上去显示 1.1.0」，用户没法判断自己装的是哪个。
+      - name: 校验 tag 与 versionName
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts | head -1)
+          code=$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' app/build.gradle.kts | head -1)
+          echo "tag=$tag versionName=$ver versionCode=$code"
+          if [ "$tag" != "$ver" ]; then
+            echo "::error::tag $tag 与 build.gradle.kts 的 versionName $ver 不一致"
+            exit 1
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      # 密钥以 base64 存在 Secrets 里，只在 runner 上还原成文件，跑完随机器销毁。
+      # 不要把它写进仓库、artifact 或日志。
+      - name: 还原签名密钥
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::缺少 ANDROID_KEYSTORE_BASE64，正式包无法签名"
+            exit 1
+          fi
+          mkdir -p keystore
+          printf '%s' "$KEYSTORE_B64" | base64 -d > keystore/cloudbuddy-release.jks
+          {
+            echo "sdk.dir=$ANDROID_SDK_ROOT"
+            echo "release.storeFile=keystore/cloudbuddy-release.jks"
+            echo "release.storePassword=$KS_PASS"
+            echo "release.keyAlias=$KEY_ALIAS"
+            echo "release.keyPassword=$KEY_PASS"
+          } > local.properties
+
+      - name: 构建与自检
+        run: bash scripts/verify.sh
+
+      - name: 留存产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudbuddy-apk
+          path: dist/CloudBuddy-*-release.apk
+
+      - name: 发布 Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          apk=$(ls dist/CloudBuddy-*-release.apk | head -1)
+          sha=$(sha256sum "$apk" | cut -d' ' -f1)
+          {
+            echo "## CloudBuddy ${GITHUB_REF_NAME#v}"
+            echo
+            echo "版本号与 tag 一致，使用正式密钥签名。"
+            echo
+            echo '```'
+            echo "sha256 $sha"
+            echo '```'
+          } > /tmp/notes.md
+          # 已存在同名 Release 时补传资产，不重建——重建会丢已写的说明。
+          gh release create "$GITHUB_REF_NAME" \
+            --title "CloudBuddy ${GITHUB_REF_NAME#v}" \
+            --notes-file /tmp/notes.md "$apk" \
+            || gh release upload "$GITHUB_REF_NAME" "$apk" --clobber

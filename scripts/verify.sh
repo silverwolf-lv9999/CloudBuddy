@@ -14,9 +14,18 @@ cd "$(dirname "$0")/.."
 GRADLE=/opt/gradle/gradle-8.9/bin/gradle
 [ -x "$GRADLE" ] || GRADLE=./gradlew
 
+# 沙箱里依赖全在本地缓存，不带 --offline 会去连镜像然后超时；
+# GitHub Actions 上正好相反，必须联网拉依赖。
+OFFLINE=--offline
+if [ -n "${CI:-}" ] || [ -n "${GITHUB_ACTIONS:-}" ]; then
+  OFFLINE=""
+fi
+
+SDK_ROOT=${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/opt/android-sdk}}
+
 if [ ! -f local.properties ]; then
-  echo "缺少 local.properties，写入 sdk.dir=/opt/android-sdk"
-  echo "sdk.dir=/opt/android-sdk" > local.properties
+  echo "缺少 local.properties，写入 sdk.dir=$SDK_ROOT"
+  echo "sdk.dir=$SDK_ROOT" > local.properties
 fi
 
 MODE=release
@@ -42,9 +51,9 @@ fi
 
 echo "==> 编译 / 单测 / lint"
 if [ "$MODE" = release ]; then
-  "$GRADLE" :app:assembleRelease :app:testDebugUnitTest :app:lintDebug --offline -q
+  "$GRADLE" :app:assembleRelease :app:testDebugUnitTest :app:lintDebug $OFFLINE -q
 else
-  "$GRADLE" :app:assembleDebug :app:testDebugUnitTest :app:lintDebug --offline -q
+  "$GRADLE" :app:assembleDebug :app:testDebugUnitTest :app:lintDebug $OFFLINE -q
 fi
 
 echo "==> 单测统计"
@@ -74,7 +83,7 @@ else
 fi
 
 echo "==> APK 体检"
-BT=$(ls -d /opt/android-sdk/build-tools/* 2>/dev/null | tail -1)
+BT=$(ls -d "$SDK_ROOT"/build-tools/* 2>/dev/null | tail -1)
 [ -n "$BT" ] || { echo "找不到 build-tools"; exit 1; }
 mkdir -p dist
 if [ "$MODE" = release ]; then
