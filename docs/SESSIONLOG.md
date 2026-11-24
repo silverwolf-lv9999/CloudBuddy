@@ -125,3 +125,10 @@
 - **17:4x** 新增 4 条 `shouldHeal` 单测；版本升 1.4.1 / versionCode 25。
 - **17:5x** `verify.sh` 全绿：130 单测 / lint 0 error / 正式签名；`dist/CloudBuddy-1.4.1-release.apk`，sha256 `fe842208f5a06605d16088c9416713f4cbe481c3b8fbf69209ea54c524ab7c1e`。
 - **17:5x** 补一条保护：本地连接还在推流（别的设备驱动）时不算滞留，避免自愈打断真任务；随 commit `8c22ae0` 重打 tag，CI 重建。
+
+## 2026-11-24 · 同一问题补充证据，改成三层兜底（1.4.2）
+
+- **17:5x** 1.4.1 打包期间用户补了一条更硬的事实：**旧版 1.3.3 里加载完历史就正常，最初触发这条会话的客户端重进、刷新都好不了**。
+- **18:0x** 据此推翻 1.4.1 的因果：1.3.3 没有「打开后对账」，加载完只是本地把 running 擦成 IDLE，服务端 `status` 没变；新版采纳远端，所以重进无效。→ 服务端运行标志可能永远不自愈，不能等它收敛。
+- **18:0x** 改 `AcpConnection.resetRemoteTurn`（请求形式 session/cancel）；`healStaleRun` 改成 load + cancel；`confirmIdle` 清不掉时降级放行（只认「本地有事件流 / 内容 5 分钟内更新」为真在跑）；`SessionsScreen` 菜单加「解除卡住的运行状态」→ `forceResetConversation`。
+- **18:1x** 版本升 1.4.2 / versionCode 26；`verify.sh` 全绿：130 单测 / lint 0 error / 正式签名；`dist/CloudBuddy-1.4.2-release.apk` sha256 `c93e86a22dace03e7a53cfec19e25fc71f961739db6434ca06ed6440c8944d79`。

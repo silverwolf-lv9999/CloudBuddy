@@ -74,6 +74,8 @@ fun SessionsScreen(
     onRefresh: suspend () -> Unit,
     onDelete: (String) -> Unit,
     onRename: (String, String) -> Unit,
+    /** 强制解除某条会话卡住的运行状态（云端状态位滞留时的手动自救入口）。 */
+    onResetRun: (String) -> Unit = {},
     /** 顶部副标题里的余额提示（如「128 积分」），为空则不显示。 */
     balanceLabel: String = "",
     /** 启动时连不上服务器：空列表不代表会话没了，别让用户以为记录丢了。 */
@@ -195,7 +197,8 @@ fun SessionsScreen(
                             conversation = conversation,
                             onOpen = { onOpen(conversation.id) },
                             onRename = { renameTarget = conversation },
-                            onDelete = { deleteTarget = conversation }
+                            onDelete = { deleteTarget = conversation },
+                            onResetRun = { onResetRun(conversation.id) }
                         )
                     }
                 }
@@ -242,7 +245,8 @@ private fun ConversationCard(
     conversation: Conversation,
     onOpen: () -> Unit,
     onRename: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onResetRun: () -> Unit
 ) {
     var menu by remember { mutableStateOf(false) }
     Surface(
@@ -277,6 +281,19 @@ private fun ConversationCard(
                             leadingIcon = { Icon(Icons.Filled.Edit, null, Modifier.size(18.dp)) },
                             onClick = { menu = false; onRename() }
                         )
+                        // 只在「显示运行中」时出现：这就是用户被锁住的那种会话，
+                        // 给他一条不必新建会话的自救路。
+                        if (conversation.state == TurnState.RUNNING ||
+                            conversation.state == TurnState.WAITING
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("解除卡住的运行状态") },
+                                leadingIcon = {
+                                    Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp))
+                                },
+                                onClick = { menu = false; onResetRun() }
+                            )
+                        }
                         DropdownMenuItem(
                             text = { Text("删除") },
                             leadingIcon = { Icon(Icons.Filled.Delete, null, Modifier.size(18.dp)) },

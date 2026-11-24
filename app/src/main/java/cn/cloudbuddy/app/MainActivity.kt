@@ -196,6 +196,7 @@ private fun AppRoot(repo: BuddyRepository) {
                                             onRefresh = { repo.refreshConversations() },
                                             onDelete = { repo.deleteConversation(it) },
                                             onRename = { id, title -> repo.renameConversation(id, title) },
+                                            onResetRun = { repo.forceResetConversation(it) },
                                             balanceLabel = ui.growth?.let { "${it.balance} 积分" }.orEmpty(),
                                             offline = ui.offline
                                         )

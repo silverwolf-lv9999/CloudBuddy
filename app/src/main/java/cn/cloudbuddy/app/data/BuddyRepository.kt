@@ -463,8 +463,9 @@ class BuddyRepository(val settings: AppSettings) {
      *
      * 查不到就放行——网络抖动不该把正常发送也挡住；能查到但状态不对才是真问题。
      *
-     * 1.4.1：拒绝之前先做一次自愈。用户实测「点进这条会话就恢复正常」，说明
-     * `session/load` 会把服务端滞留的 running 收敛掉；那就别让他只能点「停止」。
+     * 1.4.1：拒绝之前先做一次自愈（load + cancel）。用户实测「旧客户端加载完历史就正常」，
+     * 那是旧版本地把 running 擦掉了，服务端状态位并没有跟着变；新版采纳远端，于是重进
+     * 多少次都还是「运行中」。所以清不掉时不再永久拦截——见下面的降级放行。
      */
     private suspend fun confirmIdle(id: String): Boolean {
         val fetched = runCatching { api.batchGet(listOf(id)) }.getOrNull()?.firstOrNull() ?: return true
@@ -474,8 +475,16 @@ class BuddyRepository(val settings: AppSettings) {
             if (StateReconciler.isActive(fetched.state)) _events.tryEmit("已清理该会话滞留的运行状态")
             return true
         }
-        applyIfActive(id) { copy(state = remote.state, sending = false) }
-        return false
+        // 还是 running：只有「本地还在收事件」或「内容最近还在动」才算真在跑。
+        // 两样都没有就不能再拦——状态位不可信时把用户永久锁在门外，比塞错一轮更糟：
+        // 真在跑的话服务端会自己拒绝这条 prompt，错误会照实显示出来。
+        val moving = System.currentTimeMillis() - remote.updatedAt < StateReconciler.HEAL_IDLE_MS
+        if (streamAlive(id) || moving) {
+            applyIfActive(id) { copy(state = remote.state, sending = false) }
+            return false
+        }
+        _events.tryEmit("云端状态位仍显示运行中，已强制发送")
+        return true
     }
 
     /**
@@ -550,20 +559,48 @@ class BuddyRepository(val settings: AppSettings) {
     }
 
     /**
-     * 临时连接 load 一次就关。走的是「点进会话」同一条路径，因此对服务端的效果一致，
-     * 但不占缓存、不推 UI；失败就当没发生过（下一次刷新还有机会）。
+     * 临时连接：先 load 一次，再补一次 cancel。
+     *
+     * 只有 load 不够——用户实测「旧客户端加载完历史就正常了」，那是旧版**本地**把 running
+     * 擦掉了（它没有打开后的对账），服务端状态位其实还挂着；新版老老实实采纳远端，
+     * 于是重进多少次都还是「运行中」。所以这里在 load 之后补一次 `session/cancel`：
+     * 这一轮在服务端早就没人等了，cancel 是安全回收。
+     *
+     * 失败就当没发生过，下一次刷新还有机会。
      */
     private suspend fun healStaleRun(id: String): Boolean = withContext(Dispatchers.IO) {
         runCatching {
             val conn = AcpConnection(http, settings, sessionOf(id))
             try {
                 conn.open()
-                // 只要「挂上」这个动作；历史放不完整无所谓，所以超时给得比正常打开短。
                 conn.initializeAndLoad(HEAL_LOAD_TIMEOUT)
+                conn.resetRemoteTurn()
             } finally {
                 conn.close()
             }
         }.isSuccess
+    }
+
+    /**
+     * 手动「解除卡住」：用户点一下就把这条会话的运行状态强制收敛。
+     *
+     * 自动判定再保守也会有漏（比如内容一直在小幅更新、或尝试次数用完了），
+     * 这时必须留一条 100% 能自救的路，而不是让人只能新建会话。
+     */
+    fun forceResetConversation(id: String) {
+        scope.launch {
+            val ok = healStaleRun(id)
+            if (ok) {
+                inFlightTurns.remove(id)
+                // 本地这条连接上的旧状态也一并作废，下次打开就是干净的。
+                connections.remove(id)?.close()
+                applyIfActive(id) { copy(state = TurnState.STOPPED) }
+                _events.tryEmit("已请求云端结束该会话的运行状态")
+            } else {
+                _events.tryEmit("清理失败：云端没有响应，可稍后再试")
+            }
+            runCatching { refreshConversations() }
+        }
     }
 
     // ---------- 启动 / 登录 ----------

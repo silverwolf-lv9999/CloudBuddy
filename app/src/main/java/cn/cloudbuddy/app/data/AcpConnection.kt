@@ -372,6 +372,19 @@ class AcpConnection(
         }
     }
 
+    /**
+     * 强制收敛服务端这一轮（自愈 / 解除卡住用）。
+     *
+     * 和 [cancelTurn] 的区别：这里走**请求**形式并等响应。适用场景是本地根本没有这一轮、
+     * 服务端却一直挂着 `working`——通知形式服务端可以不回、也可以不处理，只有带 id 的
+     * 请求才能确认它到底有没有被受理。
+     *
+     * @return 服务端返回成功（或至少没有报错）时为 true
+     */
+    fun resetRemoteTurn(timeoutMs: Long = 8_000L): Boolean = runCatching {
+        rpc("session/cancel", JSONObject().put("sessionId", session.acpSessionId), timeoutMs)
+    }.isSuccess
+
     /** 用户回答提问后，把这句话记进本轮，避免选择在界面上凭空消失。 */
     fun recordAnswer(text: String) {
         reducer.recordAnswer(text)
