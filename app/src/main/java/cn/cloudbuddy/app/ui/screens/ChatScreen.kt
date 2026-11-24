@@ -4,6 +4,12 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -28,9 +34,12 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Close
@@ -73,9 +82,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cn.cloudbuddy.app.data.AppUiState
@@ -658,58 +669,67 @@ private fun Composer(
     onStop: () -> Unit,
     onSend: () -> Unit
 ) {
-    Surface(
-        color = MaterialTheme.colorScheme.background,
-        modifier = Modifier.fillMaxWidth().navigationBarsPadding()
+    val enabled = value.isNotBlank() || attachments.isNotEmpty()
+    val containerShape = RoundedCornerShape(20.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .imePadding()
+            .navigationBarsPadding()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-            if (attachments.isNotEmpty() || uploading) {
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = PaddingValues(bottom = 8.dp)
-                ) {
-                    items(attachments) { attachment ->
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant
+        if (attachments.isNotEmpty() || uploading) {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(attachments) { attachment ->
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    attachment.name,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    maxLines = 1,
-                                    modifier = Modifier.width(120.dp),
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                IconButton(
-                                    onClick = { onRemoveAttachment(attachment.name) },
-                                    modifier = Modifier.size(22.dp)
-                                ) { Icon(Icons.Filled.Close, "移除", Modifier.size(13.dp)) }
-                            }
+                            Text(
+                                attachment.name,
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                modifier = Modifier.width(120.dp),
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            IconButton(
+                                onClick = { onRemoveAttachment(attachment.name) },
+                                modifier = Modifier.size(22.dp)
+                            ) { Icon(Icons.Filled.Close, "移除", Modifier.size(13.dp)) }
                         }
                     }
-                    if (uploading) {
-                        item {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 1.6.dp)
-                                Spacer(Modifier.width(6.dp))
-                                Text("读取文件…", style = MaterialTheme.typography.labelSmall)
-                            }
+                }
+                if (uploading) {
+                    item {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 1.6.dp)
+                            Spacer(Modifier.width(6.dp))
+                            Text("读取文件…", style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }
             }
+        }
 
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 2.dp,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(start = 6.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)) {
+        // 抄 rikkahub 的输入容器：圆角 Surface + 细边框，输入框透明无下划线，底部一行工具按钮 + 圆形发送键。
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(containerShape),
+            shape = containerShape,
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+            tonalElevation = 0.dp,
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+                Box(modifier = Modifier.fillMaxWidth()) {
                     BasicTextField(
                         value = value,
                         onValueChange = onValueChange,
@@ -717,69 +737,79 @@ private fun Composer(
                             color = MaterialTheme.colorScheme.onSurface
                         ),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(onSend = { if (enabled) onSend() }),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = 42.dp, max = 160.dp)
-                            .padding(horizontal = 10.dp, vertical = 8.dp)
+                            .heightIn(min = 44.dp, max = 160.dp)
+                            .padding(horizontal = 8.dp, vertical = 8.dp)
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = onPickFile, modifier = Modifier.size(36.dp)) {
-                            Icon(
-                                Icons.Filled.AttachFile,
-                                "添加附件",
-                                Modifier.size(19.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                    if (value.isEmpty()) {
+                        Text(
+                            text = "发消息给 WorkBuddy…",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    IconButton(onClick = onPickFile, modifier = Modifier.size(34.dp)) {
+                        Icon(
+                            Icons.Filled.AttachFile,
+                            "添加附件",
+                            Modifier.size(19.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.clickable(onClick = onModelClick)
+                    ) {
+                        Text(
+                            model.ifBlank { "默认模型" },
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Spacer(Modifier.weight(1f))
+                    AnimatedVisibility(
+                        visible = true,
+                        enter = fadeIn() + scaleIn(),
+                        exit = fadeOut() + scaleOut(),
+                    ) {
+                        val stop = running
+                        val bg = when {
+                            stop -> MaterialTheme.colorScheme.errorContainer
+                            enabled -> MaterialTheme.colorScheme.primary
+                            else -> MaterialTheme.colorScheme.surfaceVariant
                         }
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier.clickable(onClick = onModelClick)
+                        val fg = when {
+                            stop -> MaterialTheme.colorScheme.onErrorContainer
+                            enabled -> MaterialTheme.colorScheme.onPrimary
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                        }
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(bg)
+                                .clickable(enabled = stop || enabled) { if (stop) onStop() else onSend() }
                         ) {
-                            Text(
-                                model.ifBlank { "默认模型" },
-                                style = MaterialTheme.typography.labelSmall,
-                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                            Icon(
+                                imageVector = if (stop) Icons.Filled.Stop else Icons.Filled.KeyboardArrowUp,
+                                contentDescription = if (stop) "停止" else "发送",
+                                modifier = Modifier.size(20.dp),
+                                tint = fg
                             )
-                        }
-                        Spacer(Modifier.weight(1f))
-                        if (running) {
-                            IconButton(
-                                onClick = onStop,
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .background(MaterialTheme.colorScheme.errorContainer, CircleShape)
-                            ) {
-                                Icon(
-                                    Icons.Filled.Stop,
-                                    "停止",
-                                    Modifier.size(18.dp),
-                                    tint = MaterialTheme.colorScheme.error
-                                )
-                            }
-                        } else {
-                            val enabled = value.isNotBlank() || attachments.isNotEmpty()
-                            IconButton(
-                                onClick = onSend,
-                                enabled = enabled,
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .background(
-                                        if (enabled) MaterialTheme.colorScheme.primary
-                                        else MaterialTheme.colorScheme.surfaceVariant,
-                                        CircleShape
-                                    )
-                            ) {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.Send,
-                                    "发送",
-                                    Modifier.size(18.dp),
-                                    tint = if (enabled) MaterialTheme.colorScheme.onPrimary
-                                    else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
                         }
                     }
                 }

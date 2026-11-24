@@ -86,3 +86,11 @@
 - **16:18** 新增 `MarkdownTableTest` 6 个单测全绿；版本升 1.3.8 / versionCode 22；`verify.sh` 开跑。
 - **16:22** `verify.sh` 全绿：126 单测、lint 0、正式签名；`dist/CloudBuddy-1.3.8-release.apk`，sha256 `fdd1e544...2856b`。
 - **16:24** 提交 `5157335`，push main 与 tag `v1.3.8` 成功，CI 自动发版。
+
+## 2026-11-24 · 折叠动画补全 + 输入框（进行中）
+
+- **16:30** 用户澄清：要的是**整个折叠组**都有动画（不只是思考卡），且输入框也要抄 rikkahub。
+- **16:31** 重写 `StepsGroup`：整行点击、箭头旋转 180°、`animateContentSize` 高度过渡，圆角改 20dp，标题升 titleSmall——与思考卡同一套 rikkahub 交互。
+- **16:34** 编译遇到 Compose 编译器 `NotImplementedError: Unknown file`（增量缓存脏），`gradle clean` 后通过。
+- **16:40** 抄 rikkahub 重做 `Composer` 输入框：圆角 Surface + 细边框容器、透明 BasicTextField + 占位符、附件 chip、模型 chip、圆形发送键（primary/禁用/error 三态 + fade/scale 动画）、ImeAction.Send 回车发送。
+- **16:42** `gradle clean` 编译通过（增量缓存的 Compose 编译器 `Unknown file` 错误靠 clean 解决）。

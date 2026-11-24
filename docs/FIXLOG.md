@@ -1160,3 +1160,16 @@ sha256 `647c9341579822536a6802980b30fb30b3c27229b0b1cdf911ff9efe87aaf510`。
 ## 性能
 - 表格用两阶段测量，只在有表格时走 SubcomposeLayout；普通正文零开销。
 - 思考的滚动渐隐只在 Preview 态启用，展开/收回后就是普通 Column。
+
+# 1.3.9 · 折叠组统一动画 + rikkahub 输入框
+
+## 现象
+- 1.3.8 只给思考卡加了动画；「中间步骤组」（工具调用、过程叙述等被折叠的东西）展开收回仍是硬切换、箭头瞬间翻转，视觉不一致。
+- 输入框样式简陋：方块发送按钮、无占位符、无边框层次。
+
+## 改法
+- `StepsGroup` 改成 rikkahub 式：整行点击、箭头旋转 180°、`animateContentSize()` 高度过渡、圆角 20dp、标题 titleSmall；展开状态仍由会话级 ViewModel 控制。
+- `Composer` 照抄 rikkahub 的 ChatInput 结构：圆角 Surface + 1dp 半透明边框容器、透明 BasicTextField + 占位符「发消息给 WorkBuddy…」、附件 chip、模型 chip、圆形发送键（有内容 primary / 空禁用 / 运行中 error 停止三态），发送键带 fade+scale 进出动画，回车即发送。
+
+## 注
+Compose 编译器在增量缓存脏时会抛 `NotImplementedError: Unknown file`（ComposableTargetAnnotationsTransformer），`gradle clean` 后消失，非代码问题。

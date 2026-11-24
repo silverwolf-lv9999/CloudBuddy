@@ -1,6 +1,8 @@
 package cn.cloudbuddy.app.ui.components
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -25,10 +27,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -167,6 +168,13 @@ fun MessageRow(message: ChatMessage, showThoughts: Boolean) {
  * 折叠时只占一行摘要（参考 AgentsAnywhere 的 `ToolRunGroup`），展开后按原顺序铺明细。
  * 默认折叠由调用方决定，正在执行的那一轮通常展开，方便看到进度。
  */
+/**
+ * 一轮对话的「中间步骤」组：思考、工具调用、过程叙述都收在这里。
+ *
+ * 抄 rikkahub 的 ChainOfThought：整行可点击展开/收回，箭头翻转，卡片高度
+ * `animateContentSize` 平滑过渡——和思考卡片是同一套交互，不再是硬切换。
+ * 展开状态由外部（会话级）控制，手动点过只影响当前会话的这一条。
+ */
 @Composable
 fun StepsGroup(
     steps: List<ChatMessage>,
@@ -182,42 +190,51 @@ fun StepsGroup(
         running || state == TurnState.RUNNING -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    // 折叠时也要看得出「现在在干什么」，否则只剩一个转圈。
     val current = steps.lastOrNull { it.role == ChatRole.TOOL && it.toolState == ToolState.RUNNING }
     val label = when {
         current != null -> "正在 " + current.text.lineSequence().firstOrNull().orEmpty().take(28)
         else -> stepsSummary(steps)
     }
+    val hasThought = steps.any { it.role == ChatRole.THOUGHT }
+    // 箭头旋转 + 卡片高度动画：抄 rikkahub 的 Details / ChainOfThought 过渡，展开收回都有动画。
+    val rotation by animateFloatAsState(targetValue = if (expanded) 180f else 0f, label = "steps-arrow")
+
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(20.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 12.dp, vertical = 6.dp)
+                .animateContentSize()
+        ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .clip(MaterialTheme.shapes.small)
                     .clickable(onClick = onToggle)
-                    .padding(vertical = 2.dp),
+                    .padding(vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                Box(Modifier.size(16.dp), contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Filled.KeyboardArrowDown,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp).graphicsLayer { rotationZ = rotation },
+                        tint = accent
+                    )
+                }
                 Icon(
-                    imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Icon(
-                    imageVector = if (steps.any { it.role == ChatRole.THOUGHT }) Icons.Filled.Psychology
-                    else Icons.Filled.Build,
+                    imageVector = if (hasThought) Icons.Filled.Psychology else Icons.Filled.Build,
                     contentDescription = null,
                     modifier = Modifier.size(14.dp),
                     tint = accent
                 )
                 Text(
                     text = label,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.titleSmall,
                     color = accent,
                     modifier = Modifier.weight(1f),
                     maxLines = 1,
@@ -225,9 +242,7 @@ fun StepsGroup(
                 )
                 if (running) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(11.dp),
-                        strokeWidth = 1.5.dp,
-                        color = accent
+                        modifier = Modifier.size(11.dp), strokeWidth = 1.5.dp, color = accent
                     )
                 } else {
                     Text(
@@ -240,25 +255,19 @@ fun StepsGroup(
 
             if (expanded) {
                 Column(
-                    modifier = Modifier.padding(start = 4.dp, top = 6.dp),
+                    modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 2.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     steps.forEach { step ->
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(start = 6.dp)
-                        ) {
-                            when (step.role) {
-                                ChatRole.THOUGHT -> ThoughtRow(step.text, showThoughts, step.streaming)
-                                ChatRole.TOOL -> ToolRow(step)
-                                ChatRole.ASSISTANT -> MarkdownText(
-                                    markdown = step.text,
-                                    baseSize = 13f,
-                                    modifier = Modifier.alpha(0.78f)
-                                )
-                                ChatRole.USER -> Unit
-                            }
+                        when (step.role) {
+                            ChatRole.THOUGHT -> ThoughtRow(step.text, showThoughts, step.streaming)
+                            ChatRole.TOOL -> ToolRow(step)
+                            ChatRole.ASSISTANT -> MarkdownText(
+                                markdown = step.text,
+                                baseSize = 13f,
+                                modifier = Modifier.alpha(0.78f)
+                            )
+                            ChatRole.USER -> Unit
                         }
                     }
                 }
