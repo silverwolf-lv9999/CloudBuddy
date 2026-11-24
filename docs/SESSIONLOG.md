@@ -40,4 +40,6 @@
 - **12:05** `BuddyRepository` 加 `stateSyncLoop`/`reconcile`/`reconcileAfterOpen`/`silentResync`/`confirmIdle`；`send` 双重闸门；`stop` 支持无连接时临时下发 cancel；`MainActivity` 前后台切换驱动对账。
 - **12:12** 性能收敛：后台停轮询、10s/30s/45s 分档、列表 60s、补历史按 updatedAt 去重并退避、UI 写锁 + 增量写入、列表浅比较。
 - **12:18** 版本升 1.3.4 / versionCode 18，verify.sh 全绿：119 单测、lint 0、正式签名，sha256 7577871c...f28d。
+- **12:26** 发现全局 `sending` 不可靠（切会话被清、切回不置位），改为按会话 `inFlightTurns` 跟踪在途轮次；`send`/`answerQuestion` 登记，`finally` 按真实 id 注销，`stop` 清理。
+- **12:30** 版本升 1.3.5 / versionCode 19，verify.sh 全绿：119 单测、lint 0、正式签名，sha256 647c9341...f510。
 

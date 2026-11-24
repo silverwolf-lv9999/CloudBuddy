@@ -151,6 +151,14 @@ class BuddyRepository(val settings: AppSettings) {
     @Volatile private var lastTurnEndAt = 0L
     private var resyncGap = RESYNC_MIN_GAP
     private val syncedAt = ConcurrentHashMap<String, Long>()
+
+    /**
+     * 正在跑 prompt 的会话 id。
+     *
+     * 不能用全局 `ui.sending` 代替：切到别的会话时它会被清掉，切回来时又没人置回 true。
+     * 对账若据此判断「本地没有流」，就会在任务正跑时重建连接、把活的 SSE 掐断。
+     */
+    private val inFlightTurns = ConcurrentHashMap.newKeySet<String>()
     @Volatile private var lastFullListAt = 0L
 
     /**
@@ -260,7 +268,7 @@ class BuddyRepository(val settings: AppSettings) {
         val action = if (activeRemote != null &&
             !(settling && StateReconciler.isActive(activeRemote.state) && !StateReconciler.isActive(latest.state))
         ) {
-            StateReconciler.decide(latest.state, activeRemote.state, latest.sending)
+            StateReconciler.decide(latest.state, activeRemote.state, inFlightTurns.contains(activeId))
         } else {
             StateReconciler.Action.NONE
         }
@@ -334,7 +342,7 @@ class BuddyRepository(val settings: AppSettings) {
      */
     private fun scheduleResync(id: String, remote: Conversation) {
         if (resyncing) return
-        if (_ui.value.activeId != id || _ui.value.sending) return
+        if (_ui.value.activeId != id || inFlightTurns.contains(id)) return
         if (!StateReconciler.shouldResync(remote.updatedAt, syncedAt[id] ?: 0L, remote.state)) return
         val now = System.currentTimeMillis()
         if (now - lastResyncAt < resyncGap) return
@@ -357,7 +365,7 @@ class BuddyRepository(val settings: AppSettings) {
      * 用于「任务在云端继续跑」的场景：用户不该看到进度条，只该看到内容变多。
      */
     private suspend fun silentResync(id: String): Boolean {
-        if (_ui.value.activeId != id || _ui.value.sending) return false
+        if (_ui.value.activeId != id || inFlightTurns.contains(id)) return false
         val conn = withContext(Dispatchers.IO) {
             connections.remove(id)?.close()
             connection(id)
@@ -399,7 +407,7 @@ class BuddyRepository(val settings: AppSettings) {
         syncedAt[id] = remote.updatedAt
         val current = _ui.value
         if (current.activeId != id) return
-        val action = StateReconciler.decide(current.state, remote.state, current.sending)
+        val action = StateReconciler.decide(current.state, remote.state, inFlightTurns.contains(id))
         // 刚载入完，消息是最新的：只采纳状态，不再触发一次重建。
         if (action != StateReconciler.Action.NONE) {
             synchronized(uiLock) {
@@ -1076,8 +1084,13 @@ class BuddyRepository(val settings: AppSettings) {
             // 发送目标在协程启动时锁定：用户中途切到别的会话，本轮仍归原会话，
             // 且错误/状态只写回原会话，不能污染当前显示的另一条会话。
             val targetId = _ui.value.activeId
+            // 新会话的 id 在 try 里才产生，所以用可变变量记住真正在跑的会话，
+            // finally 才能准确注销——按 activeId 注销的话，用户切走后这个 id 会永远留在集合里，
+            // 那条会话就再也不会被对账、也不会补新输出。
+            var turnId: String? = targetId
             try {
                 val id = targetId ?: createConversation(prompt)
+                turnId = id
                 // 本地状态可能过期（重放收尾会把执行中压成 IDLE，云端其实还在跑）：
                 // 发送前用服务端记录再确认一次，别把消息塞进别人的轮次。
                 if (targetId != null && !confirmIdle(targetId)) {
@@ -1085,6 +1098,7 @@ class BuddyRepository(val settings: AppSettings) {
                     _events.tryEmit("云端任务仍在进行，消息未发送：请先等待，或点停止")
                     return@launch
                 }
+                inFlightTurns.add(id)
                 val conn = withContext(Dispatchers.IO) { connection(id) }
                 applyModel(conn)
                 val (blocks, sourceBlocks) = buildPrompt(conn.session, prompt, attachments)
@@ -1098,6 +1112,7 @@ class BuddyRepository(val settings: AppSettings) {
                 lastTurnEndAt = System.currentTimeMillis()
                 applyIfActive(targetId) { copy(error = readable(e), state = TurnState.FAILED) }
             } finally {
+                turnId?.let { inFlightTurns.remove(it) }
                 if (_ui.value.activeId == targetId) _ui.value = _ui.value.copy(sending = false)
                 runCatching { refreshConversations() }
             }
@@ -1140,6 +1155,7 @@ class BuddyRepository(val settings: AppSettings) {
             }
             // 用户主动停止：给一个收敛窗口，别让服务端滞后的 running 立刻把按钮弹回来。
             lastTurnEndAt = System.currentTimeMillis()
+            inFlightTurns.remove(id)
             applyIfActive(id) { copy(state = TurnState.STOPPED, sending = false) }
             // 云端收敛到停止需要一点时间；立刻对一次账，别让角标停在「进行中」。
             reconcile()
@@ -1156,6 +1172,9 @@ class BuddyRepository(val settings: AppSettings) {
         val viaResolve = ask.requestId != null
         if (viaResolve) connections[id]?.recordAnswer(text)
         scope.launch {
+            // 回答之后本轮仍在继续，和对账一样要算「在途」，否则会被服务端滞后的
+            // waiting 状态盖回去，问题卡片可能重新弹出来。
+            inFlightTurns.add(id)
             try {
                 val conn = withContext(Dispatchers.IO) { connection(id) }
                 if (viaResolve) conn.resolve(ask, answer)
@@ -1168,6 +1187,7 @@ class BuddyRepository(val settings: AppSettings) {
             } catch (e: Exception) {
                 applyIfActive(id) { copy(error = readable(e)) }
             } finally {
+                inFlightTurns.remove(id)
                 if (_ui.value.activeId == id) _ui.value = _ui.value.copy(sending = false)
             }
         }
