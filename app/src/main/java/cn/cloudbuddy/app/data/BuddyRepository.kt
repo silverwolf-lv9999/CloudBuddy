@@ -181,9 +181,12 @@ class BuddyRepository(val settings: AppSettings) {
      */
     private fun hasLiveTurn(id: String): Boolean {
         if (!inFlightTurns.contains(id)) return false
-        val conn = connections[id] ?: return false
-        return conn.isStreamActive(STREAM_STALE_MS)
+        return streamAlive(id)
     }
+
+    /** 这条会话的本地连接最近还有没有事件进来（不管是谁发起的那一轮）。 */
+    private fun streamAlive(id: String): Boolean =
+        connections[id]?.isStreamActive(STREAM_STALE_MS) == true
 
     @Volatile private var lastFullListAt = 0L
 
@@ -483,7 +486,10 @@ class BuddyRepository(val settings: AppSettings) {
      * 清不掉就原样返回，让上层继续按「云端在跑」处理。
      */
     private suspend fun settleIfStale(id: String, remote: Conversation): Conversation {
-        if (!StateReconciler.isActive(remote.state) || hasLiveTurn(id)) return remote
+        if (!StateReconciler.isActive(remote.state)) return remote
+        // 本机在途的一轮、或本地连接上还有事件在流进来（别的设备驱动时也会流）：
+        // 都说明它真的在跑，不碰。
+        if (hasLiveTurn(id) || streamAlive(id)) return remote
         val staleMs = System.currentTimeMillis() - remote.updatedAt
         if (!StateReconciler.shouldHeal(
                 remoteActive = true,
@@ -525,7 +531,7 @@ class BuddyRepository(val settings: AppSettings) {
             now - (healAt[conv.id] ?: 0L) >= HEAL_GAP_MS &&
                 StateReconciler.shouldHeal(
                     remoteActive = true,
-                    localTurnInFlight = hasLiveTurn(conv.id),
+                    localTurnInFlight = hasLiveTurn(conv.id) || streamAlive(conv.id),
                     staleMs = now - conv.updatedAt,
                     observedMs = now - (stuckSince[conv.id] ?: now),
                     tries = healTries[conv.id] ?: 0
