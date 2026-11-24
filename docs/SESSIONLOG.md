@@ -164,3 +164,8 @@
 - 用户实测任务就是在 App 里发起的（初判「旁观」不成立）：agent 等后台工具期间，中途的 completed 上报把角标顶成「已完成」，工具卡还在转圈。旧 updateState 只挡 IDLE 不挡 DONE，与谁发起无关，守卫改按「有 RUNNING 工具」判定即可覆盖两种场景。
 - 修 `AcpReducer.updateState`：有 RUNNING 工具时不采信 DONE/IDLE 上报；`session/endTurn` 收尾清理残留转圈工具。新增 2 条测试，134。
 - 版本 1.4.7 / versionCode 31。
+
+## 2026-11-24 · 1.4.7 守卫补静默间隙（1.4.8）
+
+- 用户问「还会不会出现任务在跑却显示已完成」；盘点发现工具间隙（无 RUNNING 工具 + 本地轮次）仍漏。
+- updateState 终态拦截扩为 `turnActive || hasRunningTool`；新增静默间隙回归测试，135。版本 1.4.8 / versionCode 32。

@@ -403,8 +403,9 @@ class AcpReducerTest {
 
     /**
      * 用户实测（1.4.7）：云端 agent 等一个几分钟的后台任务，期间一条中途的状态上报
-     * 把角标顶成「已完成」，工具卡却还在转。只要还有工具在转圈，状态上报里的
-     * 终态就不可信——真正的收尾只认 session/endTurn 与 prompt 响应。
+     * 把角标顶成「已完成」，工具卡却还在转。只要这轮还在跑（turnActive 或有工具
+     * 转圈），状态上报里的终态就不可信——真正的收尾只认 session/endTurn 与
+     * prompt 响应。
      */
     @Test
     fun `completed status is ignored while a tool call is still running`() {
@@ -420,7 +421,7 @@ class AcpReducerTest {
             replaying = false
         )
         assertEquals(TurnState.RUNNING, reducer.snapshot().state)
-        // 工具收尾之后，终态上报照常采信。
+        // 工具收尾了，但这一轮还在跑（turnActive）——completed 上报依旧不可信。
         reducer.accept(toolStatus("call-1", "completed"), replaying = false)
         reducer.accept(
             sessionUpdate(
@@ -429,6 +430,9 @@ class AcpReducerTest {
             ),
             replaying = false
         )
+        assertEquals(TurnState.RUNNING, reducer.snapshot().state)
+        // 正式收尾信号（prompt 响应 / endTurn）才是唯一的终态入口。
+        reducer.finishTurn(JSONObject().put("stopReason", "end_turn"))
         assertEquals(TurnState.DONE, reducer.snapshot().state)
     }
 
@@ -446,5 +450,28 @@ class AcpReducerTest {
         val snapshot = reducer.snapshot()
         assertEquals(TurnState.DONE, snapshot.state)
         assertEquals(ToolState.NONE, snapshot.messages.last { it.role == ChatRole.TOOL }.toolState)
+    }
+
+    /**
+     * 本地发起的轮次，两个工具之间的静默间隙（agent 思考几分钟、没有工具在转圈）里
+     * 来一条 completed 上报，同样不能把角标顶成「已完成」——真收尾只认 endTurn 与
+     * prompt 响应。此前只按「有 RUNNING 工具」判定，这个间隙就是漏网之鱼。
+     */
+    @Test
+    fun `completed status is ignored during a silent gap of a local turn`() {
+        val reducer = AcpReducer("session-1")
+        reducer.beginTurn("继续")
+        reducer.accept(chunk("agent_message_chunk", "先看一下"), replaying = false)
+        reducer.accept(
+            sessionUpdate(
+                JSONObject().put("sessionUpdate", "session_info_update")
+                    .put("sessionStatus", "completed")
+            ),
+            replaying = false
+        )
+        assertEquals(TurnState.RUNNING, reducer.snapshot().state)
+        // 正式收尾信号照常生效。
+        reducer.finishTurn(JSONObject().put("stopReason", "end_turn"))
+        assertEquals(TurnState.DONE, reducer.snapshot().state)
     }
 }

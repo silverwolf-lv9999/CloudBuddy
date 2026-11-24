@@ -348,14 +348,16 @@ class AcpReducer(private val sessionId: String, private val conversationId: Stri
     private fun updateState(next: TurnState) {
         if (!allowRemoteRunning && (next == TurnState.RUNNING || next == TurnState.WAITING)) return
         if (next == TurnState.RUNNING && state == TurnState.STOPPED) return
-        // 轮次仍在进行时，「空闲」只是一次中间态上报，不能把状态降级：
-        // 否则顶部状态会在「云端执行中 / 空闲」之间反复横跳。
-        if (next == TurnState.IDLE && turnActive) return
-        // 还有工具在转圈时，「已完成/空闲」不可信。用户实测：云端 agent 正等一个
-        // 后台任务（几分钟没有任何事件），一条中途的状态上报把角标顶成「已完成」，
-        // 工具卡却还在转。真正的收尾只认 session/endTurn 与 prompt 响应（finishTurn），
-        // 它们不走这里，所以这里拦掉的只会是别的来源的中间态上报。
-        if ((next == TurnState.DONE || next == TurnState.IDLE) && hasRunningTool()) return
+        // 终态上报（DONE/IDLE）在两种情况下都不采信：
+        // 1. 本客户端这一轮还在跑（turnActive）：真收尾只认 session/endTurn 与
+        //    prompt 响应（finishTurn），它们不走这里；静默间隙（思考几分钟、
+        //    工具间隔）里来的 completed 上报一律是杂音。
+        // 2. 还有工具在转圈：与谁发起无关（旁观/另一台设备驱动的轮次），
+        //    用户实测 agent 等后台任务几分钟时，一条中途上报把角标顶成「已完成」，
+        //    工具卡却还在转。
+        if (next == TurnState.DONE || next == TurnState.IDLE) {
+            if (turnActive || hasRunningTool()) return
+        }
         state = next
         if (next == TurnState.DONE || next == TurnState.FAILED || next == TurnState.STOPPED) {
             turnActive = false
