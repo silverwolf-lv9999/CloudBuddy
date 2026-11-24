@@ -123,4 +123,5 @@
 - **17:2x** 读 `BuddyRepository.reconcile/reconcileAfterOpen/confirmIdle/send/openConversation` 与 `AcpConnection.setLocalTurnActive/initializeAndLoad`，确认两处闸门漏点：`active || replaying`、`endReplay` 不在 finally。
 - **17:3x** 改 `StateReconciler`：新增 `shouldHeal` + 三个常量（IDLE 5 分钟 / 观察 2 分钟 / 最多 3 次）；`AcpConnection` 两处修正；`BuddyRepository` 新增 `settleIfStale`/`scheduleHeal`/`healStaleRun` 并在 `refreshConversations`、`reconcile`、`reconcileAfterOpen`、`confirmIdle` 四处接入。
 - **17:4x** 新增 4 条 `shouldHeal` 单测；版本升 1.4.1 / versionCode 25。
-- **17:5x** `verify.sh` 全绿：130 单测 / lint 0 error / 正式签名；`dist/CloudBuddy-1.4.1-release.apk`，sha256 `7e6d4a0c1fd7a0ad7fe010521c3d1130fad6f508450211e5e73f87f7f08529e0`。
+- **17:5x** `verify.sh` 全绿：130 单测 / lint 0 error / 正式签名；`dist/CloudBuddy-1.4.1-release.apk`，sha256 `fe842208f5a06605d16088c9416713f4cbe481c3b8fbf69209ea54c524ab7c1e`。
+- **17:5x** 补一条保护：本地连接还在推流（别的设备驱动）时不算滞留，避免自愈打断真任务；随 commit `8c22ae0` 重打 tag，CI 重建。
