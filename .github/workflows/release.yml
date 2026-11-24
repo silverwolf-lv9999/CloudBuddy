@@ -9,12 +9,16 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # tag 和 build.gradle.kts 的版本号必须一致，否则会出现「Release 标的 v1.2.0，
       # 装上去显示 1.1.0」，用户没法判断自己装的是哪个。
@@ -30,12 +34,30 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
-      - uses: android-actions/setup-android@v3
+      # 不用 android-actions/setup-android：runner 镜像本来就带 SDK，那个 action
+      # 会连 dl.google.com 下 cmdline-tools 再 sdkmanager --update，网络一抖整步就失败。
+      - name: 准备 Android SDK
+        run: |
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          echo "候选 SDK: $sdk"
+          if [ ! -d "$sdk" ]; then
+            echo "::error::runner 上没有 $sdk，镜像可能变了"
+            ls /usr/local/lib 2>/dev/null || true
+            exit 1
+          fi
+          echo "== platforms =="; ls "$sdk/platforms" 2>/dev/null || true
+          echo "== build-tools =="; ls "$sdk/build-tools" 2>/dev/null || true
+          if [ ! -d "$sdk/platforms/android-35" ] || [ -z "$(ls -A "$sdk/build-tools" 2>/dev/null)" ]; then
+            echo "::error::缺少 platforms/android-35 或 build-tools，SDK 不完整"
+            exit 1
+          fi
+          echo "ANDROID_SDK_ROOT=$sdk" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$sdk" >> "$GITHUB_ENV"
 
       # 密钥以 base64 存在 Secrets 里，只在 runner 上还原成文件，跑完随机器销毁。
       # 不要把它写进仓库、artifact 或日志。
@@ -52,6 +74,8 @@ jobs:
           fi
           mkdir -p keystore
           printf '%s' "$KEYSTORE_B64" | base64 -d > keystore/cloudbuddy-release.jks
+          # 先确认解出来的密钥真能打开，别等到 apksigner 那步才报错
+          keytool -list -keystore keystore/cloudbuddy-release.jks -storepass "$KS_PASS" -alias "$KEY_ALIAS" >/dev/null
           {
             echo "sdk.dir=$ANDROID_SDK_ROOT"
             echo "release.storeFile=keystore/cloudbuddy-release.jks"
@@ -60,8 +84,20 @@ jobs:
             echo "release.keyPassword=$KEY_PASS"
           } > local.properties
 
+      # 失败时把末尾几十行塞进 ::error:: 注解。Actions 的原始日志要从 blob 存储下载，
+      # 有些出口网关取不到；注解走普通 API，能读。
       - name: 构建与自检
-        run: bash scripts/verify.sh
+        run: |
+          set +e
+          bash scripts/verify.sh 2>&1 | tee /tmp/build.log
+          status=${PIPESTATUS[0]}
+          set -e
+          tail -25 /tmp/build.log || true
+          if [ "$status" -ne 0 ]; then
+            msg=$(tail -30 /tmp/build.log | tr '\n' '\r' | sed 's/\r/%0A/g' | cut -c1-6000)
+            echo "::error title=verify.sh 失败(exit $status)::$msg"
+            exit "$status"
+          fi
 
       - name: 留存产物
         uses: actions/upload-artifact@v4
