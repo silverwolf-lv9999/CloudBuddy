@@ -65,7 +65,7 @@ bash scripts/verify.sh           # 正式包（release），归档 dist/CloudBud
 bash scripts/verify.sh --debug   # 需要 debug 包时
 ```
 
-当前版本 1.4.5（versionCode 29），4096 位 RSA 正式密钥签名，有效期到 2054 年。
+当前版本 1.4.6（versionCode 30），4096 位 RSA 正式密钥签名，有效期到 2054 年。
 签名指纹（后续版本必须一致，否则无法覆盖安装）：
 
 ```

@@ -154,3 +154,7 @@
 - 关于区加「提交反馈」→ GitHub Issues。
 - 工作区：`downloaded` 记录已下载文件，点击直接打开；下载气泡加「取消」（`SandboxFs.read` 流式循环检测取消标记抛 CloudException 499）。
 - 版本升 1.4.5 / versionCode 29。
+
+## 2026-11-24 · 折叠组动画与小字（1.4.6）
+
+- 用户问执行中的折叠组没有展开/折叠动画是否 bug；确认是 1.4.0 性能规避，现恢复 `animateContentSize` 全程生效，并删除「展开/收起」尾注文字。版本 1.4.6 / versionCode 30。

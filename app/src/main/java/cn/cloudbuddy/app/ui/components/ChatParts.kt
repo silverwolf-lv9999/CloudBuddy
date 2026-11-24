@@ -210,7 +210,7 @@ fun StepsGroup(
         Column(
             modifier = Modifier
                 .padding(horizontal = 12.dp, vertical = 6.dp)
-                .then(if (running || state == TurnState.RUNNING) Modifier else Modifier.animateContentSize())
+                .animateContentSize()
         ) {
             Row(
                 modifier = Modifier
@@ -246,12 +246,6 @@ fun StepsGroup(
                 if (running) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(11.dp), strokeWidth = 1.5.dp, color = accent
-                    )
-                } else {
-                    Text(
-                        text = if (expanded) "收起" else "展开",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
                     )
                 }
             }
