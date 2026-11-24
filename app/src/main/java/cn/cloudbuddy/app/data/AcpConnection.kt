@@ -22,6 +22,15 @@ import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
+/**
+ * 云端任务还在跑、只是本地等待窗口到了。
+ *
+ * 与 [SocketTimeoutException] 区分开：后者对 initialize/set_model 这类「必须立刻有响应」
+ * 的调用成立，但 `session/prompt` 的响应要等整轮跑完才回，长任务天然会超过本地窗口。
+ * 上层收到这个异常不能把轮次标成失败，否则就会出现「任务还在转、界面却报超时」。
+ */
+class PromptWaitTimeout : IOException("云端任务仍在运行")
+
 /** 快照推送的最小间隔：把 SSE 的高密度分片合并成约 16 次/秒的界面刷新。 */
 private const val PUSH_INTERVAL_MS = 60L
 
@@ -29,15 +38,18 @@ private const val PUSH_INTERVAL_MS = 60L
 private const val REPLAY_PROGRESS_INTERVAL_MS = 300L
 
 /**
- * 回放静默窗口：SSE 上连续这么久没有新事件，就认定历史已经放完。
+ * 回放静默窗口：只用于提示「载入较慢」，不再据此结束回放。
  *
- * 长会话的 `session/load` 响应可能几十秒才回，但历史事件通常几秒内就推完了；
- * 用静默窗口先放行界面，比死等响应快一个数量级。
+ * 1.3.3：此前用它提前 endReplay，历史长、工具调用慢时事件间隔会超过 1.5s，
+ * 放行后剩余历史就逐条上屏（回放观感）。现在回放结束只认 loadDone。
  */
 private const val REPLAY_IDLE_MS = 1_500L
 
-/** 一条历史事件都没收到时的硬上限：不能让界面永远停在「正在连接」。 */
+/** 一条历史事件都没收到时，多久提示一次「仍在载入」。 */
 private const val REPLAY_HARD_LIMIT_MS = 8_000L
+
+/** prompt SSE 流的兜底上限：长任务可能跑几十分钟，远大于普通 RPC 的窗口。 */
+private const val PROMPT_CALL_TIMEOUT_MS = 2 * 60 * 60_000L
 
 /** 等 load 收尾时，用户抢先发消息最多让 prompt 等这么久。 */
 private const val LOAD_GATE_MS = 10_000L
@@ -168,17 +180,20 @@ class AcpConnection(
      */
     private suspend fun watchReplay() {
         val startedAt = System.currentTimeMillis()
-        while (!closed && replaying) {
+        var slowNoted = false
+        // 1.3.3：不再因为「事件静默 1.5s」就 endReplay。回放是否结束只由 loadDone
+        // 决定（load 响应到达或等待超时）。历史长、工具调用慢时事件间隔超过 1.5s 很常见，
+        // 提前放行会让后续历史事件在 replaying=false 下逐条上屏，正是用户说的「回放」。
+        while (!closed && !loadDone) {
             delay(300)
             val now = System.currentTimeMillis()
             val at = lastEventAt
-            // 有事件时看静默窗口；一条事件都没收到（旧网关/空会话）时给一个硬上限，
-            // 否则界面会一直停在「正在连接」。
             val idle = if (at > 0) now - at else now - startedAt
             val limit = if (at > 0) REPLAY_IDLE_MS else REPLAY_HARD_LIMIT_MS
-            if (idle >= limit) {
-                endReplay()
-                return
+            if (idle >= limit && !slowNoted) {
+                slowNoted = true
+                // 只把进度数字刷新一次，让界面知道「还在载入」；不推消息、不结束回放。
+                onReplayProgress?.invoke(reducer.messageCount())
             }
         }
     }
@@ -241,7 +256,12 @@ class AcpConnection(
         }
     }
 
-    /** 下发一轮对话；返回时本轮已结束（或超时）。 */
+    /**
+     * 下发一轮对话；返回时本轮已结束，或本地等待窗口到了（抛 [PromptWaitTimeout]）。
+     *
+     * 长任务下 prompt 的响应要等云端整轮跑完才回，本地窗口到了不代表失败：
+     * SSE 仍在持续推工具调用/正文，reducer 会自己收敛到终态。
+     */
     fun prompt(text: String, model: String, blocks: JSONArray, sourceBlocks: JSONArray, timeoutMs: Long) {
         awaitLoad()
         val params = JSONObject()
@@ -261,7 +281,12 @@ class AcpConnection(
             )
         reducer.beginTurn(text)
         publishCoalesced(force = true)
-        rpc("session/prompt", params, timeoutMs)
+        try {
+            rpc("session/prompt", params, timeoutMs, waitKind = WaitKind.PROMPT)
+        } catch (_: SocketTimeoutException) {
+            // 只表示本地等够了；任务可能仍在云端跑，界面状态交给 SSE 事件收敛。
+            throw PromptWaitTimeout()
+        }
     }
 
     fun setModel(modelId: String) {
@@ -372,7 +397,9 @@ class AcpConnection(
      */
     private fun publishCoalesced(force: Boolean = false) {
         if (closed) return
-        if (replaying) {
+        // 用 !loadDone 而不是 replaying 作为闸门：replaying 可能被看门狗提前清掉，
+        // 而 session/load 还没真正收尾。只看 replaying 会让剩余历史逐条上屏。
+        if (!loadDone) {
             publishReplayProgress()
             return
         }
@@ -483,14 +510,22 @@ class AcpConnection(
         replyExecutor.execute { runCatching { postRpc(payload, 20_000, fatal = false) } }
     }
 
-    private fun rpc(method: String, params: JSONObject, timeoutMs: Long = 30_000, notification: Boolean = false) {
+    private enum class WaitKind { NORMAL, PROMPT }
+
+    private fun rpc(
+        method: String,
+        params: JSONObject,
+        timeoutMs: Long = 30_000,
+        notification: Boolean = false,
+        waitKind: WaitKind = WaitKind.NORMAL
+    ) {
         if (closed) throw IOException("ACP 连接已关闭")
         val payload = JSONObject().put("jsonrpc", "2.0").put("method", method).put("params", params)
         val id = if (notification) null else seq.incrementAndGet()
         val request = if (id != null) PendingRpc(method).also { pending[id] = it } else null
         id?.let { payload.put("id", it) }
         try {
-            postRpc(payload, timeoutMs)
+            postRpc(payload, timeoutMs, waitKind = waitKind)
             if (request != null) {
                 if (!request.latch.await(timeoutMs, TimeUnit.MILLISECONDS) && request.response == null) {
                     throw SocketTimeoutException("ACP $method 等待响应超时")
@@ -509,7 +544,12 @@ class AcpConnection(
      * [fatal] 为 false 时不因传输错误关闭整条连接：回包失败只会让这一问超时，
      * 不该顺带把正在跑的实时流一起掐掉。
      */
-    private fun postRpc(payload: JSONObject, timeoutMs: Long, fatal: Boolean = true) {
+    private fun postRpc(
+        payload: JSONObject,
+        timeoutMs: Long,
+        fatal: Boolean = true,
+        waitKind: WaitKind = WaitKind.NORMAL
+    ) {
         val request = http.headers(
             Request.Builder().url(session.link.replace(Regex("^http://"), "https://"))
                 .post(payload.toString().toRequestBody(CloudHttp.JSON))
@@ -521,7 +561,16 @@ class AcpConnection(
             .apply { if (acpToken.isNotBlank()) header("acp-session-token", acpToken) }
             .build()
         val call = http.stream.newCall(request)
-        call.timeout().timeout(timeoutMs + 30_000, TimeUnit.MILLISECONDS)
+        // prompt 的 SSE 流会一直读到任务跑完才结束，等待时间实际由这里的 call timeout
+        // 决定（不是 rpc 里的 latch.await——流一关响应早处理完了）。普通 RPC 用窗口+30s；
+        // prompt 给一个很长的兜底，避免「任务还在转、10 分钟就被客户端掐断报超时」。
+        // 真到兜底时抛出的超时会在 prompt() 里转成 PromptWaitTimeout，不标失败。
+        val callTimeout = if (waitKind == WaitKind.PROMPT) {
+            maxOf(timeoutMs + 30_000, PROMPT_CALL_TIMEOUT_MS)
+        } else {
+            timeoutMs + 30_000
+        }
+        call.timeout().timeout(callTimeout, TimeUnit.MILLISECONDS)
         try {
             call.execute().use { response ->
                 if (!response.isSuccessful) throw CloudException("ACP 请求失败：HTTP ${response.code}", response.code)

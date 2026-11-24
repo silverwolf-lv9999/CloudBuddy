@@ -967,3 +967,32 @@ GitHub 偶尔返回错误页，解析崩了会让整个设置页挂掉。
 - 4 项新增单测：POST/PUT/PATCH 补空 body、GET/DELETE 保持 null、有 body 时按 JSON 序列化。
 - `bash scripts/verify.sh` 全绿：109 个单测，lint 0 error，正式签名。
 - **未做真机验证**：需要在用户设备上再点一次「浏览技能市场」确认弹窗消失。
+
+# 1.3.3 · 三个真机问题：回放 / 误判超时 / 输入栏串会话
+
+## 背景
+用户真机反馈：①冷启动首个会话先加载再显示正常，但退出再点另一个会话又变成逐条回放，
+要求所有会话都加载完再显示；②云端任务还在跑（"正在 Get Task Output" 转圈），客户端
+先弹「请求超时，请稍后重试」并标执行失败；③A 会话任务在跑时切到已完成的 B 会话，
+输入栏仍显示 A 的红色暂停按钮。
+
+## 根因与改法
+1. **回放**：`watchReplay` 用「事件静默 1.5s」提前 `endReplay()`，之后到达的历史事件
+   在 `replaying=false` 下被 `publishCoalesced` 逐条推上屏。改为：`publishCoalesced` 的
+   闸门用 `!loadDone`（只认 `session/load` 收尾），看门狗静默只上报「载入较慢」提示，
+   不再结束回放。
+2. **误判超时**：`postRpc` 同步读 SSE 到流结束，等待时长实际由 OkHttp `call.timeout()`
+   （窗口+30s=10.5 分钟）控制，`latch.await` 走不到。10 分钟后客户端掐断仍在推进度的
+   任务流并抛 `SocketTimeoutException`，`send()` catch 转成 FAILED。改为：`rpc()` 加
+   `WaitKind`，prompt 的 call timeout 用 2 小时兜底；超时抛新的 `PromptWaitTimeout`，
+   `send()`/`answerQuestion()` 捕获后只发事件提示、不标失败、不弹红色错误。
+3. **串会话**：`ui.sending` 全局布尔，A 发送后 coroutine 阻塞期间切到 B，`sending`
+   仍为 true。改为：`openConversation`/`startNew`/`closeConversation` 清 `sending`；
+   发送协程锁定 `targetId`，新增 `applyIfActive(id)`，状态与错误只写回仍活跃的原会话。
+
+## 验证（1.3.3）
+- `bash scripts/verify.sh` 全绿：112 个单测（新增 `LoadGateTest` 3 项），lint 0 error。
+- APK：`dist/CloudBuddy-1.3.3-release.apk`，versionCode 17，正式证书，
+  sha256 `34b2e7ad6c482e15c2cdb8ad8cdc6dc8f8adab37713593083cc024db53d7d8f7`。
+- **未做真机验证**：三个问题都需在用户设备上复测。超时修复只把窗口从 10 分钟放宽到
+  2 小时并改成软超时；超过 2 小时的任务仍需观察 reducer 是否能靠 SSE 收敛终态。

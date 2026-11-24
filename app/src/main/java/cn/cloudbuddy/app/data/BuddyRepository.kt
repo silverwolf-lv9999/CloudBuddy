@@ -723,6 +723,7 @@ class BuddyRepository(val settings: AppSettings) {
             loadingConversation = false,
             historyProgress = 0,
             historyNotice = null,
+            sending = false,
             stepsExpanded = emptyMap()
         )
     }
@@ -738,6 +739,9 @@ class BuddyRepository(val settings: AppSettings) {
             artifacts = emptyList(),
             error = null,
             ask = null,
+            // 清掉上一条会话遗留的 sending：否则 A 在跑时切到 B，输入栏仍是暂停按钮。
+            // B 自己若在跑，state 会在下面从它的快照恢复成 RUNNING，不受影响。
+            sending = false,
             state = TurnState.IDLE,
             activeTitle = _ui.value.conversations.firstOrNull { it.id == id }?.title ?: "云端会话",
             stepsExpanded = emptyMap()
@@ -794,6 +798,7 @@ class BuddyRepository(val settings: AppSettings) {
             error = null,
             historyProgress = 0,
             historyNotice = null,
+            sending = false,
             stepsExpanded = emptyMap()
         )
     }
@@ -802,27 +807,45 @@ class BuddyRepository(val settings: AppSettings) {
         if (prompt.isBlank() && attachments.isEmpty()) return
         _ui.value = _ui.value.copy(sending = true, error = null, ask = null)
         scope.launch {
+            // 发送目标在协程启动时锁定：用户中途切到别的会话，本轮仍归原会话，
+            // 且错误/状态只写回原会话，不能污染当前显示的另一条会话。
+            val targetId = _ui.value.activeId
             try {
-                val id = _ui.value.activeId ?: createConversation(prompt)
+                val id = targetId ?: createConversation(prompt)
                 val conn = withContext(Dispatchers.IO) { connection(id) }
                 applyModel(conn)
                 val (blocks, sourceBlocks) = buildPrompt(conn.session, prompt, attachments)
                 conn.prompt(prompt, currentModel(), blocks, sourceBlocks, PROMPT_TIMEOUT)
                 _events.tryEmit("本轮已结束")
+            } catch (e: PromptWaitTimeout) {
+                // 本地等待窗口到了，但云端任务可能还在跑（SSE 仍在推进度）。
+                // 不标失败、不弹红色错误；界面状态由 reducer 依事件收敛。
+                _events.tryEmit("云端任务仍在运行，可继续等待或点停止")
             } catch (e: Exception) {
-                _ui.value = _ui.value.copy(error = readable(e), state = TurnState.FAILED)
+                applyIfActive(targetId) { copy(error = readable(e), state = TurnState.FAILED) }
             } finally {
-                _ui.value = _ui.value.copy(sending = false)
+                if (_ui.value.activeId == targetId) _ui.value = _ui.value.copy(sending = false)
                 runCatching { refreshConversations() }
             }
         }
+    }
+
+    /**
+     * 只在 [id] 仍是当前会话时改 UI。
+     *
+     * 用户切走后，旧会话的后台 coroutine 仍会结束/报错；不判断就会把另一条
+     * 会话的输入栏改成暂停、或把错误贴到人家页面上（1.3.3 实测问题 3）。
+     */
+    private inline fun applyIfActive(id: String?, block: AppUiState.() -> AppUiState) {
+        val current = _ui.value
+        if (id != null && current.activeId == id) _ui.value = block(current)
     }
 
     fun stop() {
         val id = _ui.value.activeId ?: return
         scope.launch {
             runCatching { connections[id]?.cancelTurn() }
-            _ui.value = _ui.value.copy(state = TurnState.STOPPED, sending = false)
+            applyIfActive(id) { copy(state = TurnState.STOPPED, sending = false) }
         }
     }
 
@@ -843,10 +866,12 @@ class BuddyRepository(val settings: AppSettings) {
                     val (blocks, source) = buildPrompt(conn.session, text, emptyList())
                     conn.prompt(text, currentModel(), blocks, source, PROMPT_TIMEOUT)
                 }
+            } catch (e: PromptWaitTimeout) {
+                _events.tryEmit("云端任务仍在运行，可继续等待或点停止")
             } catch (e: Exception) {
-                _ui.value = _ui.value.copy(error = readable(e))
+                applyIfActive(id) { copy(error = readable(e)) }
             } finally {
-                _ui.value = _ui.value.copy(sending = false)
+                if (_ui.value.activeId == id) _ui.value = _ui.value.copy(sending = false)
             }
         }
     }

@@ -267,6 +267,19 @@ release APK（`verify.sh` 里的证书 DN 校验通过，证明用的是正式�
     `Content-Length: 0`，抓包时看不到这个差异）。统一在 `CloudHttp.bodyFor()` 给
     POST/PUT/PATCH 的 null body 补长度为 0 的 JSON body，不要在每个调用点各自处理。
 
+17. **回放闸门只看 `loadDone`，超时要分「软/硬」**。2026-11-24 真机三连坑：
+    - 回放结束不能靠「事件静默 1.5s」判定（`watchReplay` 看门狗）。历史长、工具调用慢
+      时事件间隔会超过 1.5s，提前 `endReplay()` 后剩余历史在 `replaying=false` 下逐条上屏
+      =用户看到的「回放」。`publishCoalesced` 的闸门必须用 `!loadDone`，只认
+      `session/load` 真正收尾（响应到达或等待超时）。
+    - `session/prompt` 的响应要等整轮跑完，本地 10 分钟窗口到了 ≠ 任务失败。
+      真正掐断流的是 OkHttp 的 **call timeout**（`postRpc` 里同步读 SSE 到流结束，
+      `latch.await` 根本走不到）。prompt 用 2 小时兜底，超时抛 `PromptWaitTimeout`
+      而不是 `SocketTimeoutException`；UI 不标 FAILED、不弹红色错误，状态交给 SSE 收敛。
+    - `ui.sending` 是全局布尔值：A 会话在跑时切到 B，输入栏仍显示 A 的红色暂停按钮，
+      且后台错误会贴到 B 页面。切会话（open/start/close）一律清 `sending`；发送协程
+      锁定 `targetId`，用 `applyIfActive(id)` 保证状态只写回原会话。
+
 ## 协议速查
 
 完整记录在 [docs/protocol.md](docs/protocol.md)，改协议前先读。
