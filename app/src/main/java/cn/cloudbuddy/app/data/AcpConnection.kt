@@ -126,7 +126,10 @@ class AcpConnection(
      */
     fun setLocalTurnActive(active: Boolean) {
         localTurnActive = active
-        reducer.allowRemoteRunning = active || replaying
+        // 只认「本客户端这一轮」。以前这里是 `active || replaying`：回放没收尾
+        // （load 抛了非超时异常就会）时 replaying 永远是 true，闸门等于没关，
+        // 滞留的 working 事件照样能把界面顶成「运行中」，重装也去不掉。
+        reducer.allowRemoteRunning = active
     }
 
     @Volatile private var connectionId: String = ""
@@ -269,30 +272,36 @@ class AcpConnection(
      * @return true 表示 load 正常返回；false 表示等到超时（历史可能不完整）。
      */
     fun initializeAndLoad(timeoutMs: Long = 90_000L): Boolean {
-        rpc(
-            "initialize",
-            JSONObject().put("protocolVersion", 1)
-                .put("clientCapabilities", JSONObject().put("fs", JSONObject()
-                    .put("readTextFile", false)
-                    .put("writeTextFile", false))),
-            INIT_TIMEOUT_MS
-        )
         val complete = try {
             rpc(
-                "session/load",
-                JSONObject()
-                    .put("sessionId", session.acpSessionId)
-                    .put("cwd", session.cwd ?: "/workspace")
-                    .put("mcpServers", settings.mcp.payload()),
-                timeoutMs
+                "initialize",
+                JSONObject().put("protocolVersion", 1)
+                    .put("clientCapabilities", JSONObject().put("fs", JSONObject()
+                        .put("readTextFile", false)
+                        .put("writeTextFile", false))),
+                INIT_TIMEOUT_MS
             )
-            true
-        } catch (_: SocketTimeoutException) {
-            loadTimedOut = true
-            false
+            try {
+                rpc(
+                    "session/load",
+                    JSONObject()
+                        .put("sessionId", session.acpSessionId)
+                        .put("cwd", session.cwd ?: "/workspace")
+                        .put("mcpServers", settings.mcp.payload()),
+                    timeoutMs
+                )
+                true
+            } catch (_: SocketTimeoutException) {
+                loadTimedOut = true
+                false
+            }
+        } finally {
+            // 收尾必须在 finally 里：initialize/load 抛了非超时异常时，loadDone 一直为
+            // false、replaying 一直为 true，回放闸门就永远关不上（界面永久「运行中」）。
+            // 这里只负责「回放这一段结束」，连接是否可用仍由调用方判断。
+            loadDone = true
+            endReplay()
         }
-        loadDone = true
-        endReplay()
         publishCoalesced(force = true)
         return complete
     }

@@ -69,4 +69,36 @@ object StateReconciler {
         if (remoteUpdatedAt <= 0L) return isActive(remote)
         return remoteUpdatedAt > syncedAt
     }
+
+    /**
+     * 要不要对这条会话做一次「自愈」（重新挂一次 `session/load` 把滞留状态位收敛掉）。
+     *
+     * 背景：服务端的 `status` 不是从消息推出来的，而是「还有 agent 挂着这条会话」的标记。
+     * 进程半路没了、连接被中间层吞掉，标记就留在 running 上，网页端和所有客户端都会
+     * 读到同一个假状态——重装 App 也不会变。唯一的清法是重新 load 一次这条会话
+     * （用户点进去就是这个动作），所以判定要保守，只在「肯定不是在跑」时才动手。
+     *
+     * 五个条件全满足才自愈：服务端说在跑、本机没有在途的一轮、内容已经 [idleMs] 没更新、
+     * 这条会话被观察到「在跑」超过 [observeMs]、尝试次数没用完。
+     */
+    fun shouldHeal(
+        remoteActive: Boolean,
+        localTurnInFlight: Boolean,
+        staleMs: Long,
+        observedMs: Long,
+        tries: Int
+    ): Boolean {
+        if (!remoteActive || localTurnInFlight) return false
+        if (tries >= HEAL_MAX_TRIES) return false
+        return staleMs >= HEAL_IDLE_MS && observedMs >= HEAL_OBSERVE_MS
+    }
+
+    /** 内容多久没更新才敢认定「不是真在跑」：长工具调用也会安静几分钟，给足余量。 */
+    const val HEAL_IDLE_MS = 5 * 60_000L
+
+    /** 观察到「运行中」多久之后才动手：刚发起的任务前两分钟一律不碰。 */
+    const val HEAL_OBSERVE_MS = 2 * 60_000L
+
+    /** 同一条会话最多自愈几次；用完就停手，交给用户点进去或另一个版本处理。 */
+    const val HEAL_MAX_TRIES = 3
 }

@@ -153,6 +153,17 @@ class BuddyRepository(val settings: AppSettings) {
     private val syncedAt = ConcurrentHashMap<String, Long>()
 
     /**
+     * 自愈簿记：会话 id → 首次观察到「运行中」的时刻 / 上次动手指令时刻 / 已尝试次数。
+     *
+     * 见 [scheduleHeal]：服务端的状态位只有重新 load 一次才会收敛，这里记的就是
+     * 「观察了多久」「试过几次」，保证不会反复去戳另一台设备真正在跑的会话。
+     */
+    private val stuckSince = ConcurrentHashMap<String, Long>()
+    private val healAt = ConcurrentHashMap<String, Long>()
+    private val healTries = ConcurrentHashMap<String, Int>()
+    @Volatile private var healing = false
+
+    /**
      * 正在跑 prompt 的会话 id。
      *
      * 不能用全局 `ui.sending` 代替：切到别的会话时它会被清掉，切回来时又没人置回 true。
@@ -271,6 +282,9 @@ class BuddyRepository(val settings: AppSettings) {
             lastFullListAt = now
             list = runCatching { api.listConversations() }.getOrNull()
             activeRemote = list?.firstOrNull { it.id == activeId }
+            // 列表里其它会话的滞留「运行中」也在这里修——用户可能一直停在会话页，
+            // 看不到列表，自然不会「点进去」把它点活。
+            list?.let { scheduleHeal(it) }
         }
         if (activeRemote == null) {
             activeRemote = runCatching { api.batchGet(listOf(activeId)) }.getOrNull()?.firstOrNull()
@@ -418,8 +432,12 @@ class BuddyRepository(val settings: AppSettings) {
      * 而云端可能正被另一台设备驱动。这一步决定输入栏是发送还是暂停。
      */
     private suspend fun reconcileAfterOpen(id: String) {
-        val remote = runCatching { api.batchGet(listOf(id)) }.getOrNull()?.firstOrNull() ?: return
-        syncedAt[id] = remote.updatedAt
+        val fetched = runCatching { api.batchGet(listOf(id)) }.getOrNull()?.firstOrNull() ?: return
+        syncedAt[id] = fetched.updatedAt
+        if (_ui.value.activeId != id) return
+        // 服务端记录若是滞留的「运行中」，打开时就清掉：否则输入栏直接变成「停止」，
+        // 用户面对的是一个早就不存在的任务（1.4.0 线上反馈）。
+        val remote = settleIfStale(id, fetched)
         val current = _ui.value
         if (current.activeId != id) return
         val action = StateReconciler.decide(current.state, remote.state, hasLiveTurn(id))
@@ -441,12 +459,105 @@ class BuddyRepository(val settings: AppSettings) {
      * 发送前的最后一道闸：服务端记录里若仍是执行中/等待，就拒绝发送。
      *
      * 查不到就放行——网络抖动不该把正常发送也挡住；能查到但状态不对才是真问题。
+     *
+     * 1.4.1：拒绝之前先做一次自愈。用户实测「点进这条会话就恢复正常」，说明
+     * `session/load` 会把服务端滞留的 running 收敛掉；那就别让他只能点「停止」。
      */
     private suspend fun confirmIdle(id: String): Boolean {
-        val remote = runCatching { api.batchGet(listOf(id)) }.getOrNull()?.firstOrNull() ?: return true
-        if (!StateReconciler.isActive(remote.state)) return true
+        val fetched = runCatching { api.batchGet(listOf(id)) }.getOrNull()?.firstOrNull() ?: return true
+        val remote = settleIfStale(id, fetched)
+        if (!StateReconciler.isActive(remote.state)) {
+            // 从假「运行中」里救回来了：说一句，免得用户以后还在等这个状态。
+            if (StateReconciler.isActive(fetched.state)) _events.tryEmit("已清理该会话滞留的运行状态")
+            return true
+        }
         applyIfActive(id) { copy(state = remote.state, sending = false) }
         return false
+    }
+
+    /**
+     * 「滞留的运行中」就地清一次，返回收敛后的服务端记录。
+     *
+     * 判定条件全在 [StateReconciler.shouldHeal]：本机没有在途的一轮、内容已经很久没动。
+     * 观察窗口这里不设——调用它的时候用户正在等（发送/打开），再让他等两分钟没道理。
+     * 清不掉就原样返回，让上层继续按「云端在跑」处理。
+     */
+    private suspend fun settleIfStale(id: String, remote: Conversation): Conversation {
+        if (!StateReconciler.isActive(remote.state) || hasLiveTurn(id)) return remote
+        val staleMs = System.currentTimeMillis() - remote.updatedAt
+        if (!StateReconciler.shouldHeal(
+                remoteActive = true,
+                localTurnInFlight = false,
+                staleMs = staleMs,
+                observedMs = StateReconciler.HEAL_OBSERVE_MS,
+                tries = 0
+            )
+        ) return remote
+        healStaleRun(id)
+        return runCatching { api.batchGet(listOf(id)).firstOrNull() }.getOrNull() ?: remote
+    }
+
+    /**
+     * 自愈：把服务端滞留的「运行中」清掉。
+     *
+     * 线上证据（1.4.0）：某条会话在列表里长期挂「运行中」，本机没在跑、也没收到事件；
+     * 用户在**旧版客户端**里点进这条会话，它恢复正常，切回新客户端也跟着正常了。
+     * 也就是说这个状态位是服务端写的「还有 agent 挂着这条会话」，`session/load`
+     * 一挂上就会收敛——不需要用户真去看它。
+     *
+     * 所以这里对「看起来僵住」的会话建一条临时连接 load 一次就关，再回读真实角标。
+     * 一次只处理一条，同一条有冷却和次数上限，且要求内容五分钟没动过，
+     * 避免打断另一台设备真正在跑的任务。
+     */
+    private fun scheduleHeal(list: List<Conversation>) {
+        if (!foreground || healing || list.isEmpty()) return
+        val now = System.currentTimeMillis()
+        val activeId = _ui.value.activeId
+        // 当前打开的会话不在这里处理（它有活连接，发送前由 confirmIdle 负责）。
+        val running = list.filter { StateReconciler.isActive(it.state) && it.id != activeId }
+        val ids = running.map { it.id }.toSet()
+        // 只给「在跑」的会话保留观察起点与次数：收敛后清零，下次再僵住重新计时。
+        stuckSince.keys.retainAll(ids)
+        healTries.keys.retainAll(ids)
+        running.forEach { stuckSince.putIfAbsent(it.id, now) }
+
+        val target = running.firstOrNull { conv ->
+            now - (healAt[conv.id] ?: 0L) >= HEAL_GAP_MS &&
+                StateReconciler.shouldHeal(
+                    remoteActive = true,
+                    localTurnInFlight = hasLiveTurn(conv.id),
+                    staleMs = now - conv.updatedAt,
+                    observedMs = now - (stuckSince[conv.id] ?: now),
+                    tries = healTries[conv.id] ?: 0
+                )
+        } ?: return
+
+        healing = true
+        healAt[target.id] = now
+        healTries[target.id] = (healTries[target.id] ?: 0) + 1
+        scope.launch {
+            val ok = healStaleRun(target.id)
+            healing = false
+            // 收敛后再取一次真实角标：不能让列表停在假的「运行中」。
+            if (ok) runCatching { refreshConversations() }
+        }
+    }
+
+    /**
+     * 临时连接 load 一次就关。走的是「点进会话」同一条路径，因此对服务端的效果一致，
+     * 但不占缓存、不推 UI；失败就当没发生过（下一次刷新还有机会）。
+     */
+    private suspend fun healStaleRun(id: String): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            val conn = AcpConnection(http, settings, sessionOf(id))
+            try {
+                conn.open()
+                // 只要「挂上」这个动作；历史放不完整无所谓，所以超时给得比正常打开短。
+                conn.initializeAndLoad(HEAL_LOAD_TIMEOUT)
+            } finally {
+                conn.close()
+            }
+        }.isSuccess
     }
 
     // ---------- 启动 / 登录 ----------
@@ -834,6 +945,8 @@ class BuddyRepository(val settings: AppSettings) {
                 } else remote
             }
         )
+        // 列表里若有别的会话挂着「运行中」而本机根本没在跑，顺手自愈（详见 scheduleHeal）。
+        scheduleHeal(list)
     }
 
     /**
@@ -1604,5 +1717,11 @@ class BuddyRepository(val settings: AppSettings) {
          * 超过它还没有任何事件，就认为本地这条流已经僵死，交给云端记录接管。
          */
         const val STREAM_STALE_MS = 90_000L
+
+        /** 同一条会话两次自愈之间的冷却：收敛需要时间，连戳没有意义。 */
+        const val HEAL_GAP_MS = 60_000L
+
+        /** 自愈用的 load 等待上限：只求「挂上」，不追求把历史放完。 */
+        const val HEAL_LOAD_TIMEOUT = 15_000L
     }
 }

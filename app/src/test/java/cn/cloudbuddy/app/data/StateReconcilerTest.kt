@@ -82,4 +82,35 @@ class StateReconcilerTest {
         assertTrue(StateReconciler.shouldResync(0, 0, TurnState.RUNNING))
         assertFalse(StateReconciler.shouldResync(0, 0, TurnState.DONE))
     }
+
+    @Test
+    fun `滞留的运行中够老够久才自愈`() {
+        val idle = 6 * 60_000L   // 内容六分钟没动
+        val seen = 5 * 60_000L   // 观察到在跑五分钟
+        assertTrue(StateReconciler.shouldHeal(true, false, idle, seen, tries = 0))
+    }
+
+    @Test
+    fun `刚发起的任务一律不动`() {
+        // 内容才安静一分钟：可能只是长工具调用，不能去戳它。
+        assertFalse(StateReconciler.shouldHeal(true, false, 60_000L, 10 * 60_000L, tries = 0))
+        // 内容虽老，但「在跑」这件事本身才观察到一分钟，也可能是刚发起的任务。
+        assertFalse(StateReconciler.shouldHeal(true, false, 10 * 60_000L, 60_000L, tries = 0))
+    }
+
+    @Test
+    fun `本机这一轮在推流或已不再运行时不介入`() {
+        assertFalse(StateReconciler.shouldHeal(false, false, 60 * 60_000L, 60 * 60_000L, tries = 0))
+        assertFalse(StateReconciler.shouldHeal(true, true, 60 * 60_000L, 60 * 60_000L, tries = 0))
+    }
+
+    @Test
+    fun `自愈次数用完就停手`() {
+        assertFalse(
+            StateReconciler.shouldHeal(
+                true, false, 60 * 60_000L, 60 * 60_000L,
+                tries = StateReconciler.HEAL_MAX_TRIES
+            )
+        )
+    }
 }

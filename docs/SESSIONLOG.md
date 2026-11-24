@@ -114,3 +114,13 @@
 - **17:08** `gradle clean compileDebugKotlin` 通过。
 - **17:10** `verify.sh` 全绿：126 单测、lint 0、正式签名；`dist/CloudBuddy-1.4.0-release.apk`，sha256 `4e1aa4e1...8a4`。
 - **17:12** 提交 `53fce43`，push main 与 tag `v1.4.0` 成功，CI 自动发版。
+
+## 2026-11-24 · 会话永久「运行中」第三次复发（1.4.1）
+
+- **17:0x** 用户报 `Refactor CloudBuddy UI using open source designs` 又卡在运行中。此前两次定位都在客户端本地（僵尸 prompt 流 1.3.6、滞留 working 事件 1.3.7）。
+- **17:0x** 尝试用短信重新登录查云端 `sessionStatus` 区分「本地漏判 / 真在跑」；两次验证码都因导出 cookie 后 session 被轮换而失效，改写 `conv_state.py`（登录与查询同一 requests.Session）。
+- **17:1x** 用户打断并给出关键新线索：本机同时装着 1.3.3 与最新版，**旧版里点进该会话后恢复正常，切回新版也跟着正常** → 说明服务端状态位是「agent 还挂着这条会话」，`session/load` 一挂上就收敛，不需要用户真看它。放弃继续查云端，直接按这条因果改代码。
+- **17:2x** 读 `BuddyRepository.reconcile/reconcileAfterOpen/confirmIdle/send/openConversation` 与 `AcpConnection.setLocalTurnActive/initializeAndLoad`，确认两处闸门漏点：`active || replaying`、`endReplay` 不在 finally。
+- **17:3x** 改 `StateReconciler`：新增 `shouldHeal` + 三个常量（IDLE 5 分钟 / 观察 2 分钟 / 最多 3 次）；`AcpConnection` 两处修正；`BuddyRepository` 新增 `settleIfStale`/`scheduleHeal`/`healStaleRun` 并在 `refreshConversations`、`reconcile`、`reconcileAfterOpen`、`confirmIdle` 四处接入。
+- **17:4x** 新增 4 条 `shouldHeal` 单测；版本升 1.4.1 / versionCode 25。
+- **17:5x** `verify.sh` 全绿：130 单测 / lint 0 error / 正式签名；`dist/CloudBuddy-1.4.1-release.apk`，sha256 `7e6d4a0c1fd7a0ad7fe010521c3d1130fad6f508450211e5e73f87f7f08529e0`。
