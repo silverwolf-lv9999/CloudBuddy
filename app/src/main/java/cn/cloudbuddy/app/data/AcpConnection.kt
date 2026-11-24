@@ -219,7 +219,7 @@ class AcpConnection(
                 JSONObject()
                     .put("sessionId", session.acpSessionId)
                     .put("cwd", session.cwd ?: "/workspace")
-                    .put("mcpServers", JSONArray()),
+                    .put("mcpServers", settings.mcp.payload()),
                 timeoutMs
             )
             true
@@ -247,7 +247,7 @@ class AcpConnection(
         val params = JSONObject()
             .put("sessionId", session.acpSessionId)
             .put("cwd", session.cwd.orEmpty())
-            .put("mcpServers", JSONArray())
+            .put("mcpServers", settings.mcp.payload())
             .put("prompt", blocks)
             .put(
                 "_meta",

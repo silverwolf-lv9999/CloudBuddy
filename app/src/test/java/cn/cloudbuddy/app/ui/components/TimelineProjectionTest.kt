@@ -2,6 +2,7 @@ package cn.cloudbuddy.app.ui.components
 
 import cn.cloudbuddy.app.data.ChatMessage
 import cn.cloudbuddy.app.data.ChatRole
+import cn.cloudbuddy.app.data.FoldMode
 import cn.cloudbuddy.app.data.ToolState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -154,6 +155,79 @@ class TimelineProjectionTest {
     @Test
     fun `empty input projects to empty list`() {
         assertTrue(projectTimeline(emptyList()).isEmpty())
+    }
+
+    // ---------- 只折思考与工具（FoldMode.BODY） ----------
+
+    @Test
+    fun `body mode keeps every paragraph and folds only thoughts and tools`() {
+        val messages = listOf(
+            msg("u0", ChatRole.USER, "帮我做个页面", turn = 0),
+            msg("t0", ChatRole.THOUGHT, "先看目录", turn = 0),
+            msg("c0", ChatRole.TOOL, "Read", turn = 0, toolState = ToolState.DONE),
+            msg("a0", ChatRole.ASSISTANT, "正文1", turn = 0),
+            msg("t1", ChatRole.THOUGHT, "再改样式", turn = 0),
+            msg("c1", ChatRole.TOOL, "Write", turn = 0, toolState = ToolState.DONE),
+            msg("a1", ChatRole.ASSISTANT, "正文2", turn = 0)
+        )
+
+        val items = projectTimeline(messages, FoldMode.BODY)
+
+        // 顺序：提问 → 折叠条 → 正文1 → 折叠条 → 正文2
+        assertEquals(5, items.size)
+        assertEquals(listOf("msg:u0", "steps:0", "msg:a0", "steps:0:1", "msg:a1"), items.map { it.key })
+        val singles = items.filterIsInstance<ChatItem.Single>().map { it.message.id }
+        assertEquals(listOf("u0", "a0", "a1"), singles)
+        val groups = items.filterIsInstance<ChatItem.Steps>()
+        assertEquals(2, groups.size)
+        assertEquals(listOf("t0", "c0"), groups[0].steps.map { it.id })
+        assertEquals(listOf("t1", "c1"), groups[1].steps.map { it.id })
+    }
+
+    @Test
+    fun `body mode keeps consecutive paragraphs separate with no step between`() {
+        val messages = listOf(
+            msg("u0", ChatRole.USER, "讲讲思路", turn = 0),
+            msg("a0", ChatRole.ASSISTANT, "第一段", turn = 0),
+            msg("a1", ChatRole.ASSISTANT, "第二段", turn = 0)
+        )
+
+        val items = projectTimeline(messages, FoldMode.BODY)
+
+        assertEquals(listOf("msg:u0", "msg:a0", "msg:a1"), items.map { it.key })
+        assertTrue(items.none { it is ChatItem.Steps })
+    }
+
+    @Test
+    fun `body mode still folds a trailing run without final answer`() {
+        val messages = listOf(
+            msg("u0", ChatRole.USER, "跑一下", turn = 0),
+            msg("t0", ChatRole.THOUGHT, "在想", turn = 0),
+            msg("c0", ChatRole.TOOL, "Bash", turn = 0, toolState = ToolState.RUNNING)
+        )
+
+        val items = projectTimeline(messages, FoldMode.BODY)
+
+        assertEquals(listOf("msg:u0", "steps:0"), items.map { it.key })
+        val group = items.last() as ChatItem.Steps
+        assertTrue(stepsRunning(group.steps))
+    }
+
+    @Test
+    fun `whole mode collapses the same turn into a single group`() {
+        val messages = listOf(
+            msg("u0", ChatRole.USER, "帮我做个页面", turn = 0),
+            msg("t0", ChatRole.THOUGHT, "先看目录", turn = 0),
+            msg("a0", ChatRole.ASSISTANT, "正文1", turn = 0),
+            msg("t1", ChatRole.THOUGHT, "再改样式", turn = 0),
+            msg("a1", ChatRole.ASSISTANT, "正文2", turn = 0)
+        )
+
+        val items = projectTimeline(messages, FoldMode.WHOLE)
+
+        // 整轮折叠：中间那段正文也被收进折叠条，只剩最后一条回答。
+        assertEquals(listOf("msg:u0", "steps:0", "msg:a1"), items.map { it.key })
+        assertEquals(3, (items[1] as ChatItem.Steps).steps.size)
     }
 
     // ---------- 长会话开窗 ----------

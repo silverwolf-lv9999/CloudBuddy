@@ -32,6 +32,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -52,7 +53,15 @@ import kotlinx.coroutines.launch
 private enum class Step { PHONE, CODE }
 
 @Composable
-fun LoginScreen(repo: BuddyRepository, onLoggedIn: () -> Unit) {
+fun LoginScreen(
+    repo: BuddyRepository,
+    onLoggedIn: () -> Unit,
+    /**
+     * 「添加账号」进来的场景才给返回入口：此时本机还有别的已登录账号，
+     * 放弃这次登录应当能回到那个账号，而不是被困在登录页。
+     */
+    onCancel: (() -> Unit)? = null
+) {
     var step by remember { mutableStateOf(Step.PHONE) }
     var phone by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
@@ -83,6 +92,13 @@ fun LoginScreen(repo: BuddyRepository, onLoggedIn: () -> Unit) {
                 .padding(horizontal = 22.dp, vertical = 32.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
+            onCancel?.let {
+                TextButton(onClick = it, contentPadding = PaddingValues(0.dp)) {
+                    Icon(Icons.Filled.ArrowBack, null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("返回原账号")
+                }
+            }
             Spacer(Modifier.height(18.dp))
             Surface(
                 shape = RoundedCornerShape(20.dp),

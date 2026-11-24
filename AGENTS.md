@@ -185,7 +185,7 @@ release APK（`verify.sh` 里的证书 DN 校验通过，证明用的是正式�
 - 单测用真的 `org.json`，不要 mock；不引 Robolectric，不写依赖 Android framework 的测试。
 - 新增行为至少配 1 个用例；改协议解析必须同时覆盖旧载荷。
 
-## 十三个坑（都真踩过）
+## 十五个坑（都真踩过）
 
 1. **KDoc 里不要写 `/root/*`**。`/*` 会开启嵌套块注释，一直吞到后面的 `*/`，
    编译器报错位置会离谱到完全不相干的行。同理避免 `/** ... /path/* ... */` 这种。
@@ -232,6 +232,15 @@ release APK（`verify.sh` 里的证书 DN 校验通过，证明用的是正式�
    和 `/actions/jobs/<id>/logs` 都回 502，网页端日志是动态加载的，抓 HTML 只有
    "There was an error while loading."）。要看失败原因就走 **check-run annotations**：
    普通 API 能读，所以流水线里要把失败日志尾部塞进 `::error title=...::`（换行用 `%0A`）。
+
+14. **多账号不能重建 cookie jar**。OkHttp 的 `cookieJar` 在 client 构建时绑定，
+    重建 jar 等于重建 client，正在跑的请求全部作废。做法是 jar 内部按槽切换
+    （`cookies_v1:<账号 id>`），实例始终是同一个。另外「先登录再建账号」的顺序会
+    把凭据写进 guest 槽，`beginAccount()` 必须 carryOver 接管，否则登录完就丢 cookie。
+15. **MCP 没有云端管理接口**。官方 web 的 getMcpServers/toggleMcpServer 走本地
+    agent 适配器，云端沙箱没有对应 REST。客户端只做 ACP 那一步：把配置塞进
+    `session/new` / `session/load` 的 `mcpServers`。技能有真接口，路径在
+    `data/SkillApi.kt` 顶部注释里，全部来自 `main-*.js` 里的常量，无公开文档。
 
 ## 协议速查
 

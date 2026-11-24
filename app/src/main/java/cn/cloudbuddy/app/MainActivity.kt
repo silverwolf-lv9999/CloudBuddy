@@ -111,7 +111,14 @@ private fun AppRoot(repo: BuddyRepository) {
             ui.booting -> SplashScreen()
 
             !ui.loggedIn -> {
-                LoginScreen(repo) { tab = Tab.SESSIONS }
+                LoginScreen(
+                    repo = repo,
+                    onLoggedIn = { tab = Tab.SESSIONS },
+                    // 有别的账号可回就显示返回：从「添加账号」进来的用户不该被困住。
+                    onCancel = ui.accounts
+                        .firstOrNull { it.id != ui.activeAccountId }
+                        ?.let { { repo.removeAccount(ui.activeAccountId) } }
+                )
                 LaunchedEffect(ui.loggedIn) {
                     if (ui.loggedIn) tab = Tab.SESSIONS
                 }

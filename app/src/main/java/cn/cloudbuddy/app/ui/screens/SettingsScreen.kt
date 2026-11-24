@@ -41,6 +41,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -61,7 +68,11 @@ import androidx.compose.ui.unit.dp
 import cn.cloudbuddy.app.BuildConfig
 import cn.cloudbuddy.app.data.AppSettings
 import cn.cloudbuddy.app.data.AppUiState
+import cn.cloudbuddy.app.data.Account
+import cn.cloudbuddy.app.ui.components.McpCard
+import cn.cloudbuddy.app.ui.components.SkillsCard
 import cn.cloudbuddy.app.data.BuddyRepository
+import cn.cloudbuddy.app.data.FoldMode
 import cn.cloudbuddy.app.data.ReleaseInfo
 import cn.cloudbuddy.app.data.UpdateChecker
 import kotlinx.coroutines.Dispatchers
@@ -80,6 +91,7 @@ fun SettingsScreen(
     var themeMode by remember { mutableStateOf(repo.settings.themeMode) }
     var dynamic by remember { mutableStateOf(repo.settings.dynamicColor) }
     var showThoughts by remember { mutableStateOf(repo.settings.showThoughts) }
+    var pendingDelete by remember { mutableStateOf<Account?>(null) }
     var historyTurns by remember { mutableStateOf(repo.settings.historyTurns) }
     var historyTimeout by remember { mutableStateOf(repo.settings.historyTimeoutSec) }
     var updateState by remember { mutableStateOf<UpdateCheck>(UpdateCheck.Idle) }
@@ -168,6 +180,34 @@ fun SettingsScreen(
                             }
                         }
                     }
+                }
+            }
+
+            item { SectionTitle("账号", Icons.Filled.Person) }
+            item {
+                SettingCard {
+                    ui.accounts.forEach { account ->
+                        AccountRow(
+                            account = account,
+                            active = account.id == ui.activeAccountId,
+                            onSwitch = { repo.switchAccount(account.id) },
+                            onDelete = { pendingDelete = account }
+                        )
+                        Divider()
+                    }
+                    SettingRow(
+                        title = "添加账号",
+                        subtitle = "登录另一个账号；两个账号的登录态各自保留，切换不用重新收验证码",
+                        trailing = {
+                            IconButton(onClick = { repo.addAccount() }) {
+                                Icon(
+                                    Icons.Filled.Add,
+                                    "添加账号",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    )
                 }
             }
 
@@ -308,6 +348,16 @@ fun SettingsScreen(
             item { SectionTitle("对话", Icons.Filled.Tune) }
             item {
                 SettingCard {
+                    ChipSetting(
+                        title = "折叠方式",
+                        subtitle = "整轮折叠：除最终回答外全收起；只折过程：正文保留，思考与工具调用收成一条",
+                        options = listOf(
+                            FoldMode.WHOLE.key to "整轮折叠",
+                            FoldMode.BODY.key to "只折思考与工具"
+                        ),
+                        selected = ui.foldMode.key
+                    ) { repo.setFoldMode(FoldMode.of(it)) }
+                    Divider()
                     SettingRow(
                         title = "折叠中间步骤",
                         subtitle = "只保留提问与最终回答；之后新产生的步骤也自动折叠",
@@ -351,6 +401,12 @@ fun SettingsScreen(
                     }
                 }
             }
+
+            item { SectionTitle("技能", Icons.Filled.Extension) }
+            item { SkillsCard(ui, repo) }
+
+            item { SectionTitle("MCP 服务器", Icons.Filled.Hub) }
+            item { McpCard(ui, repo) }
 
             item { SectionTitle("关于", Icons.Filled.Info) }
             item {
@@ -434,6 +490,28 @@ fun SettingsScreen(
 
             item { Spacer(Modifier.height(24.dp)) }
         }
+    }
+
+    pendingDelete?.let { victim ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("删除账号") },
+            text = {
+                Text(
+                    "将从本机删除「${victim.title}」的登录态，云端会话不受影响。" +
+                        "下次使用需要重新收验证码登录。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingDelete = null
+                    repo.removeAccount(victim.id)
+                }) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) { Text("取消") }
+            }
+        )
     }
 
     (updateState as? UpdateCheck.Available)?.let { available ->
@@ -538,6 +616,63 @@ private fun SettingCard(content: @Composable () -> Unit) {
     }
 }
 
+/** 账号列表里的一行：头像首字 + 名字 + 手机号，右侧是「当前」标记或切换/删除。 */
+@Composable
+private fun AccountRow(
+    account: Account,
+    active: Boolean,
+    onSwitch: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = !active, onClick = onSwitch)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceVariant) {
+            Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) {
+                Text(
+                    account.title.take(1),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(account.title, style = MaterialTheme.typography.titleMedium)
+            if (account.subtitle.isNotBlank()) {
+                Text(
+                    account.subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        if (active) {
+            Text(
+                "当前",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+        } else {
+            IconButton(onClick = onSwitch) {
+                Icon(Icons.Filled.SwapHoriz, "切换到该账号", Modifier.size(18.dp))
+            }
+        }
+        IconButton(onClick = onDelete) {
+            Icon(
+                Icons.Filled.Delete,
+                "删除账号",
+                Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
 @Composable
 private fun SettingRow(
     title: String,
@@ -569,6 +704,25 @@ private fun ChipSetting(
     options: List<Pair<Int, String>>,
     selected: Int,
     onSelect: (Int) -> Unit
+) = Chips(title, subtitle, options, selected, onSelect)
+
+/** 字符串取值的同款选项行（折叠方式这种非数值设置用）。 */
+@Composable
+private fun ChipSetting(
+    title: String,
+    subtitle: String,
+    options: List<Pair<String, String>>,
+    selected: String,
+    onSelect: (String) -> Unit
+) = Chips(title, subtitle, options, selected, onSelect)
+
+@Composable
+private fun <T> Chips(
+    title: String,
+    subtitle: String,
+    options: List<Pair<T, String>>,
+    selected: T,
+    onSelect: (T) -> Unit
 ) {
     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
         Column {

@@ -10,6 +10,28 @@
 
 ---
 
+## 1.2.0（多账号 / 技能 / MCP / 折叠方式）
+
+**多账号**：`accounts_v2` 存账号表，每样跟账号绑定的值带 `a:<id>:` 前缀，cookie 按
+`cookies_v1:<id>` 分槽。切账号只换活跃 id 与槽位，OkHttp 持有的 jar 实例不变——
+重建 jar 等于重建 client，正在跑的请求全废。首次升级时把老的 `logged_in` /
+`cookies_v1` 一次性迁到 `a1`，用 `accounts_v2` 是否存在做幂等标记，否则用户删光
+账号后旧数据会复活一个。
+
+**技能**：走官方 `user-asset` 接口（清单 `skill/get-list`、启停
+`assets/configuration`、安装 `skill/install`、市场 `internal_knot-skill`）。路径是从
+官方 web 打包产物里打捞的常量，没有公开文档，字段解析取多个候选键。
+
+**MCP**：云端**没有** MCP 管理接口——web 端的 getMcpServers 走本地适配器。客户端只做
+协议允许的那一步：把本机配置塞进 `session/new`、`session/load` 的 `mcpServers`。
+界面上把这条边界写清楚，避免用户以为它和账号同步。
+
+**折叠**：`FoldMode.BODY` 只折 THOUGHT/TOOL，正文（含过程叙述）全部保留；
+`Steps.ordinal` 让一轮出现多个折叠条，展开状态改按渲染 key 存，
+原来按轮次存会让同轮多条联动。
+
+---
+
 ## Step 1 · 现状盘点
 - 工程路径：`/workspace/CloudBuddy`
 - 已有产物：`dist/CloudBuddy-1.0.0-debug.apk`（17.5 MB，debug 签名）

@@ -137,7 +137,11 @@ fun ChatScreen(
     val pageTurns = repo.settings.historyTurns
     var extraTurns by remember(ui.activeId) { mutableStateOf(0) }
     val window = remember(ui.messages, pageTurns, extraTurns) {
-        windowTimeline(ui.messages, if (pageTurns <= 0) 0 else pageTurns + extraTurns)
+        windowTimeline(
+            messages = ui.messages,
+            turns = if (pageTurns <= 0) 0 else pageTurns + extraTurns,
+            mode = ui.foldMode
+        )
     }
     val timeline = window.items
     // 「显示更早」这一项排在列表最前，滚动下标要带上它。
@@ -366,14 +370,14 @@ fun ChatScreen(
                                 )
 
                                 is ChatItem.Steps -> {
-                                    // 没手动点过的轮次跟随全局开关；手动展开只对本次会话的该轮有效。
-                                    val expanded = ui.stepsExpanded[item.turn] ?: !ui.stepsCollapsed
+                                    // 没手动点过的条目跟随全局开关；手动展开只对本次会话的该条有效。
+                                    val expanded = ui.stepsExpanded[item.key] ?: !ui.stepsCollapsed
                                     StepsGroup(
                                         steps = item.steps,
                                         expanded = expanded,
                                         state = ui.state,
                                         showThoughts = repo.settings.showThoughts,
-                                        onToggle = { repo.toggleSteps(item.turn, !expanded) }
+                                        onToggle = { repo.toggleSteps(item.key, !expanded) }
                                     )
                                 }
                             }

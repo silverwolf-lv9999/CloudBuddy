@@ -58,20 +58,37 @@ data class AppUiState(
     val checkinError: String? = null,
     val growth: GrowthInfo? = null,
     /**
-     * 中间步骤的展开状态（key = 轮次编号，value = 是否展开）。
+     * 折叠条的展开状态（key = 折叠条的渲染 key，value = 是否展开）。
      *
-     * 只记录用户显式操作过的轮次；没记录的跟随 [stepsCollapsed]。
+     * 只记录用户显式操作过的条目；没记录的跟随 [stepsCollapsed]。
+     * key 用渲染项自带的字符串而不是轮次编号：只折过程时一轮会有多个折叠条，
+     * 按轮次存会让它们联动。
      */
-    val stepsExpanded: Map<Int, Boolean> = emptyMap(),
+    val stepsExpanded: Map<String, Boolean> = emptyMap(),
     /**
      * 中间步骤默认折叠。这是全局意图：打开后新产生的轮次也折叠，不必每轮手动点一次。
      */
     val stepsCollapsed: Boolean = true,
+    /** 折叠方式（整轮 / 只折思考与工具）。 */
+    val foldMode: FoldMode = FoldMode.WHOLE,
     /**
      * 启动时连不上服务器，但本地凭据还在：直接进主页，不弹错误、不踢回登录页。
      */
     val offline: Boolean = false,
-    val sessionExpired: Boolean = false
+    val sessionExpired: Boolean = false,
+    /** 已保存的账号（切换入口用）。 */
+    val accounts: List<Account> = emptyList(),
+    /** 当前活跃账号 id，界面据此高亮。 */
+    val activeAccountId: String = "",
+    /** 账号的技能清单（云端 `user-asset`）。 */
+    val skills: List<SkillInfo> = emptyList(),
+    val skillsLoading: Boolean = false,
+    val skillsError: String? = null,
+    /** 技能市场搜索结果。 */
+    val marketSkills: List<SkillInfo> = emptyList(),
+    val marketLoading: Boolean = false,
+    /** 本机 MCP 服务器（随会话下发）。 */
+    val mcpServers: List<McpServer> = emptyList()
 )
 
 data class WorkspaceState(
@@ -97,6 +114,7 @@ class BuddyRepository(val settings: AppSettings) {
     val login = LoginClient(settings, http)
     val api = WorkBuddyApi(settings, http)
     val sandbox = SandboxFs(http, settings)
+    val skillsApi = SkillApi(http)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val connections = ConcurrentHashMap<String, AcpConnection>()
@@ -109,7 +127,11 @@ class BuddyRepository(val settings: AppSettings) {
     private val _ui = MutableStateFlow(
         AppUiState(
             loggedIn = settings.loggedIn && settings.cookies.hasAny(),
-            stepsCollapsed = settings.collapseSteps
+            stepsCollapsed = settings.collapseSteps,
+            foldMode = settings.fold,
+            accounts = settings.accounts(),
+            activeAccountId = settings.activeAccountId,
+            mcpServers = settings.mcp.list()
         )
     )
     val ui: StateFlow<AppUiState> = _ui.asStateFlow()
@@ -190,6 +212,7 @@ class BuddyRepository(val settings: AppSettings) {
     suspend fun submitCode(phone: String, code: String): Result<Unit> = runCatching {
         login.submit(phone, code)
         _ui.value = _ui.value.copy(loggedIn = true, booting = false, sessionExpired = false)
+        publishAccounts()
         refreshAccount()
         refreshConversations()
         refreshModels()
@@ -206,7 +229,167 @@ class BuddyRepository(val settings: AppSettings) {
         _ui.value = AppUiState(
             booting = false,
             loggedIn = false,
-            stepsCollapsed = settings.collapseSteps
+            stepsCollapsed = settings.collapseSteps,
+            foldMode = settings.fold,
+            accounts = settings.accounts(),
+            activeAccountId = settings.activeAccountId,
+            mcpServers = settings.mcp.list()
+        )
+        _workspace.value = WorkspaceState()
+    }
+
+    // ---------- 多账号 ----------
+
+    /**
+     * 切换账号。
+     *
+     * 必须先把 ACP 连接、会话缓存和界面状态全部清掉：会话 id 是账号内的，
+     * 带着上一个账号的 `activeId` 去拉列表会命中别人的会话（服务端会 404 或者
+     * 更糟——返回一个同 id 的别人的会话）。
+     */
+    fun switchAccount(id: String) {
+        if (!settings.switchAccount(id)) return
+        resetForAccountSwitch()
+        start()
+    }
+
+    /**
+     * 添加账号：先开一个空槽，让登录链路有地方写 cookie。
+     *
+     * 返回新账号 id；界面拿到后跳到登录页。登录成功 [saveSession] 会把信息补进
+     * 这条记录，失败则由使用者调 [removeAccount] 清理空壳。
+     */
+    fun addAccount(): String {
+        val id = settings.beginAccount()
+        resetForAccountSwitch()
+        return id
+    }
+
+    /** 删除账号。删的是当前账号时自动切到剩下的第一个；一个不剩就回登录页。 */
+    fun removeAccount(id: String) {
+        val wasActive = id == settings.activeAccountId
+        settings.removeAccount(id)
+        if (wasActive) {
+            resetForAccountSwitch()
+            if (settings.loggedIn) start()
+        } else {
+            publishAccounts()
+        }
+    }
+
+    // ---------- 技能 ----------
+
+    /** 拉账号的技能清单（含启用状态）。失败要把原因显出来，不能安静地显示空列表。 */
+    fun refreshSkills() {
+        if (_ui.value.skillsLoading) return
+        _ui.value = _ui.value.copy(skillsLoading = true, skillsError = null)
+        scope.launch {
+            val result = runCatching { skillsApi.installed() }
+            _ui.value = _ui.value.copy(
+                skillsLoading = false,
+                skills = result.getOrElse { _ui.value.skills },
+                skillsError = result.exceptionOrNull()?.let { describe(it) }
+            )
+        }
+    }
+
+    /** 启停技能。云端可能「部分成功」，失败原因直接回给界面。 */
+    fun setSkillEnabled(skill: SkillInfo, enabled: Boolean) {
+        scope.launch {
+            val errors = runCatching { skillsApi.setEnabled(listOf(skill), enabled) }
+                .getOrElse { listOf(describe(it)) }
+            if (errors.isEmpty()) {
+                _ui.value = _ui.value.copy(
+                    skills = _ui.value.skills.map {
+                        if (it.id == skill.id) it.copy(enabled = enabled) else it
+                    }
+                )
+            } else {
+                _events.tryEmit(errors.first())
+            }
+        }
+    }
+
+    /** 搜索技能市场。 */
+    fun searchMarket(keyword: String) {
+        _ui.value = _ui.value.copy(marketLoading = true)
+        scope.launch {
+            val result = runCatching { skillsApi.market(keyword) }
+            _ui.value = _ui.value.copy(
+                marketLoading = false,
+                marketSkills = result.getOrElse { emptyList() }
+            )
+            result.exceptionOrNull()?.let { _events.tryEmit("技能市场：" + describe(it)) }
+        }
+    }
+
+    /** 从市场安装，成功后刷新清单。 */
+    fun installSkill(skill: SkillInfo) {
+        scope.launch {
+            runCatching { skillsApi.install(skill.id, skill.version) }
+                .onSuccess {
+                    _events.tryEmit("已安装 ${skill.title}")
+                    _ui.value = _ui.value.copy(marketSkills = emptyList())
+                    refreshSkills()
+                }
+                .onFailure { _events.tryEmit("安装失败：" + describe(it)) }
+        }
+    }
+
+    // ---------- MCP ----------
+
+    /** MCP 表变了就同步到界面；`payload()` 在下一轮会话建立/加载时生效。 */
+    fun reloadMcp() {
+        _ui.value = _ui.value.copy(mcpServers = settings.mcp.list())
+    }
+
+    /** 保存一条 MCP 配置，返回错误提示（成功为 null）。 */
+    fun saveMcp(raw: String, id: String? = null): String? {
+        val error = settings.mcp.upsert(raw, id)
+        if (error == null) reloadMcp()
+        return error
+    }
+
+    fun setMcpEnabled(id: String, enabled: Boolean) {
+        settings.mcp.setEnabled(id, enabled)
+        reloadMcp()
+    }
+
+    fun removeMcp(id: String) {
+        settings.mcp.remove(id)
+        reloadMcp()
+    }
+
+    /** 把异常翻译成一句人话：HTTP 404 说明这个账号/站点没有该接口，比「空列表」有用得多。 */
+    private fun describe(error: Throwable): String = when (error) {
+        is CloudException -> error.message ?: "请求失败"
+        is SessionExpiredException -> "登录已过期"
+        else -> error.message ?: error.javaClass.simpleName
+    }
+
+    /** 把账号表同步到界面。登录成功、资料刷新后调用。 */
+    fun publishAccounts() {
+        _ui.value = _ui.value.copy(
+            accounts = settings.accounts(),
+            activeAccountId = settings.activeAccountId,
+            mcpServers = settings.mcp.list()
+        )
+    }
+
+    private fun resetForAccountSwitch() {
+        connections.values.forEach { runCatching { it.close() } }
+        connections.clear()
+        sessions.clear()
+        acpModels.clear()
+        acpCurrentModel = null
+        _ui.value = AppUiState(
+            booting = false,
+            loggedIn = settings.loggedIn && settings.cookies.hasAny(),
+            stepsCollapsed = settings.collapseSteps,
+            foldMode = settings.fold,
+            accounts = settings.accounts(),
+            activeAccountId = settings.activeAccountId,
+            mcpServers = settings.mcp.list()
         )
         _workspace.value = WorkspaceState()
     }
@@ -215,6 +398,7 @@ class BuddyRepository(val settings: AppSettings) {
         val account = runCatching { api.account() }.getOrNull() ?: return
         if (account.nickname.isNotBlank()) settings.nickname = account.nickname
         if (account.avatarUrl.isNotBlank()) settings.avatarUrl = account.avatarUrl
+        publishAccounts()
         _ui.value = _ui.value.copy(account = account.copy(phone = settings.accountHint))
     }
 
@@ -342,9 +526,15 @@ class BuddyRepository(val settings: AppSettings) {
      * 存的是「显式值」：没记录过的轮次按默认规则渲染（正在执行的那一轮展开，
      * 其余折叠）。这样用户手动收起的组不会被下一个流式分片重新展开。
      */
-    fun toggleSteps(turn: Int, expanded: Boolean) {
+    fun toggleSteps(key: String, expanded: Boolean) {
         val current = _ui.value
-        _ui.value = current.copy(stepsExpanded = current.stepsExpanded + (turn to expanded))
+        _ui.value = current.copy(stepsExpanded = current.stepsExpanded + (key to expanded))
+    }
+
+    /** 切换折叠方式。已记录的展开状态清空：两种模式的 key 不是一套，留着会串。 */
+    fun setFoldMode(mode: FoldMode) {
+        settings.foldMode = mode.key
+        _ui.value = _ui.value.copy(foldMode = mode, stepsExpanded = emptyMap())
     }
 
     /** 三点菜单的一键操作：把当前所有轮次写成显式值。 */

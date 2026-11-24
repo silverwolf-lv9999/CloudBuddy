@@ -31,7 +31,7 @@
 ![界面结构线框](docs/ui-wireframe.svg)
 
 > 用 AI 编码工具打开这个仓库时，先读 **[AGENTS.md](AGENTS.md)**：里面有构建命令、
-> 版本号规则、以及十三个踩过的坑。各工具的适配文件（`CLAUDE.md`、`.github/copilot-instructions.md`、
+> 版本号规则、以及十五个踩过的坑。各工具的适配文件（`CLAUDE.md`、`.github/copilot-instructions.md`、
 > `.cursor/rules/`）都指向它这一份真源。
 
 ## 功能
@@ -47,6 +47,7 @@
 - **模型选择**：主来源是 ACP `session/load` 下发的 `models.availableModels`，辅以 console 模型配置接口；失败时显示具体原因并提供重试与手动填写模型 ID。
 - **预览**：图片、HTML（WebView）、Markdown、纯文本/代码；其他类型提示下载。
 - **产物**：`agent://` / `file:///workspace|root/` 链接仍会识别并挂到会话上，产物文件统一在工作区查看（对话页不再单独占一条产物栏）。
+- **多账号**：设置页可添加/切换/删除账号，切换即时生效，登录态各自保留。
 - **设置**：账号资料、站点、当前模型、积分、主题（跟随系统/浅色/深色）、动态取色、思考过程默认折叠、
   一次渲染多少轮对话（10/20/50/全部）、历史加载超时（60/120/180/300 秒）。
 - **关于与更新**：版本号、GitHub 仓库入口，以及「检查更新」——直接读 GitHub Releases
@@ -64,7 +65,7 @@ bash scripts/verify.sh           # 正式包（release），归档 dist/CloudBud
 bash scripts/verify.sh --debug   # 需要 debug 包时
 ```
 
-当前版本 1.1.0（versionCode 12），4096 位 RSA 正式密钥签名，有效期到 2054 年。
+当前版本 1.2.0（versionCode 13），4096 位 RSA 正式密钥签名，有效期到 2054 年。
 签名指纹（后续版本必须一致，否则无法覆盖安装）：
 
 ```
@@ -90,6 +91,10 @@ git tag v1.2.0 && git push --tags
 1.0.8 补齐云端的「提问/选择」交互：多问题、多选、选项说明、自定义回答，权限确认不再被丢弃，答过的选择会留在对话里；
 1.0.9 折叠改成持久化开关（新步骤也自动折叠）、断网启动不再被踢回登录页、去掉与工作区重复的产物栏和输入框下方提示；
 1.0.10 修好「提问卡片根本不弹」：服务端反向请求（`_codebuddy.ai/question`）与 `AskUserQuestion` 工具调用两条通道都接上了，回答按协议回结构化 `answers`。
+1.2.0 加了多账号（每个账号独立 cookie 槽，切换不用重新收验证码）、技能管理（账号技能清单 + 启停 + 市场安装）、
+MCP 服务器配置（随 `session/new` 下发），以及第二种折叠方式「只折思考与工具」——正文保留，过程收成一行。
+单测 97 项。
+
 1.1.0 关于板块加了 GitHub 仓库入口与「检查更新」（读 Releases 比对版本）；改用 4096 位 RSA
 正式密钥签名并发布 Release，从此不再用 debug key 对外分发。
 详见 [docs/FIXLOG.md](docs/FIXLOG.md) 与 [docs/PERFLOG.md](docs/PERFLOG.md)。
