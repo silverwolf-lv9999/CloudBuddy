@@ -79,6 +79,23 @@ object Downloads {
         }
     }
 
+    /**
+     * 公共 Download 目录里是否已经有同名文件。
+     *
+     * 点击已下载过的文件时直接打开它，不必重新下载——这个判定落在本机文件系统上，
+     * App 重启后依然生效（会话内存里的「已下载记录」只覆盖当次）。
+     * 空文件（0 字节，多半是上次写坏了）不算，照常重新下载。
+     */
+    fun findExisting(name: String): Saved? {
+        val safe = safeName(name)
+        val file = File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            safe
+        )
+        if (!file.exists() || file.length() <= 0L) return null
+        return Saved("${Environment.DIRECTORY_DOWNLOADS}/$safe", safe, null)
+    }
+
     @androidx.annotation.RequiresApi(Build.VERSION_CODES.Q)
     private fun saveViaMediaStore(context: Context, name: String, mime: String, bytes: ByteArray): Saved {
         val resolver = context.contentResolver

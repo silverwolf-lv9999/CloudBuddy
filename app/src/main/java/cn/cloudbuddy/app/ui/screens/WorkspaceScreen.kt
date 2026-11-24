@@ -381,10 +381,22 @@ fun WorkspaceScreen(
                                     // 图片 / 文本 / HTML / Markdown / JSON 才进应用内预览。
                                     onPreview(conversationId, entry.path, entry.name)
                                 } else {
-                                    // 下载过的直接打开，不再重复下载。
-                                    downloaded[entry.path]?.let { saved ->
-                                        Downloads.open(context, saved, entry.mimeType ?: SandboxPath.mimeOf(entry.name))
-                                    } ?: downloadFile(entry, openWhenDone = true)
+                                    // 打开优先级：本次会话下载过的 → 本机 Download 里已有同名文件
+                                    // （重启后依然命中）→ 都没有才真正下载。
+                                    val cached = downloaded[entry.path]
+                                        ?: Downloads.findExisting(entry.name)
+                                    if (cached != null) {
+                                        if (downloaded[entry.path] == null) {
+                                            downloaded = downloaded + (entry.path to cached)
+                                        }
+                                        Downloads.open(
+                                            context,
+                                            cached,
+                                            entry.mimeType ?: SandboxPath.mimeOf(entry.name)
+                                        )
+                                    } else {
+                                        downloadFile(entry, openWhenDone = true)
+                                    }
                                 }
                             },
                             onDownload = { downloadFile(entry, openWhenDone = false) },

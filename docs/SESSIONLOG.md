@@ -169,3 +169,7 @@
 
 - 用户问「还会不会出现任务在跑却显示已完成」；盘点发现工具间隙（无 RUNNING 工具 + 本地轮次）仍漏。
 - updateState 终态拦截扩为 `turnActive || hasRunningTool`；新增静默间隙回归测试，135。版本 1.4.8 / versionCode 32。
+
+## 2026-11-24 · 已下载文件重启后仍重复下载（1.4.9）
+
+- 内存记录只覆盖当次；新增 Downloads.findExisting 查公共 Download 目录同名文件，点击命中直接打开。版本 1.4.9 / versionCode 33。
