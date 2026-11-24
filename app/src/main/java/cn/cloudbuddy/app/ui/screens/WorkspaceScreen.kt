@@ -370,7 +370,9 @@ fun WorkspaceScreen(
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    items(workspace.entries, key = { it.path }) { entry ->
+                    items(workspace.entries, key = { it.path }, contentType = { entry ->
+                        if (entry.isDir) "dir" else "file"
+                    }) { entry ->
                         EntryRow(
                             entry = entry,
                             saving = saving == entry.path,
@@ -569,7 +571,9 @@ private fun EntryRow(
                 IconButton(onClick = { menu = true }, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Filled.MoreVert, "操作", Modifier.size(17.dp))
                 }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                // 只在展开时才组合菜单内容：每行常驻一个 DropdownMenu 会让长列表滚动变沉。
+                if (menu) {
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     if (!entry.isDir) {
                         DropdownMenuItem(
                             text = { Text("下载到本机") },
@@ -582,6 +586,7 @@ private fun EntryRow(
                         leadingIcon = { Icon(Icons.Filled.Delete, null, Modifier.size(18.dp)) },
                         onClick = { menu = false; onDelete() }
                     )
+                    }
                 }
             }
         }

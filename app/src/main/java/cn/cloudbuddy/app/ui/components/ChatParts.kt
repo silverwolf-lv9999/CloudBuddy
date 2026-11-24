@@ -257,7 +257,9 @@ fun StepsGroup(
                 ) {
                     steps.forEach { step ->
                         when (step.role) {
-                            ChatRole.THOUGHT -> ThoughtRow(step.text, showThoughts, step.streaming)
+                            // 组外壳自己有 animateContentSize：内层思考卡不再叠一层
+                            // 高度动画，否则展开/收起时双层逐帧重测量，是实测的卡顿源。
+                            ChatRole.THOUGHT -> ThoughtRow(step.text, showThoughts, step.streaming, animate = false)
                             ChatRole.TOOL -> ToolRow(step)
                             ChatRole.ASSISTANT -> MarkdownText(
                                 markdown = step.text,
@@ -312,7 +314,12 @@ private class ReasoningState(val scroll: ScrollState) {
  * - 内容走 MarkdownText，思考里的列表/代码/表格也能正常渲染。
  */
 @Composable
-private fun ThoughtRow(text: String, showThoughts: Boolean, streaming: Boolean = false) {
+private fun ThoughtRow(
+    text: String,
+    showThoughts: Boolean,
+    streaming: Boolean = false,
+    animate: Boolean = true
+) {
     val scroll = rememberScrollState()
     val state = remember { ReasoningState(scroll) }
 
@@ -353,7 +360,8 @@ private fun ThoughtRow(text: String, showThoughts: Boolean, streaming: Boolean =
     ChainOfThought(
         steps = listOf(Unit),
         collapsedAdaptiveWidth = false,
-        animate = !streaming,   // 生成中关掉高度动画，避免每条分片触发两轮测量
+        // 双重保险：外层（StepsGroup 或流式期）任一情况要关，这里都不再叠动画。
+        animate = animate && !streaming,
     ) {
         ControlledChainOfThoughtStep(
             expanded = state.expandState == ReasoningCardState.Expanded,

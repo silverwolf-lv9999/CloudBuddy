@@ -374,7 +374,10 @@ fun ChatScreen(
                                 )
                             }
                         }
-                        items(timeline, key = { it.key }) { item ->
+                        items(timeline, key = { it.key }, contentType = { item ->
+                            // 同类项（都是折叠组 / 都是消息）复用同一套组合缓存，滑动更省。
+                            if (item is ChatItem.Steps) "steps" else "single"
+                        }) { item ->
                             when (item) {
                                 is ChatItem.Single -> MessageRow(
                                     message = item.message,

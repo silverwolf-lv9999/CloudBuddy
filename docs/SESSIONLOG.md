@@ -173,3 +173,7 @@
 ## 2026-11-24 · 已下载文件重启后仍重复下载（1.4.9）
 
 - 内存记录只覆盖当次；新增 Downloads.findExisting 查公共 Download 目录同名文件，点击命中直接打开。版本 1.4.9 / versionCode 33。
+
+## 2026-11-24 · 折叠组卡顿（1.4.10）
+
+- 用户反馈滑动卡、集中折叠处；去掉双层 animateContentSize（组内思考卡不再自带）、DropdownMenu 按需组合、两列表加 contentType。版本 1.4.10 / versionCode 34。
