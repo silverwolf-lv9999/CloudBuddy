@@ -41,7 +41,7 @@ data class SkillInfo(
  * 这些接口没有公开文档，字段按 web 端的解析函数还原；解析一律取多个候选键，
  * 少一个字段只会少显示一行，不会整页报错。
  */
-class SkillApi(private val http: CloudHttp) {
+class SkillApi(private val http: CloudHttp, private val settings: AppSettings) {
 
     suspend fun installed(): List<SkillInfo> = withContext(Dispatchers.IO) {
         val list = runCatching {
@@ -103,38 +103,29 @@ class SkillApi(private val http: CloudHttp) {
             }
         }
 
-    /** 技能市场搜索。空关键词时返回下载量最高的若干条。 */
+    /**
+     * 技能市场搜索。
+     *
+     * 2026-11-24 实测：`internal_knot-skill` 这条对当前账号直接回
+     * `code=17012 knot user identity unavailable`（HTTP 403），市面上的旧路径不能用。
+     * 官方 web 默认走企业聚合接口 `POST /portal/enterprises/{id}/skill-market/list`，
+     * 参数在 query 里，个人账号的 id 就是字面量 `personal`。这条路返回 7 万多条技能，
+     * 搜索词用 `keyword`（不是 `search_keyword`）。
+     */
     suspend fun market(keyword: String = "", page: Int = 1): List<SkillInfo> =
         withContext(Dispatchers.IO) {
+            val enterprise = settings.enterpriseId.ifBlank { AppSettings.ENTERPRISE_PERSONAL }
             val query = buildString {
-                append(PATH_MARKET)
-                append("?page=").append(page)
-                append("&page_size=").append(PAGE_SIZE)
-                append("&order_by=download_count")
-                if (keyword.isNotBlank()) append("&search_keyword=").append(java.net.URLEncoder.encode(keyword, "UTF-8"))
+                append("/portal/enterprises/")
+                append(java.net.URLEncoder.encode(enterprise, "UTF-8"))
+                append("/skill-market/list?source=builtin&page=").append(page)
+                append("&page_size=").append(MARKET_PAGE_SIZE)
+                if (keyword.isNotBlank()) {
+                    append("&keyword=").append(java.net.URLEncoder.encode(keyword, "UTF-8"))
+                }
             }
-            val data = http.call("GET", query)
-            val skills = data.optJSONArray("skills")
-                ?: data.optJSONObject("data")?.optJSONArray("skills")
-                ?: JSONArray()
-            (0 until skills.length()).mapNotNull { i ->
-                val o = skills.optJSONObject(i) ?: return@mapNotNull null
-                val id = o.optString("slug").ifBlank { o.optString("id") }
-                if (id.isBlank()) return@mapNotNull null
-                SkillInfo(
-                    id = id,
-                    name = o.optString("name").ifBlank { id },
-                    title = o.optString("display_name")
-                        .ifBlank { o.optString("displayName") }
-                        .ifBlank { o.optString("name") }
-                        .ifBlank { id },
-                    description = o.optString("description").ifBlank { o.optString("summary") },
-                    source = "market",
-                    version = o.optString("version").takeIf { it.isNotBlank() },
-                    status = o.optString("category").takeIf { it.isNotBlank() },
-                    installed = false
-                )
-            }
+            // 官方这个接口要 POST + query，body 必须空着；带 body 会回 400 invalid request body。
+            parseMarketItems(http.call("POST", query))
         }
 
     /** 从市场安装一个技能。 */
@@ -191,8 +182,39 @@ class SkillApi(private val http: CloudHttp) {
         const val PATH_LIST = "/v2/user-asset/skill/get-list"
         const val PATH_CONFIG = "/v2/user-asset/assets/configuration"
         const val PATH_INSTALL = "/v2/user-asset/skill/install"
-        const val PATH_MARKET = "/console/agent-gateway/internal_knot-skill/apigw/api/v1/skills/list"
+        const val PATH_MARKET_KNOT = "/console/agent-gateway/internal_knot-skill/apigw/api/v1/skills/list"
         const val PAGE_SIZE = 100
+        const val MARKET_PAGE_SIZE = 20
         val DISABLED_STATUS = setOf("DISABLED", "OFFLINE", "DELETED", "REJECTED")
+    }
+}
+
+/** 企业聚合市场的一条：`data.items[]`，字段名与 `get-list` 那套不同，别复用类里的解析。 */
+internal fun parseMarketItems(root: JSONObject): List<SkillInfo> {
+    val data = root.optJSONObject("data") ?: root
+    val items = data.optJSONArray("items") ?: data.optJSONArray("skills") ?: return emptyList()
+    return (0 until items.length()).mapNotNull { i ->
+        val o = items.optJSONObject(i) ?: return@mapNotNull null
+        val id = sequenceOf(o.optString("skill_id"), o.optString("item_ref"), o.optString("id"), o.optString("slug"))
+            .firstOrNull { it.isNotBlank() } ?: return@mapNotNull null
+        SkillInfo(
+            id = id,
+            name = o.optString("name").ifBlank { id },
+            title = sequenceOf(
+                o.optString("display_name_zh"),
+                o.optString("display_name"),
+                o.optString("display_name_en"),
+                o.optString("title")
+            ).firstOrNull { it.isNotBlank() } ?: id,
+            description = sequenceOf(
+                o.optString("description_zh"),
+                o.optString("description"),
+                o.optString("description_en")
+            ).firstOrNull { it.isNotBlank() }.orEmpty(),
+            source = o.optString("source").ifBlank { "market" },
+            version = o.optString("version").takeIf { it.isNotBlank() && it != "null" },
+            status = o.optString("category_name").takeIf { it.isNotBlank() },
+            installed = false
+        )
     }
 }

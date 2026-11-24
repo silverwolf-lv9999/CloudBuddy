@@ -65,7 +65,7 @@ bash scripts/verify.sh           # 正式包（release），归档 dist/CloudBud
 bash scripts/verify.sh --debug   # 需要 debug 包时
 ```
 
-当前版本 1.3.0（versionCode 14），4096 位 RSA 正式密钥签名，有效期到 2054 年。
+当前版本 1.3.1（versionCode 15），4096 位 RSA 正式密钥签名，有效期到 2054 年。
 签名指纹（后续版本必须一致，否则无法覆盖安装）：
 
 ```
@@ -78,7 +78,7 @@ SHA-256  59:29:B6:F4:7F:2B:C4:6F:B9:F5:4B:2F:15:BD:42:C4
 **发版就是两条命令**：
 
 ```bash
-git tag v1.3.0 && git push --tags
+git tag v1.3.1 && git push --tags
 ```
 
 已通过 `:app:assembleDebug`、`80 个 JVM 单测`、`:app:lintDebug`（0 error），并用
@@ -98,6 +98,7 @@ MCP 服务器配置（随 `session/new` 下发），以及第二种折叠方式�
 和官方 App / 网页端同步，可读清单、启停、解绑、发起授权）和本机自定义 MCP
 （只随会话下发）。此前把连接器误判成「没有云端接口」，已用真账号实测纠正。
 单测 102 项。
+1.3.1 修复技能市场加载失败：knot 来源对该账号返回 17012，改用官方企业聚合市场接口；单测 105 项。
 
 1.1.0 关于板块加了 GitHub 仓库入口与「检查更新」（读 Releases 比对版本）；改用 4096 位 RSA
 正式密钥签名并发布 Release，从此不再用 debug key 对外分发。

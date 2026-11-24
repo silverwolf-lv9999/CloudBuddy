@@ -130,7 +130,7 @@ class BuddyRepository(val settings: AppSettings) {
     val login = LoginClient(settings, http)
     val api = WorkBuddyApi(settings, http)
     val sandbox = SandboxFs(http, settings)
-    val skillsApi = SkillApi(http)
+    val skillsApi = SkillApi(http, settings)
     val connectorApi = ConnectorApi(http)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

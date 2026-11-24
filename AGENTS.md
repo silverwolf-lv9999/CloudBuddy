@@ -253,6 +253,16 @@ release APK（`verify.sh` 里的证书 DN 校验通过，证明用的是正式�
       的 `mcpServers` 里下发，见 `data/McpStore.kt`。
     技能接口在 `data/SkillApi.kt` 顶部注释；连接器在 `data/ConnectorApi.kt`。
 
+16. **技能市场别再走 `internal_knot-skill`**。2026-11-24 真账号实测：
+    `GET /console/agent-gateway/internal_knot-skill/apigw/api/v1/skills/list` 回
+    `403 {"code":17012,"msg":"knot user identity unavailable"}`，补 `X-User-Id` / `X-WB-UA`
+    都没用——这个账号没有 knot 身份，不是 header 拼错。官方 web 默认走企业聚合接口
+    `POST /portal/enterprises/personal/skill-market/list?source=builtin&page=1&page_size=20`，
+    参数在 query、**body 必须空**（带 body 回 400），搜索词是 `keyword` 不是 `search_keyword`，
+    响应在 `data.items[]`，id 取 `skill_id`，标题取 `display_name_zh`。企业账号把
+    `personal` 换成 `settings.enterpriseId`。`/portal/operation-platform/market/skill/list`
+    对这个账号返回空列表，不能当兜底。
+
 ## 协议速查
 
 完整记录在 [docs/protocol.md](docs/protocol.md)，改协议前先读。

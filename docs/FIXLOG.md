@@ -915,3 +915,34 @@ GitHub 偶尔返回错误页，解析崩了会让整个设置页挂掉。
   的真实返回形状还没有抓到过。另一个待确认点是：账号里的连接器由沙箱侧按账号解析
   （市场条目的 `mcp.sandbox_url` 指向沙箱内网关），客户端不下发 `mcpServers` 是否就已生效，
   需要在真机开一个会话问 Agent「你有哪些工具」来确认。
+
+# 1.3.1 · 技能市场加载失败：knot user identity unavailable
+
+## 背景
+1.3.0 真机实测：已安装技能能正常读取，点「浏览技能市场」弹
+`技能市场：knot user identity unavailable`。
+
+## 根因
+1.2.0 挑市场路径时选了 web 产物里的 `knot` 来源：
+`GET /console/agent-gateway/internal_knot-skill/apigw/api/v1/skills/list`。
+真账号抓包确认它对当前用户回 `403 {"code":17012,"msg":"knot user identity unavailable"}`，
+补 `X-User-Id`、`X-WB-UA` 都无效——这个账号在该网关没有身份，不是请求头拼错。
+同一份 web 产物里默认用的是企业聚合市场，knot 只是其中一个可切换来源。
+
+## 改法
+`SkillApi.market()` 改走
+`POST /portal/enterprises/{enterpriseId}/skill-market/list?source=builtin&page=1&page_size=20`，
+个人账号 `enterpriseId` 就是字面量 `personal`。两个容易踩的点：参数全在 query，
+**body 必须为空**（带 body 回 400 `invalid request body`）；搜索词是 `keyword`
+而不是 knot 那边的 `search_keyword`。响应在 `data.items[]`，id 用 `skill_id`，
+标题用 `display_name_zh`，安装仍走 `/v2/user-asset/skill/install` 的 `source=market`。
+
+## 验证（1.3.1）
+- 真账号抓包：企业聚合接口 200，`total=70656`，第一条就是「AI交付前全自动自检技能」；
+  `keyword=去AI味` 返回 99 条，首条正是「去AI味」v1.2.1 之前的 v1.2.0 记录。
+- `POST /portal/operation-platform/market/skill/list` 返回空列表，确认不能当兜底。
+- `bash scripts/verify.sh` 全绿：105 个单测（新增 3 项市场解析用例），lint 0 error。
+- APK：`dist/CloudBuddy-1.3.1-release.apk`，versionCode 15，正式证书，
+  sha256 `e13a4ca9ee9849f67f543f9cee3a4555d89d016cc2809aae62f5f578cae16aea`。
+- **未做真机验证**：新接口没有在用户设备上点过；企业账号（非 `personal`）的
+  `enterpriseId` 走同一路径是否可用，也只对个人账号验证过。
