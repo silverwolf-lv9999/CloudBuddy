@@ -78,6 +78,26 @@ SHA-256 59:29:B6:F4:7F:2B:C4:6F:B9:F5:4B:2F:15:BD:42:C4:37:55:81:76:06:38:C0:66:
 
 **丢失 keystore 等于这个应用再也升不了级**，只能换包名重发。备份责任在仓库所有者。
 
+### CI 出包（GitHub Actions）
+
+密钥同时存在仓库 Secrets 里，runner 上还原成文件、构建完随机器销毁，日志自动打码：
+
+| Secret | 内容 |
+|---|---|
+| `ANDROID_KEYSTORE_BASE64` | `base64 -w0 keystore/cloudbuddy-release.jks` |
+| `ANDROID_KEYSTORE_PASSWORD` | 库密码 |
+| `ANDROID_KEY_ALIAS` | `cloudbuddy` |
+| `ANDROID_KEY_PASSWORD` | key 密码 |
+
+`.github/workflows/release.yml`：推 `v*` tag 自动构建 + 自检 + 发 Release；`workflow_dispatch`
+只构建不发版（用来验证流水线本身）。流程是 checkout → 校验 tag 与 `versionName` 一致 →
+setup-java 17 → 探测 runner 自带 SDK → 还原密钥（`keytool -list` 先验能打开）→ `verify.sh`
+→ 传 artifact → 发 Release。
+
+**已实测**：2026-11 手动触发第 3 次全绿，7 步全部 success，产出 10.9 MB 的
+release APK（`verify.sh` 里的证书 DN 校验通过，证明用的是正式密钥而不是 debug key）。
+前两次失败分别是 `setup-android` 挂掉、`settings.gradle.kts` 变量作用域问题，见坑 11/12。
+
 ## 交付规则
 
 ### 版本号
@@ -165,7 +185,7 @@ SHA-256 59:29:B6:F4:7F:2B:C4:6F:B9:F5:4B:2F:15:BD:42:C4:37:55:81:76:06:38:C0:66:
 - 单测用真的 `org.json`，不要 mock；不引 Robolectric，不写依赖 Android framework 的测试。
 - 新增行为至少配 1 个用例；改协议解析必须同时覆盖旧载荷。
 
-## 九个坑（都真踩过）
+## 十三个坑（都真踩过）
 
 1. **KDoc 里不要写 `/root/*`**。`/*` 会开启嵌套块注释，一直吞到后面的 `*/`，
    编译器报错位置会离谱到完全不相干的行。同理避免 `/** ... /path/* ... */` 这种。
@@ -196,6 +216,22 @@ SHA-256 59:29:B6:F4:7F:2B:C4:6F:B9:F5:4B:2F:15:BD:42:C4:37:55:81:76:06:38:C0:66:
 
    另外别用 `if git push | tail -3; then` 判断成败：管道退出码是 `tail` 的，
    push 失败了照样进 then 分支。要看 `$?`/`PIPESTATUS` 或者干脆不接管道。
+10. **推 `.github/workflows/` 需要 `workflow` scope**。OAuth token 只有 `repo` 时会被拒：
+   `refusing to allow an OAuth App to create or update workflow ... without workflow scope`。
+   重新授权时把 `repo read:org workflow` 一起要，顺带 `read:org` 有了 `gh auth login`
+   才能正常持久化（只给 `repo` 它自己会拒收 token）。
+11. **`settings.gradle.kts` 里的 `pluginManagement` / `dependencyResolutionManagement`
+   看不到文件顶部的 `val`**，会报 `Unresolved reference: ci`。这两个块是独立编译的，
+   只能内联 `System.getenv(...)`。本地能跑不代表 CI 能跑——本地走的是 else 分支，
+   CI 才第一次编到 if 分支。
+12. **不要用 `android-actions/setup-android`**。`ubuntu-latest` 自带
+   `/usr/local/lib/android/sdk`（含 platforms/android-35 与 build-tools），那个 action 还要
+   去 `dl.google.com` 拉 cmdline-tools 再 `sdkmanager --update`，网络一抖整步失败。
+   直接 shell 探测目录存在性即可，失败信息也更清楚。
+13. **Actions 的原始日志从 blob 存储下载，某些出口网关取不到**（`gh run view --log-failed`
+   和 `/actions/jobs/<id>/logs` 都回 502，网页端日志是动态加载的，抓 HTML 只有
+   "There was an error while loading."）。要看失败原因就走 **check-run annotations**：
+   普通 API 能读，所以流水线里要把失败日志尾部塞进 `::error title=...::`（换行用 `%0A`）。
 
 ## 协议速查
 

@@ -31,7 +31,7 @@
 ![界面结构线框](docs/ui-wireframe.svg)
 
 > 用 AI 编码工具打开这个仓库时，先读 **[AGENTS.md](AGENTS.md)**：里面有构建命令、
-> 版本号规则、以及九个踩过的坑。各工具的适配文件（`CLAUDE.md`、`.github/copilot-instructions.md`、
+> 版本号规则、以及十三个踩过的坑。各工具的适配文件（`CLAUDE.md`、`.github/copilot-instructions.md`、
 > `.cursor/rules/`）都指向它这一份真源。
 
 ## 功能
@@ -70,6 +70,14 @@ bash scripts/verify.sh --debug   # 需要 debug 包时
 ```
 SHA-256  59:29:B6:F4:7F:2B:C4:6F:B9:F5:4B:2F:15:BD:42:C4
          37:55:81:76:06:38:C0:66:49:93:B8:4A:2B:46:8F:90
+```
+
+签名密钥不进仓库：本地从 `local.properties` 读，CI 从 Actions Secrets 还原成文件后构建，
+跑完随 runner 销毁。打 `v*` tag 会触发 `.github/workflows/release.yml` 自动出正式包并发 Release，
+**发版就是两条命令**：
+
+```bash
+git tag v1.2.0 && git push --tags
 ```
 
 已通过 `:app:assembleDebug`、`80 个 JVM 单测`、`:app:lintDebug`（0 error），并用
