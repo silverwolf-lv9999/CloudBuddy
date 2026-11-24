@@ -314,7 +314,7 @@ private class ReasoningState(val scroll: ScrollState) {
 /**
  * 思考过程行——整行可点击展开/收回（抄 rikkahub 的 ChainOfThought 交互）。
  * - 生成中：默认 Preview，内容渐隐、限高 100dp 并自动滚到底部，点标题切成完全展开/预览；
- * - 生成完成：默认收回，点标题展开全文；
+ * - 生成完成：按设置决定默认展开还是收回（showThoughts），点标题随时切换；
  * - 内容走 MarkdownText，思考里的列表/代码/表格也能正常渲染。
  */
 @Composable
@@ -324,14 +324,20 @@ private fun ThoughtRow(text: String, showThoughts: Boolean, streaming: Boolean =
 
     // 展开态的切换只依赖 streaming/showThoughts，不再把高频变化的 text 当 key——
     // 原来每来一个分片就取消重启这个协程，是流式期的主要卡顿源之一。
+    //
+    // 1.4.5：两种状态都要跟着设置走。以前 else 分支只处理 Preview，历史/已完成的
+    // 思考卡初始就是 Collapsed，设置里的「展开思考过程」对它们毫无效果。
     LaunchedEffect(streaming, showThoughts) {
         if (streaming) {
-            if (!state.expandState.expanded && showThoughts) {
-                state.expandState = ReasoningCardState.Preview
+            if (!state.expandState.expanded) {
+                state.expandState = if (showThoughts) ReasoningCardState.Preview else ReasoningCardState.Collapsed
             }
         } else {
-            if (state.expandState == ReasoningCardState.Preview) {
-                state.expandState = if (showThoughts) ReasoningCardState.Expanded else ReasoningCardState.Collapsed
+            state.expandState = when {
+                showThoughts && !state.expandState.expanded -> ReasoningCardState.Expanded
+                !showThoughts && state.expandState.expanded -> ReasoningCardState.Collapsed
+                !showThoughts && state.expandState == ReasoningCardState.Preview -> ReasoningCardState.Collapsed
+                else -> state.expandState
             }
         }
     }

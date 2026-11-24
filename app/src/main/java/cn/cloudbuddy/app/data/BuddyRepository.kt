@@ -1462,11 +1462,12 @@ class BuddyRepository(val settings: AppSettings) {
     suspend fun readWorkspaceFile(
         conversationId: String,
         path: String,
-        onProgress: ((Float) -> Unit)? = null
+        onProgress: ((Float) -> Unit)? = null,
+        isCancelled: (() -> Boolean)? = null
     ): Result<ByteArray> = runCatching {
         withContext(Dispatchers.IO) {
             withSandbox(conversationId) { session, endpoint ->
-                sandbox.read(endpoint, session.token, path, onProgress)
+                sandbox.read(endpoint, session.token, path, onProgress, isCancelled)
             }
         }
     }

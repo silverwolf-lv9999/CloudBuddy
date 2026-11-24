@@ -97,6 +97,11 @@ fun WorkspaceScreen(
     var notice by remember { mutableStateOf<String?>(null) }
     // 下载完成后的提示要带「打开」动作，光靠 notice 字符串不够。
     var lastSaved by remember { mutableStateOf<Pair<Downloads.Saved, String?>?>(null) }
+    // 本次会话里已下载过的云端文件：再点它直接打开，不重复下载。
+    var downloaded by remember { mutableStateOf(mapOf<String, Downloads.Saved>()) }
+    // 正在进行的下载：气泡里的「取消」要把读文件的过程真正停掉。
+    var downloadJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    val cancelFlag = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
 
     // 从对话页返回列表后仍能浏览「最近一次」会话的工作区。
     val conversationId = ui.activeId ?: repo.settings.lastConversation.takeIf { it.isNotBlank() }
@@ -113,14 +118,21 @@ fun WorkspaceScreen(
         progress = -1f
         notice = "正在下载 ${entry.name}…"
         lastSaved = null
-        scope.launch {
-            repo.readWorkspaceFile(target, entry.path, onProgress = { progress = it })
+        cancelFlag.set(false)
+        downloadJob = scope.launch {
+            repo.readWorkspaceFile(
+                target,
+                entry.path,
+                onProgress = { progress = it },
+                isCancelled = { cancelFlag.get() }
+            )
                 .onSuccess { bytes ->
                     // 存到系统公共 Download 文件夹，文件管理器里直接能找到。
                     downloader.save(entry.name, entry.mimeType, bytes) { result ->
                         result.fold(
                             onSuccess = { saved ->
                                 val mime = entry.mimeType ?: SandboxPath.mimeOf(entry.name)
+                                downloaded = downloaded + (entry.path to saved)
                                 lastSaved = saved to mime
                                 notice = "已保存到 ${saved.displayPath}"
                                 if (openWhenDone) Downloads.open(context, saved, mime)
@@ -134,7 +146,11 @@ fun WorkspaceScreen(
                     }
                 }
                 .onFailure {
-                    notice = "下载失败：" + (it.message ?: "")
+                    if (cancelFlag.get() || it.message?.contains("已取消") == true) {
+                        notice = "已取消下载"
+                    } else {
+                        notice = "下载失败：" + (it.message ?: "")
+                    }
                     lastSaved = null
                     saving = null
                 }
@@ -231,10 +247,27 @@ fun WorkspaceScreen(
                             )
                             val saved = lastSaved
                             TextButton(onClick = {
-                                if (saved != null) Downloads.open(context, saved.first, saved.second)
-                                notice = null
-                                lastSaved = null
-                            }) { Text(if (saved != null) "打开" else "知道了") }
+                                when {
+                                    // 正在下载：按钮是「取消」，立刻中止读取。
+                                    saving != null -> {
+                                        cancelFlag.set(true)
+                                    }
+                                    saved != null -> {
+                                        Downloads.open(context, saved.first, saved.second)
+                                        notice = null
+                                        lastSaved = null
+                                    }
+                                    else -> notice = null
+                                }
+                            }) {
+                                Text(
+                                    when {
+                                        saving != null -> "取消"
+                                        saved != null -> "打开"
+                                        else -> "知道了"
+                                    }
+                                )
+                            }
                         }
                         if (saving != null) {
                             LinearProgressIndicator(
@@ -348,8 +381,10 @@ fun WorkspaceScreen(
                                     // 图片 / 文本 / HTML / Markdown / JSON 才进应用内预览。
                                     onPreview(conversationId, entry.path, entry.name)
                                 } else {
-                                    // APK / PDF / Office / 压缩包等本应用打不开：直接下载并交给系统应用。
-                                    downloadFile(entry, openWhenDone = true)
+                                    // 下载过的直接打开，不再重复下载。
+                                    downloaded[entry.path]?.let { saved ->
+                                        Downloads.open(context, saved, entry.mimeType ?: SandboxPath.mimeOf(entry.name))
+                                    } ?: downloadFile(entry, openWhenDone = true)
                                 }
                             },
                             onDownload = { downloadFile(entry, openWhenDone = false) },

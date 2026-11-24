@@ -1327,3 +1327,20 @@ agent 进程半路没了、连接被中间层吞掉，标记会一直挂在 `run
 
 ## 测试
 - `SandboxPathTest` 新增 `only previewable files open in app`（5 支持 + 4 不支持）。
+
+# 1.4.5 · 思考折叠开关 / 回车发送 / 反馈入口 / 下载取消与去重
+
+## 四个改动
+1. **「展开思考过程」开关重新生效**：1.3.8 抄 rikkahub 的 ChainOfThought 后，
+   `ThoughtRow` 的 `LaunchedEffect` 在非流式分支只处理 Preview 状态——历史消息和
+   已完成的思考卡初始就是 Collapsed，永远走不到设置分支，开关看起来「坏了」。
+   现在两个方向都跟着设置走：开→历史/完成的思考卡自动展开；关→展开的收回。
+   流式中的 Preview 行为不变。
+2. **新增「回车发送消息」开关**（默认开）：关闭后输入框 `ImeAction.Default`，
+   回车在多行输入框里就是换行，发送只认右下角按钮。设置存 `enter_send`。
+3. **关于区新增「提交反馈」**：仓库链接下一行，打开 GitHub Issues。
+4. **下载体验两处**：
+   - 本次会话里已下载过的文件再点击时直接 `Downloads.open`，不重复下载；
+   - 下载气泡里「知道了」换成「取消」：`SandboxFs.read` 加 `isCancelled` 标记，
+     流式读取循环里检测到就抛出中止（穿透 `getOrDefault` 的吞异常），气泡显示
+     「已取消下载」。下载中按钮为「取消」，完成后仍为「打开」。

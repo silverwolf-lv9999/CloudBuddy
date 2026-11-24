@@ -146,3 +146,11 @@
 - **18:3x** 定位：顶部卡片 `SettingsScreen.kt:162` 直接用 `accountHint`；账号行走 `Account.maskHint`。下载 `readWorkspaceFile` 一次性 `body.bytes()` 无进度；notice 横幅固定「知道了」；点击文件非目录一律 `onPreview`。
 - **18:3x** 实现：顶部改 `Account.maskHint`；`SandboxFs.read` 加流式进度回调、`BuddyRepository.readWorkspaceFile` 透传；`Downloads.open` 经 FileProvider + ACTION_VIEW，`file_paths.xml` 加公共 Download 授权；`SandboxPath.canPreviewInApp` 分流点击；工作区与预览页加进度条 + 「打开」按钮。
 - **18:3x** 新增 `SandboxPathTest` 分流测试；版本升 1.4.4 / versionCode 28。
+
+## 2026-11-24 · 四项体验修复（1.4.5）
+
+- 思考折叠开关失效根因：`ThoughtRow` 非流式分支只处理 Preview，历史思考卡停在 Collapsed 不响应设置；改为双向跟随。
+- 新增 `AppSettings.enterSend`；`Composer` 按 `ImeAction.Send/Default` 分支，关闭后回车换行。
+- 关于区加「提交反馈」→ GitHub Issues。
+- 工作区：`downloaded` 记录已下载文件，点击直接打开；下载气泡加「取消」（`SandboxFs.read` 流式循环检测取消标记抛 CloudException 499）。
+- 版本升 1.4.5 / versionCode 29。

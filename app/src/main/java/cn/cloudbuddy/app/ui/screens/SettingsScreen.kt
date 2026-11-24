@@ -92,6 +92,7 @@ fun SettingsScreen(
     var themeMode by remember { mutableStateOf(repo.settings.themeMode) }
     var dynamic by remember { mutableStateOf(repo.settings.dynamicColor) }
     var showThoughts by remember { mutableStateOf(repo.settings.showThoughts) }
+    var enterSend by remember { mutableStateOf(repo.settings.enterSend) }
     var pendingDelete by remember { mutableStateOf<Account?>(null) }
     var historyTurns by remember { mutableStateOf(repo.settings.historyTurns) }
     var historyTimeout by remember { mutableStateOf(repo.settings.historyTimeoutSec) }
@@ -383,6 +384,17 @@ fun SettingsScreen(
                         }
                     )
                     Divider()
+                    SettingRow(
+                        title = "回车发送消息",
+                        subtitle = if (enterSend) "回车直接发送" else "回车换行；发送请点右下角按钮",
+                        trailing = {
+                            Switch(checked = enterSend, onCheckedChange = {
+                                enterSend = it
+                                repo.settings.enterSend = it
+                            })
+                        }
+                    )
+                    Divider()
                     ChipSetting(
                         title = "一次渲染多少轮对话",
                         subtitle = "只渲染最近若干轮，更早的往上翻再加载；长对话打开更快",
@@ -467,6 +479,13 @@ fun SettingsScreen(
                             subtitle = UpdateChecker.REPO_SLUG,
                             trailing = "打开",
                             onClick = { openUrl(context, UpdateChecker.REPO_URL) }
+                        )
+                        Divider()
+                        AboutRow(
+                            title = "提交反馈",
+                            subtitle = "遇到问题或有想法？在 GitHub Issues 里告诉我们",
+                            trailing = "打开",
+                            onClick = { openUrl(context, "https://github.com/${UpdateChecker.REPO_SLUG}/issues") }
                         )
                     }
                 }

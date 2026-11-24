@@ -83,7 +83,8 @@ class SandboxFs(private val http: CloudHttp, private val settings: AppSettings) 
         endpoint: String,
         token: String,
         path: String,
-        onProgress: ((Float) -> Unit)? = null
+        onProgress: ((Float) -> Unit)? = null,
+        isCancelled: (() -> Boolean)? = null
     ): ByteArray {
         return withContext(Dispatchers.IO) {
             val base = endpoint.trimEnd('/')
@@ -116,7 +117,13 @@ class SandboxFs(private val http: CloudHttp, private val settings: AppSettings) 
                             val out = ByteArrayOutputStream()
                             var read = 0L
                             var lastReport = 0L
+                            var aborted = false
                             while (true) {
+                                // 用户点了「取消」：立即停下并抛出，别把半截文件当成功。
+                                if (isCancelled?.invoke() == true) {
+                                    aborted = true
+                                    break
+                                }
                                 val n = source.read(buffer, 32 * 1024)
                                 if (n < 0) break
                                 out.write(buffer.readByteArray())
@@ -127,10 +134,13 @@ class SandboxFs(private val http: CloudHttp, private val settings: AppSettings) 
                                     lastReport = System.currentTimeMillis()
                                 }
                             }
+                            // 取消必须穿透外层的 runCatching（getOrDefault 会吞掉普通异常）。
+                            if (aborted) throw CloudException("已取消下载", 499)
                             if (total > 0) onProgress(1f) else onProgress(-1f)
                             out.toByteArray()
                         }
-                    }.getOrDefault(ByteArray(0))
+                    }.onFailure { if (it is CloudException) throw it }
+                        .getOrDefault(ByteArray(0))
                 } else null
                 response.close()
                 if (bytes != null) return@withContext bytes

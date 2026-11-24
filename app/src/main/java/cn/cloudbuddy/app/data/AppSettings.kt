@@ -209,6 +209,16 @@ class AppSettings(context: Context) {
         set(value) = prefs.edit().putBoolean("collapse_steps", value).apply()
 
     /**
+     * 回车是否直接发送消息。
+     *
+     * 打开（默认）：软键盘回车触发发送；关闭：回车就是换行，
+     * 发送只能点右下角的发送键。写长消息的人会想关掉它。
+     */
+    var enterSend: Boolean
+        get() = prefs.getBoolean("enter_send", true)
+        set(value) = prefs.edit().putBoolean("enter_send", value).apply()
+
+    /**
      * 折叠方式：整轮折叠 / 只折思考与工具。
      *
      * 与 [collapseSteps] 是两件事：那个决定「折不折」，这个决定「折什么」。

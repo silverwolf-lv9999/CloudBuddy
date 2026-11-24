@@ -289,6 +289,7 @@ fun ChatScreen(
                 uploading = uploading,
                 model = ui.models.firstOrNull { it.id == ui.selectedModel }?.name ?: ui.selectedModel,
                 running = ui.state == TurnState.RUNNING || ui.sending,
+                enterSends = repo.settings.enterSend,
                 onPickFile = { picker.launch(arrayOf("*/*")) },
                 onRemoveAttachment = { name -> attachments = attachments.filterNot { it.name == name } },
                 onModelClick = {
@@ -667,7 +668,8 @@ private fun Composer(
     onRemoveAttachment: (String) -> Unit,
     onModelClick: () -> Unit,
     onStop: () -> Unit,
-    onSend: () -> Unit
+    onSend: () -> Unit,
+    enterSends: Boolean = true
 ) {
     val enabled = value.isNotBlank() || attachments.isNotEmpty()
     val containerShape = RoundedCornerShape(20.dp)
@@ -737,8 +739,15 @@ private fun Composer(
                             color = MaterialTheme.colorScheme.onSurface
                         ),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                        keyboardActions = KeyboardActions(onSend = { if (enabled) onSend() }),
+                        // 回车发送可关：关闭后 ImeAction.Default，回车在多行输入框里就是换行。
+                        keyboardOptions = KeyboardOptions(
+                            imeAction = if (enterSends) ImeAction.Send else ImeAction.Default
+                        ),
+                        keyboardActions = if (enterSends) {
+                            KeyboardActions(onSend = { if (enabled) onSend() })
+                        } else {
+                            KeyboardActions.Default
+                        },
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 44.dp, max = 160.dp)
