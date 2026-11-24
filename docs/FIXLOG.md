@@ -1355,21 +1355,23 @@ agent 进程半路没了、连接被中间层吞掉，标记会一直挂在 `run
 
 # 1.4.7 · 角标提前跳「已完成」、工具卡却还在转
 
-## 现象（用户实测）
-任务由网页端发起、App 只是旁观。agent 等一个几分钟的后台工具调用期间，
+## 现象（用户实测，已修正归因）
+任务就是在 App 里发起的，用户一直停在会话页。agent 等一个几分钟的后台工具调用期间，
 用户切走再回来：右上角标已变成「已完成」，工具卡「正在 Get Task Output」
 却还在转圈，界面像卡住。重进会话后恢复正常，云端任务从头到尾没停过。
 
 ## 根因
-1.4.3 起（修「真运行中没被认」）回放收尾后状态上报一律采信。但旁观场景下
-`turnActive=false`，一条中途到来的 `sessionStatus: completed/idle` 上报就把角标
-顶成「已完成」——而工具卡的状态只由 `tool_call_update` 驱动，还在 RUNNING。
-两条信息来源一错位，就是这个画面。
+1.4.3 起（修「真运行中没被认」）回放收尾后状态上报一律采信。旧 `updateState` 只挡了
+IDLE（`turnActive` 时降级返回），**没挡 DONE**——所以即使这轮就是本客户端发起的、
+`turnActive=true`，一条中途的 `sessionStatus: completed/idle` 上报照样把角标顶成
+「已完成」，还顺带清掉 turnActive；而工具卡只由 `tool_call_update` 驱动，还在 RUNNING。
+两条信息来源一错位，就是这个画面。是否旁观、谁发起都不是关键。
 
 ## 改法
 - `AcpReducer.updateState`：**还有工具在转圈时，状态上报里的 DONE/IDLE 不采信**。
-  真正的收尾只认 `session/endTurn` 与 prompt 响应（`finishTurn`），它们不走这条
-  路径，所以拦掉的只会是别的来源的中间态上报。
+  判定只看工具卡状态，与谁发起无关，本地发起的轮次同样受保护。真正的收尾只认
+  `session/endTurn` 与 prompt 响应（`finishTurn`），它们不走这条路径，
+  所以拦掉的只会是别的来源的中间态上报。
 - `session/endTurn` 收尾时顺带把还在转圈的工具卡清掉（与 `finishReplay` 同款），
   防止「角标已完成、步骤还在转」的残留错位。
 - 新增两条回归测试：有工具 RUNNING 时 completed 上报被忽略（收尾后照常采信）；
