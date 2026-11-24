@@ -112,3 +112,5 @@
   3. 思考耗时抽成独立 `ThinkingSeconds` 组件，每秒只重组一行文字，不再拖整个卡片；`ReasoningState.durationMs` 移除；
   4. `ChainOfThought` 加 `animate` 参数，生成中关掉高度动画；`StepsGroup` 外层在运行中也关掉动画——消除双层 animateContentSize 在流式期反复测量。
 - **17:08** `gradle clean compileDebugKotlin` 通过。
+- **17:10** `verify.sh` 全绿：126 单测、lint 0、正式签名；`dist/CloudBuddy-1.4.0-release.apk`，sha256 `4e1aa4e1...8a4`。
+- **17:12** 提交 `53fce43`，push main 与 tag `v1.4.0` 成功，CI 自动发版。
