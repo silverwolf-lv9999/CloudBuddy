@@ -1,5 +1,8 @@
 package cn.cloudbuddy.app.ui.components
 
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -17,6 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -40,11 +44,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cn.cloudbuddy.app.data.AppUiState
 import cn.cloudbuddy.app.data.BuddyRepository
+import cn.cloudbuddy.app.data.Connector
 import cn.cloudbuddy.app.data.McpServer
 import cn.cloudbuddy.app.data.SkillInfo
 
@@ -216,10 +222,247 @@ private fun SkillRow(skill: SkillInfo, onToggle: (Boolean) -> Unit) {
 }
 
 /**
- * MCP 服务器卡片。
+ * 账号里的 MCP 连接器。
  *
- * 顶部那段说明不是客套话：用户在别处（桌面端 / 沙箱里）配好的 MCP 不会出现在
- * 这里，这里改的也不会同步回账号。把边界写在界面上，比写在文档里有用。
+ * 和下面那张 [McpCard] 的区别一定要在界面上说清：这里的记录存在云端账号里，
+ * 官方 App / 网页端改了，这里跟着变；下面是本机配置，只在这台设备的会话里生效。
+ */
+@Composable
+fun ConnectorCard(ui: AppUiState, repo: BuddyRepository) {
+    val context = LocalContext.current
+    var catalogOpen by remember { mutableStateOf(false) }
+    var keyword by remember { mutableStateOf("") }
+    var unbind by remember { mutableStateOf<Connector?>(null) }
+    var token by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        if (ui.connectors.isEmpty() && !ui.connectorsLoading) repo.refreshConnectors()
+    }
+
+    SettingSurface {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("账号 MCP 连接器", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "保存在账号里，与官方 App / 网页端同步",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (ui.connectorsLoading) {
+                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            } else {
+                IconButton(onClick = { repo.refreshConnectors() }) {
+                    Icon(Icons.Filled.Refresh, "刷新连接器", Modifier.size(18.dp))
+                }
+            }
+        }
+
+        ui.connectorsError?.let { error ->
+            Text(
+                "读取失败：$error",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp)
+            )
+        }
+
+        ui.connectors.forEach { connector ->
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(connector.title, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            connector.subtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (connector.needsAuth) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = connector.active,
+                        enabled = connector.bound && connector.authOk,
+                        onCheckedChange = { repo.setConnectorActive(connector, it) }
+                    )
+                    IconButton(onClick = { unbind = connector }) {
+                        Icon(Icons.Filled.Delete, "解绑", Modifier.size(16.dp))
+                    }
+                }
+                if (connector.needsAuth) {
+                    TextButton(onClick = { repo.connectConnector(connector) }) {
+                        Text("重新授权")
+                    }
+                }
+            }
+            SectionDivider()
+        }
+
+        if (ui.connectors.isEmpty() && !ui.connectorsLoading && ui.connectorsError == null) {
+            Text(
+                "这个账号还没有连接 MCP。官方 App 里连过的会显示在这里。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp)
+            )
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    catalogOpen = true
+                    if (ui.connectorCatalog.isEmpty()) repo.loadConnectorCatalog()
+                }
+                .padding(horizontal = 14.dp, vertical = 13.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Filled.Add, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(10.dp))
+            Text("添加 MCP 连接器", style = MaterialTheme.typography.titleMedium)
+        }
+    }
+
+    unbind?.let { target ->
+        AlertDialog(
+            onDismissRequest = { unbind = null },
+            title = { Text("解绑 ${target.title}？") },
+            text = { Text("授权会一并失效，官方 App 和网页端也会同步。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    repo.removeConnector(target)
+                    unbind = null
+                }) { Text("解绑") }
+            },
+            dismissButton = { TextButton(onClick = { unbind = null }) { Text("取消") } }
+        )
+    }
+
+    if (catalogOpen) {
+        AlertDialog(
+            onDismissRequest = { catalogOpen = false },
+            title = { Text("MCP 连接器市场") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = keyword,
+                        onValueChange = { keyword = it },
+                        label = { Text("搜索") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (ui.connectorCatalogLoading) {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    }
+                    Column(
+                        modifier = Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        val boundNames = ui.connectors.map { it.name }.toSet()
+                        val results = ui.connectorCatalog.filter {
+                            it.title.contains(keyword, true) || it.name.contains(keyword, true)
+                        }
+                        if (results.isEmpty() && !ui.connectorCatalogLoading) {
+                            Text(
+                                "没有结果。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        results.forEach { item ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(item.title, style = MaterialTheme.typography.titleSmall)
+                                    if (item.description.isNotBlank()) {
+                                        Text(
+                                            item.description,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                                if (item.name in boundNames) {
+                                    Text(
+                                        "已添加",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                } else {
+                                    TextButton(onClick = { repo.connectConnector(item) }) {
+                                        Text("连接")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { catalogOpen = false }) { Text("关闭") } }
+        )
+    }
+
+    ui.connectorAuth?.let { pending ->
+        AlertDialog(
+            onDismissRequest = { repo.dismissConnectorAuth() },
+            title = { Text("连接 ${pending.title}") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    when (pending.flow.action) {
+                        "redirect" -> {
+                            Text("需要在浏览器里完成授权，回来后点「已完成」。")
+                            pending.flow.url?.let { url ->
+                                TextButton(onClick = {
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        )
+                                    }.onFailure {
+                                        Toast.makeText(context, "没有可以打开链接的应用", Toast.LENGTH_SHORT).show()
+                                    }
+                                }) { Text("打开授权页") }
+                            }
+                            TextButton(onClick = { repo.checkConnectorAuth() }) { Text("已完成授权") }
+                        }
+                        "show_form" -> {
+                            Text("输入这个连接器的 Token：")
+                            OutlinedTextField(
+                                value = token,
+                                onValueChange = { token = it },
+                                label = { Text("Token") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            TextButton(onClick = { repo.submitConnectorToken(token) }) { Text("提交") }
+                        }
+                        "poll" -> {
+                            Text("在浏览器打开 ${pending.flow.verificationUri.orEmpty()}，输入验证码：")
+                            Text(
+                                pending.flow.userCode.orEmpty(),
+                                style = MaterialTheme.typography.headlineSmall.copy(fontFamily = FontFamily.Monospace)
+                            )
+                            TextButton(onClick = { repo.checkConnectorAuth() }) { Text("已完成授权") }
+                        }
+                        else -> Text("这个连接器已经连上了，关掉窗口即可刷新。")
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { repo.dismissConnectorAuth() }) { Text("关闭") }
+            }
+        )
+    }
+}
+
+/**
+ * 本机 MCP 服务器卡片。
+ *
+ * 和上面的账号连接器不是一回事：这里只往 ACP 的 `session/new` 下发配置，
+ * 不会同步到账号。把边界写在界面上，比写在文档里有用。
  */
 @Composable
 fun McpCard(ui: AppUiState, repo: BuddyRepository) {
@@ -230,8 +473,8 @@ fun McpCard(ui: AppUiState, repo: BuddyRepository) {
 
     SettingSurface {
         Text(
-            "MCP 服务器只在建立会话时下发给云端沙箱，改动对下一次进入会话生效。" +
-                "云端没有提供 MCP 管理接口，所以这里的列表仅存在于本机。",
+            "这里放自定义 MCP：只在建立会话时下发给云端沙箱，改动对下一次进入会话生效，" +
+                "不会同步到账号。市场里的 MCP 请用上面的「账号 MCP 连接器」。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)

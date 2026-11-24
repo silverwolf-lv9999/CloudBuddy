@@ -88,7 +88,23 @@ data class AppUiState(
     val marketSkills: List<SkillInfo> = emptyList(),
     val marketLoading: Boolean = false,
     /** 本机 MCP 服务器（随会话下发）。 */
-    val mcpServers: List<McpServer> = emptyList()
+    val mcpServers: List<McpServer> = emptyList(),
+    /** 账号级 MCP 连接器：云端保存，和官方 App / 网页端共用同一份。 */
+    val connectors: List<Connector> = emptyList(),
+    val connectorsLoading: Boolean = false,
+    val connectorsError: String? = null,
+    /** 连接器市场清单（mcp_only）。 */
+    val connectorCatalog: List<Connector> = emptyList(),
+    val connectorCatalogLoading: Boolean = false,
+    /** 正在走的授权流程：界面据此弹「打开授权页 / 填 token」。 */
+    val connectorAuth: PendingConnectorAuth? = null
+)
+
+/** 一次未完成的连接器授权：记下名字，界面才能知道结果该刷新哪一条。 */
+data class PendingConnectorAuth(
+    val name: String,
+    val title: String,
+    val flow: ConnectorAuth
 )
 
 data class WorkspaceState(
@@ -115,6 +131,7 @@ class BuddyRepository(val settings: AppSettings) {
     val api = WorkBuddyApi(settings, http)
     val sandbox = SandboxFs(http, settings)
     val skillsApi = SkillApi(http)
+    val connectorApi = ConnectorApi(http)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val connections = ConcurrentHashMap<String, AcpConnection>()
@@ -360,6 +377,118 @@ class BuddyRepository(val settings: AppSettings) {
         reloadMcp()
     }
 
+    // ---------- 账号 MCP 连接器（云端） ----------
+
+    /** 拉账号的连接器清单。授权状态要另查一次，`connect_status` 只说明「绑过」。 */
+    fun refreshConnectors() {
+        if (_ui.value.connectorsLoading) return
+        _ui.value = _ui.value.copy(connectorsLoading = true, connectorsError = null)
+        scope.launch {
+            val result = runCatching { connectorApi.mine() }
+            _ui.value = _ui.value.copy(
+                connectorsLoading = false,
+                connectors = result.getOrElse { _ui.value.connectors },
+                connectorsError = result.exceptionOrNull()?.let { describe(it) }
+            )
+        }
+    }
+
+    /** 启停云端连接器。先改界面再打请求，失败回滚——开关点了没反应最难受。 */
+    fun setConnectorActive(connector: Connector, enabled: Boolean) {
+        _ui.value = _ui.value.copy(
+            connectors = _ui.value.connectors.map {
+                if (it.name == connector.name) it.copy(active = enabled) else it
+            }
+        )
+        scope.launch {
+            runCatching { connectorApi.setActive(connector.name, enabled) }
+                .onFailure {
+                    _ui.value = _ui.value.copy(
+                        connectors = _ui.value.connectors.map {
+                            if (it.name == connector.name) it.copy(active = connector.active) else it
+                        }
+                    )
+                    _events.tryEmit("连接器启停失败：" + describe(it))
+                }
+        }
+    }
+
+    /** 解绑：连 `oauth` 授权一起失效。界面会先确认。 */
+    fun removeConnector(connector: Connector) {
+        scope.launch {
+            runCatching { connectorApi.remove(connector.name) }
+                .onSuccess {
+                    _events.tryEmit("已解绑 ${connector.title}")
+                    refreshConnectors()
+                }
+                .onFailure { _events.tryEmit("解绑失败：" + describe(it)) }
+        }
+    }
+
+    fun loadConnectorCatalog() {
+        if (_ui.value.connectorCatalogLoading) return
+        _ui.value = _ui.value.copy(connectorCatalogLoading = true)
+        scope.launch {
+            val result = runCatching { connectorApi.catalog() }
+            _ui.value = _ui.value.copy(
+                connectorCatalogLoading = false,
+                connectorCatalog = result.getOrElse { _ui.value.connectorCatalog }
+            )
+            result.exceptionOrNull()?.let { _events.tryEmit("连接器市场：" + describe(it)) }
+        }
+    }
+
+    /** 发起授权。已连接时云端直接回 `connected`，这时刷新列表就行。 */
+    fun connectConnector(connector: Connector) {
+        scope.launch {
+            runCatching { connectorApi.startAuth(connector.name) }
+                .onSuccess { flow ->
+                    if (flow.action == "connected") {
+                        refreshConnectors()
+                    } else {
+                        _ui.value = _ui.value.copy(
+                            connectorAuth = PendingConnectorAuth(connector.name, connector.title, flow)
+                        )
+                    }
+                }
+                .onFailure { _events.tryEmit("发起授权失败：" + describe(it)) }
+        }
+    }
+
+    /** 表单型授权：官方对单字段表单发的就是 `authorization_code`。 */
+    fun submitConnectorToken(token: String) {
+        val pending = _ui.value.connectorAuth ?: return
+        scope.launch {
+            runCatching { connectorApi.submitToken(pending.name, token) }
+                .onSuccess {
+                    _ui.value = _ui.value.copy(connectorAuth = null)
+                    refreshConnectors()
+                }
+                .onFailure { _events.tryEmit("提交授权失败：" + describe(it)) }
+        }
+    }
+
+    /** 浏览器授权完成后点这个按钮轮询一次状态。 */
+    fun checkConnectorAuth() {
+        val pending = _ui.value.connectorAuth ?: return
+        scope.launch {
+            runCatching { connectorApi.status(pending.name) }
+                .onSuccess { ok ->
+                    if (ok) {
+                        _ui.value = _ui.value.copy(connectorAuth = null)
+                        refreshConnectors()
+                    } else {
+                        _events.tryEmit("还没完成授权，授权完再点一次")
+                    }
+                }
+                .onFailure { _events.tryEmit("查询授权失败：" + describe(it)) }
+        }
+    }
+
+    fun dismissConnectorAuth() {
+        _ui.value = _ui.value.copy(connectorAuth = null)
+    }
+
     /** 把异常翻译成一句人话：HTTP 404 说明这个账号/站点没有该接口，比「空列表」有用得多。 */
     private fun describe(error: Throwable): String = when (error) {
         is CloudException -> error.message ?: "请求失败"
@@ -389,7 +518,11 @@ class BuddyRepository(val settings: AppSettings) {
             foldMode = settings.fold,
             accounts = settings.accounts(),
             activeAccountId = settings.activeAccountId,
-            mcpServers = settings.mcp.list()
+            mcpServers = settings.mcp.list(),
+            // 连接器是账号级的：切号必须清空，否则会把上一个账号的 GitHub 显示在新的账号下。
+            connectors = emptyList(),
+            connectorCatalog = emptyList(),
+            connectorAuth = null
         )
         _workspace.value = WorkspaceState()
     }

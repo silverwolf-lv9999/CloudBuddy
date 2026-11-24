@@ -866,3 +866,52 @@ GitHub 偶尔返回错误页，解析崩了会让整个设置页挂掉。
 - **未做真机验证**：检查更新的界面流转（点击 → 检查中 → 发现新版 → 对话框 → 跳浏览器）
   只经过代码路径与单测，没有在设备上点过。已知风险是 `api.github.com` 在国内网络下不通时
   会落到 `Failed` 分支，文案已经按「检查失败」写。
+
+# 1.3.0 · 账号里的 MCP 连接器不是「云端无接口」
+
+## 背景
+用户指出：在官方安卓端设置过 GitHub 的 MCP，网页端也能用，说明 MCP 跟随账号。
+1.2.0 的结论是「MCP 没有云端管理接口，只有本机配置」，据此写出来的 MCP 卡片
+只能粘贴 JSON、随 `session/new` 下发，看不到用户账号里真实存在的 GitHub 连接器。
+
+## 根因
+把两种东西混成了一类：
+
+- 市场连接器（GitHub / Figma 等）存在云端账号里，官方 App / web / 安卓端共用一条记录；
+- 自定义 MCP（`custom-mcp:` 前缀）才是本地 agent 侧配置，走 `getMcpServers/toggleMcpServer`
+  广播，没有 REST。
+
+1.2.0 只看到了后者的实现，就把结论推广到了全部 MCP。判断依据是 web 产物
+`main-*.js` 里的 `getMcpServers` 走 agent provider，但同一个文件里还有
+`CloudConnectorRepo`，`GET /console/as/connector/user/` 才是账号清单。
+
+## 改法
+新增 `data/ConnectorApi.kt`，把连接器接口按 web 产物的常量还原：
+`user/` 清单、`registry2c/list?scope=all&mcp_only=true` 市场、
+`PATCH .../active_status` 启停、`DELETE .../user/{name}/` 解绑、
+`oauth/{name}/start|status|connect|revoke` 授权链路。
+`mine()` 除了读 `connect_status` / `active_status`，还会查一次 `oauth/auth-status`：
+前者只说明「绑过」，token 过期后仍是 1，三者都满足才算可用。
+
+设置页拆成两张卡：`ConnectorCard`（账号级，云端同步）和原来的 `McpCard`
+（本机自定义，只随会话下发）。切账号时清空连接器状态，避免上一个账号的 GitHub
+显示在新账号下。市场条目里的 `mcp.sandbox_url` 是沙箱内网关地址，不下发给 ACP。
+
+## 验证（1.3.0）
+- 真账号实测（用户提供短信验证码，全程在沙箱内存里完成，凭据没有入库）：
+  - `GET /console/as/connector/user/` → `data.connectors[]` 里有用户的 `github`，
+    `connect_status=1`、`active_status=1`、`connect_at=2026-09-27T10:39:36+08:00`；
+  - `POST /console/as/connector/oauth/auth-status {names:["github"]}` → `statuses.github.status=connected`；
+  - `POST /console/as/connector/oauth/github/start` → `next_action=connected`（已连着时直接返回）；
+  - `GET registry2c/list?scope=all&mcp_only=true` → 61 条，github 项的 `data.display_name`
+    是「GitHub MCP」，带 `mcp.gateway_url` / `mcp.sandbox_url`；
+  - `PATCH .../user/github/active_status` 置 0 再置 1，两次都 200；`get-list` 复查
+    先变 `active_status=0`，恢复到 `1`，与测试前一致。
+- `bash scripts/verify.sh` 全绿：102 个单测（新增 5 项连接器解析用例），lint 0 error。
+- APK：`dist/CloudBuddy-1.3.0-release.apk`，versionCode 14，正式证书，
+  sha256 `d47b39c4868dcbb436dc09624940b209105a5dc3f27770e7d11c32d5d2b4da09`。
+- **未做真机验证**：设置页新增的连接器卡片没有在设备上点过；授权对话框的三种
+  `next_action` 分支只覆盖了 `connected` 和 `redirect` 的解析单测，`show_form` / `poll`
+  的真实返回形状还没有抓到过。另一个待确认点是：账号里的连接器由沙箱侧按账号解析
+  （市场条目的 `mcp.sandbox_url` 指向沙箱内网关），客户端不下发 `mcpServers` 是否就已生效，
+  需要在真机开一个会话问 Agent「你有哪些工具」来确认。

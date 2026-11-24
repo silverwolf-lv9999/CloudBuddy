@@ -69,6 +69,7 @@ import cn.cloudbuddy.app.BuildConfig
 import cn.cloudbuddy.app.data.AppSettings
 import cn.cloudbuddy.app.data.AppUiState
 import cn.cloudbuddy.app.data.Account
+import cn.cloudbuddy.app.ui.components.ConnectorCard
 import cn.cloudbuddy.app.ui.components.McpCard
 import cn.cloudbuddy.app.ui.components.SkillsCard
 import cn.cloudbuddy.app.data.BuddyRepository
@@ -406,6 +407,7 @@ fun SettingsScreen(
             item { SkillsCard(ui, repo) }
 
             item { SectionTitle("MCP 服务器", Icons.Filled.Hub) }
+            item { ConnectorCard(ui, repo) }
             item { McpCard(ui, repo) }
 
             item { SectionTitle("关于", Icons.Filled.Info) }

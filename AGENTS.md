@@ -237,10 +237,21 @@ release APK（`verify.sh` 里的证书 DN 校验通过，证明用的是正式�
     重建 jar 等于重建 client，正在跑的请求全部作废。做法是 jar 内部按槽切换
     （`cookies_v1:<账号 id>`），实例始终是同一个。另外「先登录再建账号」的顺序会
     把凭据写进 guest 槽，`beginAccount()` 必须 carryOver 接管，否则登录完就丢 cookie。
-15. **MCP 没有云端管理接口**。官方 web 的 getMcpServers/toggleMcpServer 走本地
-    agent 适配器，云端沙箱没有对应 REST。客户端只做 ACP 那一步：把配置塞进
-    `session/new` / `session/load` 的 `mcpServers`。技能有真接口，路径在
-    `data/SkillApi.kt` 顶部注释里，全部来自 `main-*.js` 里的常量，无公开文档。
+15. **MCP 分两类，别再说「云端没有 MCP 接口」**。
+    - 市场连接器（GitHub / Figma 这类，官方 App 里连的 MCP）是**账号级、云端存**的：
+      `GET /console/as/connector/user/` → `data.connectors[]`，两个独立标记
+      `connect_status`（绑过）与 `active_status`（启用），启停走
+      `PATCH /console/as/connector/user/{name}/active_status`。官方 App 改了网页端就跟着变，
+      因为两端读写的是同一条记录。授权是否还有效要另查 `POST /console/as/connector/oauth/auth-status`，
+      `connect_status=1` 只表示「绑过」，token 过期后仍然是 1。
+      2026-11 已用真账号实测：读到用户的 `github`（connect=1 / active=1），启停接口
+      PATCH 后立刻生效，已恢复原值。市场清单是
+      `GET /console/as/connector/registry2c/list?scope=all&mcp_only=true`，
+      条目里的 `mcp.sandbox_url` 是沙箱内网关地址，客户端**不要**把它当 mcpServers 下发。
+    - 自定义 MCP（`custom-mcp:` 那类）才是本机配置：web 的 `getMcpServers/toggleMcpServer`
+      走本地 agent 适配器，没有云端 REST。客户端只在 `session/new` / `session/load`
+      的 `mcpServers` 里下发，见 `data/McpStore.kt`。
+    技能接口在 `data/SkillApi.kt` 顶部注释；连接器在 `data/ConnectorApi.kt`。
 
 ## 协议速查
 
