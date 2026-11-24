@@ -1108,6 +1108,7 @@ class BuddyRepository(val settings: AppSettings) {
             // finally 才能准确注销——按 activeId 注销的话，用户切走后这个 id 会永远留在集合里，
             // 那条会话就再也不会被对账、也不会补新输出。
             var turnId: String? = targetId
+            var turnConn: AcpConnection? = null
             try {
                 val id = targetId ?: createConversation(prompt)
                 turnId = id
@@ -1120,6 +1121,9 @@ class BuddyRepository(val settings: AppSettings) {
                 }
                 inFlightTurns.add(id)
                 val conn = withContext(Dispatchers.IO) { connection(id) }
+                turnConn = conn
+                // 这一轮是本客户端发起的：允许它的 SSE 事件推进度/状态。
+                conn.setLocalTurnActive(true)
                 applyModel(conn)
                 val (blocks, sourceBlocks) = buildPrompt(conn.session, prompt, attachments)
                 conn.prompt(prompt, currentModel(), blocks, sourceBlocks, PROMPT_TIMEOUT)
@@ -1134,6 +1138,7 @@ class BuddyRepository(val settings: AppSettings) {
                 lastTurnEndAt = System.currentTimeMillis()
                 applyIfActive(targetId) { copy(error = readable(e), state = TurnState.FAILED) }
             } finally {
+                turnConn?.setLocalTurnActive(false)
                 turnId?.let { inFlightTurns.remove(it) }
                 if (_ui.value.activeId == targetId) _ui.value = _ui.value.copy(sending = false)
                 runCatching { refreshConversations() }
@@ -1197,8 +1202,11 @@ class BuddyRepository(val settings: AppSettings) {
             // 回答之后本轮仍在继续，和对账一样要算「在途」，否则会被服务端滞后的
             // waiting 状态盖回去，问题卡片可能重新弹出来。
             inFlightTurns.add(id)
+            var turnConn: AcpConnection? = null
             try {
                 val conn = withContext(Dispatchers.IO) { connection(id) }
+                turnConn = conn
+                conn.setLocalTurnActive(true)
                 if (viaResolve) conn.resolve(ask, answer)
                 else {
                     val (blocks, source) = buildPrompt(conn.session, text, emptyList())
@@ -1211,6 +1219,7 @@ class BuddyRepository(val settings: AppSettings) {
             } catch (e: Exception) {
                 applyIfActive(id) { copy(error = readable(e)) }
             } finally {
+                turnConn?.setLocalTurnActive(false)
                 inFlightTurns.remove(id)
                 if (_ui.value.activeId == id) _ui.value = _ui.value.copy(sending = false)
             }

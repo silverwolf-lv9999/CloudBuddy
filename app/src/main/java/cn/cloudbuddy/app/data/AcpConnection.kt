@@ -114,6 +114,20 @@ class AcpConnection(
     /** 本轮正在被用户停止：传输层要静默收敛，不关连接、不报错。 */
     @Volatile private var cancelRequested = false
 
+    /** 本轮是不是本客户端自己发起的（由 Repository 在发送/结束时同步）。 */
+    @Volatile private var localTurnActive = false
+
+    /**
+     * 决定 SSE 上报的「运行中」能不能改界面状态。
+     *
+     * 只有本客户端在推这一轮时才采信；别的设备发起的任务由 console 对账告知，
+     * 旧连接滞留的 `working` 事件一概不认——它是「重装后仍转圈」的直接来源。
+     */
+    fun setLocalTurnActive(active: Boolean) {
+        localTurnActive = active
+        reducer.allowRemoteRunning = active || replaying
+    }
+
     @Volatile private var connectionId: String = ""
     @Volatile private var acpToken: String = ""
     @Volatile private var closed = false
@@ -240,6 +254,8 @@ class AcpConnection(
         if (!replaying) return
         reducer.finishReplay()
         replaying = false
+        // 回放阶段的历史状态已经擦干净；此后只有本地在跑的一轮才认实时 working 事件。
+        reducer.allowRemoteRunning = localTurnActive
         publishCoalesced(force = true)
     }
 
@@ -413,6 +429,8 @@ class AcpConnection(
         // 关闭会打断正在读的 prompt 流。按「主动停止」收尾，别让上层把它标成红色失败：
         // 切会话、重建连接、对账接管都会走到这里，都不该显示成「执行失败」。
         cancelRequested = true
+        localTurnActive = false
+        reducer.allowRemoteRunning = false
         pending.values.forEach { it.latch.countDown() }
         runCatching { transport?.cancel() }
         runCatching { pushExecutor.shutdownNow() }

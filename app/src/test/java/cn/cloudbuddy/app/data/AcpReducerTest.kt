@@ -363,4 +363,20 @@ class AcpReducerTest {
         reducer.accept(askTool("executing"), replaying = true)
         assertTrue(reducer.snapshot().ask == null)
     }
+
+    /** 重装 App 后仍转圈：一条滞留的旧 working 事件不该把终态重新拉回运行中。 */
+    @Test
+    fun `stale working report cannot restart a finished turn`() {
+        val reducer = AcpReducer("session-1")
+        reducer.finishReplay()
+        reducer.allowRemoteRunning = false
+        reducer.accept(
+            sessionUpdate(
+                JSONObject().put("sessionUpdate", "session_info_update")
+                    .put("sessionStatus", "working")
+            ),
+            replaying = false
+        )
+        assertEquals(TurnState.IDLE, reducer.snapshot().state)
+    }
 }

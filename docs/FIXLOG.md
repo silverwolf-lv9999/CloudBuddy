@@ -1104,3 +1104,32 @@ sha256 `647c9341579822536a6802980b30fb30b3c27229b0b1cdf911ff9efe87aaf510`。
 - 新增判断只是两个 volatile 读 + 一次减法和比较，对账频率未变（后台 0 / 推流 30s /
   有任务 10s / 空闲 45s）；
 - `cancel()` 只在用户主动点停止时发生，正常路径零改动。
+
+# 1.3.7 · 重装后仍显示「运行中」：滞留的 working 事件
+
+## 新证据
+用户重装 1.3.5 后，那个会话**仍然显示运行中、发不了消息**；同一时刻网页端显示已完成
+且能正常发消息。用户随后在网页端发了一条消息，会话才恢复。
+
+真账号复核（`batch-get`）：该会话 `status=completed`，`updatedAt` 从 14:45:53 跳到
+15:25:35 ——正好是网页端那一发。说明云端记录一直是权威且正确的。
+
+## 为什么 1.3.6 不够
+重装会清空内存里的在途协程，1.3.6 修的「僵尸 prompt 流」在重装后不存在。
+而 `finishReplay()` 会把历史里的 RUNNING 收敛成 IDLE，所以状态**也不是历史带出来的**。
+剩下唯一来源：连接建立后，SSE 上滞留的旧 `session/update status=working` 事件
+把 reducer 推成 RUNNING；旧任务早已结束，后面不会再有 DONE 事件来收尾。
+对账把它改成 DONE，下一条滞留事件又推回 RUNNING。
+
+## 改法
+- `AcpReducer.allowRemoteRunning`：回放阶段允许采信历史状态；回放收尾后，只有
+  **本客户端自己发起的那一轮**才允许 SSE 把状态改成 RUNNING/WAITING。
+- `AcpConnection.setLocalTurnActive()`：Repository 在 `send()`/`answerQuestion()` 登记
+  在途时置 true，`finally`/`close()` 置 false；`endReplay()` 按此决定回放后的开关。
+- 别的设备发起的任务由 console 对账写入状态（10 秒一次），不再依赖可能过期的 SSE 事件。
+- 新增单测 `stale working report cannot restart a finished turn`。
+
+## 与 1.3.6 合起来的效果
+- 状态角标：滞留 working 不再能把终态拉回运行中；对账是唯一权威。
+- 发送：本地显示在跑但流已不活时不再拒发，交给 `batch-get` 做最终判断。
+- 停止：点一次就能真正打断本地读，不再需要等 2 小时兜底。

@@ -25,6 +25,16 @@ data class AcpSnapshot(
  */
 class AcpReducer(private val sessionId: String, private val conversationId: String = sessionId) {
 
+    /**
+     * 是否采信 SSE 上报的「运行中」。
+     *
+     * 历史回放阶段需要有它（还原当时状态），但回放收尾后，只有**本客户端自己发起的**
+     * 那一轮才允许实时事件把状态改成 RUNNING/WAITING。否则一条滞留的旧 `working`
+     * 事件就能让界面永久转圈——console 的 batch-get 明明是 completed，两下一冲突，
+     * 用户既看不到正确状态，也发不出消息。真正的「云端在别处跑」由对账写入。
+     */
+    @Volatile var allowRemoteRunning: Boolean = true
+
     private val messages = mutableListOf<ChatMessage>()
     private val artifacts = linkedMapOf<String, Artifact>()
     private var state: TurnState = TurnState.IDLE
@@ -326,6 +336,7 @@ class AcpReducer(private val sessionId: String, private val conversationId: Stri
     fun currentState(): TurnState = state
 
     private fun updateState(next: TurnState) {
+        if (!allowRemoteRunning && (next == TurnState.RUNNING || next == TurnState.WAITING)) return
         if (next == TurnState.RUNNING && state == TurnState.STOPPED) return
         // 轮次仍在进行时，「空闲」只是一次中间态上报，不能把状态降级：
         // 否则顶部状态会在「云端执行中 / 空闲」之间反复横跳。

@@ -63,3 +63,11 @@
 - **15:36** 编译通过；版本升 1.3.6 / versionCode 20，`verify.sh` 后台开跑。
 - **15:38** `verify.sh` 全绿：119 单测、lint 0、正式签名；产物 `dist/CloudBuddy-1.3.6-release.apk`，sha256 `f28d0e62...3268`。
 - **15:40** 提交 `85a983e`，push main 与 tag `v1.3.6` 均成功，CI 自动发版。
+
+## 2026-11-24 · 重装仍转圈（1.3.7）
+
+- **15:42** 用户补充：重装 1.3.5 后该会话仍显示运行中、发不了消息；网页端正常，且在网页端发了一条消息后会话恢复。
+- **15:44** 重新短信登录复核 `batch-get`：该会话 `completed`，`updatedAt` 从 14:45:53 跳到 15:25:35（用户网页端那一发）。凭据已删。
+- **15:46** 确认 1.3.6 修不了重装场景（内存态已清空），且 `finishReplay()` 会把历史 RUNNING 收敛成 IDLE → 状态只能来自 SSE 滞留的 working 事件。
+- **15:50** 改 `AcpReducer.allowRemoteRunning` + `AcpConnection.setLocalTurnActive()` + Repository 发送/回答的登记与清理；新增单测。
+- **15:53** `verify.sh` 全绿：120 单测、lint 0、正式签名；`dist/CloudBuddy-1.3.7-release.apk`，sha256 `ececd0a6...f310`。
