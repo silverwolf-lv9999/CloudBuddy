@@ -132,3 +132,10 @@
 - **18:0x** 据此推翻 1.4.1 的因果：1.3.3 没有「打开后对账」，加载完只是本地把 running 擦成 IDLE，服务端 `status` 没变；新版采纳远端，所以重进无效。→ 服务端运行标志可能永远不自愈，不能等它收敛。
 - **18:0x** 改 `AcpConnection.resetRemoteTurn`（请求形式 session/cancel）；`healStaleRun` 改成 load + cancel；`confirmIdle` 清不掉时降级放行（只认「本地有事件流 / 内容 5 分钟内更新」为真在跑）；`SessionsScreen` 菜单加「解除卡住的运行状态」→ `forceResetConversation`。
 - **18:1x** 版本升 1.4.2 / versionCode 26；`verify.sh` 全绿：130 单测 / lint 0 error / 正式签名；`dist/CloudBuddy-1.4.2-release.apk` sha256 `c93e86a22dace03e7a53cfec19e25fc71f961739db6434ca06ed6440c8944d79`。
+
+## 2026-11-24 · 大退重进后云端在跑却显示空闲（1.4.3）
+
+- **18:2x** 用户反馈：布置任务后大退 App，重进时消息在加载、新消息往外冒，但右上角与输入框都显示空闲。
+- **18:2x** 读 `AcpReducer.accept/updateState` 与 `AcpConnection.setLocalTurnActive/endReplay/close`：定位 `endReplay` 里 `allowRemoteRunning = localTurnActive`——大退重进后 localTurnActive=false，实时 working 被 `updateState` 挡掉，而消息分片不走该闸门，正好解释「文字在流、状态空闲」。
+- **18:2x** 确认 `accept` 已用 `!history` 过滤回放期状态，实时期无需再按「谁发起的」拦截。改 `endReplay` 为 `true`、`setLocalTurnActive` 结束时不再关闸、`close` 保持 false。
+- **18:2x** 新增回归测试（非本地发起的实时 working 点亮状态）；版本升 1.4.3 / versionCode 27。

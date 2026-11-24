@@ -126,10 +126,10 @@ class AcpConnection(
      */
     fun setLocalTurnActive(active: Boolean) {
         localTurnActive = active
-        // 只认「本客户端这一轮」。以前这里是 `active || replaying`：回放没收尾
-        // （load 抛了非超时异常就会）时 replaying 永远是 true，闸门等于没关，
-        // 滞留的 working 事件照样能把界面顶成「运行中」，重装也去不掉。
-        reducer.allowRemoteRunning = active
+        // 本轮开始时确保闸门是开的（可能抢在 load 收尾之前）。结束时**不再关**：
+        // 大退重进后跑着的那一轮不是本客户端发起的，但状态照样要跟着实时事件走。
+        // 关闸只发生在回放期/连接关闭时，历史 working 由 reducer 的 !history 过滤。
+        if (active) reducer.allowRemoteRunning = true
     }
 
     @Volatile private var connectionId: String = ""
@@ -258,8 +258,10 @@ class AcpConnection(
         if (!replaying) return
         reducer.finishReplay()
         replaying = false
-        // 回放阶段的历史状态已经擦干净；此后只有本地在跑的一轮才认实时 working 事件。
-        reducer.allowRemoteRunning = localTurnActive
+        // 回放阶段的历史状态已经擦干净；此后收到的都是实时事件，一律采信。
+        // 以前写 `localTurnActive`：大退重进后任务在云端继续跑，本地这一轮标记是 false，
+        // 于是实时 working 全被挡，消息在流、状态却显示空闲（用户实测）。
+        reducer.allowRemoteRunning = true
         publishCoalesced(force = true)
     }
 

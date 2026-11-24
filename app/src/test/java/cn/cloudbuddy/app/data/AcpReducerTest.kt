@@ -379,4 +379,25 @@ class AcpReducerTest {
         )
         assertEquals(TurnState.IDLE, reducer.snapshot().state)
     }
+
+    /**
+     * 大退重进后的反例：云端任务仍在跑，但不是本客户端发起的（没有 beginTurn）。
+     * 回放收尾后闸门是开的，实时 working 必须点亮状态——否则消息在流、角标却显示空闲。
+     */
+    @Test
+    fun `live working after reopen lights up state without a local prompt`() {
+        val reducer = AcpReducer("session-1")
+        reducer.finishReplay()
+        // 不调用 beginTurn：这一轮由上一次打开 App 时发起，本客户端这一轮标记是 false。
+        // 关键是回放收尾后 allowRemoteRunning 为 true（endReplay 设的），实时事件一律采信。
+        assertTrue(reducer.allowRemoteRunning)
+        reducer.accept(
+            sessionUpdate(
+                JSONObject().put("sessionUpdate", "session_info_update")
+                    .put("sessionStatus", "working")
+            ),
+            replaying = false
+        )
+        assertEquals(TurnState.RUNNING, reducer.snapshot().state)
+    }
 }

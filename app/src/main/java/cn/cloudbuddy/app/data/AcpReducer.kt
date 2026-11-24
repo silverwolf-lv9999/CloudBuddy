@@ -28,10 +28,12 @@ class AcpReducer(private val sessionId: String, private val conversationId: Stri
     /**
      * 是否采信 SSE 上报的「运行中」。
      *
-     * 历史回放阶段需要有它（还原当时状态），但回放收尾后，只有**本客户端自己发起的**
-     * 那一轮才允许实时事件把状态改成 RUNNING/WAITING。否则一条滞留的旧 `working`
-     * 事件就能让界面永久转圈——console 的 batch-get 明明是 completed，两下一冲突，
-     * 用户既看不到正确状态，也发不出消息。真正的「云端在别处跑」由对账写入。
+     * 语义是「回放已收尾、接下来收到的是实时事件」，**不是**「这一轮是不是本客户端发起的」。
+     * 1.3.7 曾按后者实现：大退重进后云端任务明明在跑，但因为不是本客户端发起的，
+     * 实时 `working` 全被挡掉——消息分片照常上屏，状态角标和输入栏却一直显示空闲。
+     *
+     * 历史状态的拦截已经由 [accept] 的 `!history` 完成（回放期的 working 根本不会走到
+     * [updateState]），所以实时阶段必须放行，不管是谁发起的那一轮。
      */
     @Volatile var allowRemoteRunning: Boolean = true
 
