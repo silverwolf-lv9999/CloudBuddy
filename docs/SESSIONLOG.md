@@ -84,3 +84,5 @@
 - **16:12** 新增 `DataTable.kt`（rikkahub 表格组件）、`ChainOfThought.kt`（rikkahub 时间线交互，图标换 material-icons）；`Markdown.kt` 加 `MdBlock.Table` 解析与渲染；`ChatParts.kt` 的 `ThoughtRow` 换成 rikkahub 三态交互并传 streaming。
 - **16:16** 修 3 处编译错误（ExpandLess/ExpandMore 导入误删、Alignment 重复导入、DataTable 局部变量遮蔽参数）；编译通过。
 - **16:18** 新增 `MarkdownTableTest` 6 个单测全绿；版本升 1.3.8 / versionCode 22；`verify.sh` 开跑。
+- **16:22** `verify.sh` 全绿：126 单测、lint 0、正式签名；`dist/CloudBuddy-1.3.8-release.apk`，sha256 `fdd1e544...2856b`。
+- **16:24** 提交 `5157335`，push main 与 tag `v1.3.8` 成功，CI 自动发版。
