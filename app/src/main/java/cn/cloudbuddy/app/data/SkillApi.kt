@@ -36,7 +36,7 @@ data class SkillInfo(
  * - 清单 `GET /v2/user-asset/skill/get-list?page_no=&page_size=`
  * - 启停 `GET|POST /v2/user-asset/assets/configuration?entity_type=skill`
  * - 安装 `POST /v2/user-asset/skill/install  {items:[{source,asset_id,version}]}`
- * - 市场 `GET /console/agent-gateway/internal_knot-skill/apigw/api/v1/skills/list`
+ * - 市场 `POST /portal/enterprises/{id}/skill-market/list?source=builtin&...`（见下方说明）
  *
  * 这些接口没有公开文档，字段按 web 端的解析函数还原；解析一律取多个候选键，
  * 少一个字段只会少显示一行，不会整页报错。
@@ -124,7 +124,8 @@ class SkillApi(private val http: CloudHttp, private val settings: AppSettings) {
                     append("&keyword=").append(java.net.URLEncoder.encode(keyword, "UTF-8"))
                 }
             }
-            // 官方这个接口要 POST + query，body 必须空着；带 body 会回 400 invalid request body。
+            // 参数全在 query，不传 body：CloudHttp.bodyFor 会给 POST 补一个长度为 0
+            // 的 RequestBody。OkHttp 不允许 POST 带 null body，本地就会抛异常。
             parseMarketItems(http.call("POST", query))
         }
 

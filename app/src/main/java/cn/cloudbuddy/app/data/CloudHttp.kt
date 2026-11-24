@@ -5,6 +5,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONObject
@@ -124,7 +125,7 @@ class CloudHttp(private val settings: AppSettings) {
 
     private fun execute(method: String, path: String, body: JSONObject?, productCode: Boolean): Outcome {
         val target = url(path)
-        val requestBody = body?.toString()?.toRequestBody(JSON)
+        val requestBody = bodyFor(method, body)
         val builder = Request.Builder().url(target).method(method, requestBody)
         headers(builder)
         builder.header("Accept", "application/json, text/plain, */*")
@@ -167,5 +168,15 @@ class CloudHttp(private val settings: AppSettings) {
 
     companion object {
         val JSON = "application/json; charset=utf-8".toMediaType()
+
+        /**
+         * OkHttp 的 `method("POST", null)` 会在本地抛
+         * `IllegalArgumentException: method POST must have a request body.`，
+         * 请求根本发不出去。服务端要「空 body」的接口（如技能市场）必须显式传一个
+         * 长度为 0 的 RequestBody；Python requests 抓包时会自动补，所以之前没发现。
+         */
+        internal fun bodyFor(method: String, body: JSONObject?): RequestBody? =
+            body?.toString()?.toRequestBody(JSON)
+                ?: if (method in setOf("POST", "PUT", "PATCH")) "".toRequestBody(JSON) else null
     }
 }

@@ -946,3 +946,24 @@ GitHub 偶尔返回错误页，解析崩了会让整个设置页挂掉。
   sha256 `e13a4ca9ee9849f67f543f9cee3a4555d89d016cc2809aae62f5f578cae16aea`。
 - **未做真机验证**：新接口没有在用户设备上点过；企业账号（非 `personal`）的
   `enterpriseId` 走同一路径是否可用，也只对个人账号验证过。
+
+# 1.3.2 · 技能市场：method POST must have a request body
+
+## 背景
+1.3.1 真机实测：MCP 连接器正常，技能市场仍报错 `技能市场：method POST must have a request body.`。
+
+## 根因
+错误信息是 OkHttp 客户端本地抛的，不是服务端：`Request.Builder.method("POST", null)`
+对 POST/PUT/PATCH 强制要求 RequestBody，body 为 null 时直接抛 `IllegalArgumentException`，
+请求根本没发出去。1.3.1 把市场接口改成「POST + query、不传 body」后，Python requests
+抓包时会自动补 `Content-Length: 0`，返回 200，因此没暴露 Kotlin 侧的差异。
+
+## 改法
+`CloudHttp.bodyFor()` 统一处理：body 为 null 且方法属于 POST/PUT/PATCH 时，补一个
+长度为 0 的 JSON RequestBody；GET/DELETE 仍保持 null。`SkillApi.market()` 不需要
+改接口路径，也不需要构造空 JSONObject（带字段的 body 服务端会回 400）。
+
+## 验证（1.3.2）
+- 4 项新增单测：POST/PUT/PATCH 补空 body、GET/DELETE 保持 null、有 body 时按 JSON 序列化。
+- `bash scripts/verify.sh` 全绿：109 个单测，lint 0 error，正式签名。
+- **未做真机验证**：需要在用户设备上再点一次「浏览技能市场」确认弹窗消失。

@@ -258,10 +258,14 @@ release APK（`verify.sh` 里的证书 DN 校验通过，证明用的是正式�
     `403 {"code":17012,"msg":"knot user identity unavailable"}`，补 `X-User-Id` / `X-WB-UA`
     都没用——这个账号没有 knot 身份，不是 header 拼错。官方 web 默认走企业聚合接口
     `POST /portal/enterprises/personal/skill-market/list?source=builtin&page=1&page_size=20`，
-    参数在 query、**body 必须空**（带 body 回 400），搜索词是 `keyword` 不是 `search_keyword`，
+    参数在 query、**body 必须空**（带字段的 body 回 400），搜索词是 `keyword` 不是 `search_keyword`，
     响应在 `data.items[]`，id 取 `skill_id`，标题取 `display_name_zh`。企业账号把
     `personal` 换成 `settings.enterpriseId`。`/portal/operation-platform/market/skill/list`
     对这个账号返回空列表，不能当兜底。
+    **1.3.2 补充**：OkHttp 的 `method("POST", null)` 会在本地抛
+    `method POST must have a request body.`，请求根本发不出去（Python requests 会自动补
+    `Content-Length: 0`，抓包时看不到这个差异）。统一在 `CloudHttp.bodyFor()` 给
+    POST/PUT/PATCH 的 null body 补长度为 0 的 JSON body，不要在每个调用点各自处理。
 
 ## 协议速查
 
