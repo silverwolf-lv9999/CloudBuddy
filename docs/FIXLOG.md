@@ -1133,3 +1133,30 @@ sha256 `647c9341579822536a6802980b30fb30b3c27229b0b1cdf911ff9efe87aaf510`。
 - 状态角标：滞留 working 不再能把终态拉回运行中；对账是唯一权威。
 - 发送：本地显示在跑但流已不活时不再拒发，交给 `batch-get` 做最终判断。
 - 停止：点一次就能真正打断本地读，不再需要等 2 小时兜底。
+
+# 1.3.8 · 抄 rikkahub 重做消息渲染：思考可点开展回 + 表格渲染
+
+## 现象
+1. 思考内容无法靠直接点击展开/收回（只能靠外层步骤组统一折叠，点标题行没反应）；
+2. 模型输出的 Markdown 表格不渲染，被拍平成一串用空格隔开的纯文本。
+
+## 根因
+- `ThoughtRow` 的标题行只画了图标/文字/箭头，**没有 `.clickable`**——箭头是装饰，点了没任何动作。
+- `parseMarkdown` 里 `|...|` 行只做 `split('|')` 后用空格拼成一段 `Paragraph`，没有表格块，也没有表格布局。
+
+## 改法（整段抄 rikkahub，适配本项目的依赖）
+- 新增 `ui/components/DataTable.kt`：照搬 rikkahub 的 SubcomposeLayout 两阶段测量表格——
+  横向滚动、行内等高、列宽 min/max、按列/按单元格对齐、窄内容按比例拉伸铺满。
+- 新增 `ui/components/ChainOfThought.kt`：照搬 rikkahub 的时间线步骤卡——整行 clickable、
+  箭头翻转、`animateContentSize`、步骤多时折叠尾部。图标改用项目已有的 material-icons-extended
+  （不引入 HugeIcons / bettertext 重依赖）。
+- `ChatParts.kt` 的 `ThoughtRow` 换成 rikkahub 的三态（Collapsed / Preview / Expanded）：
+  生成中默认 Preview（渐隐、限高 100dp、自动滚底），完成后可点标题收回/展开，带思考耗时；
+  思考正文也走 MarkdownText，列表/代码/表格都能渲染。
+- `Markdown.kt` 加真正的 `MdBlock.Table`：识别「表头行 + 分隔行」、解析 `:` 对齐、支持 `\|` 转义，
+  用 DataTable 渲染，单元格内仍支持行内 Markdown（粗体/代码/链接）。孤立的 pipe 行退回行内渲染不丢字。
+- 新增 6 个单测覆盖表格表头/数据/对齐/转义/段落分隔/行内样式。
+
+## 性能
+- 表格用两阶段测量，只在有表格时走 SubcomposeLayout；普通正文零开销。
+- 思考的滚动渐隐只在 Preview 态启用，展开/收回后就是普通 Column。

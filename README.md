@@ -65,7 +65,7 @@ bash scripts/verify.sh           # 正式包（release），归档 dist/CloudBud
 bash scripts/verify.sh --debug   # 需要 debug 包时
 ```
 
-当前版本 1.3.7（versionCode 21），4096 位 RSA 正式密钥签名，有效期到 2054 年。
+当前版本 1.3.8（versionCode 22），4096 位 RSA 正式密钥签名，有效期到 2054 年。
 签名指纹（后续版本必须一致，否则无法覆盖安装）：
 
 ```
@@ -78,7 +78,7 @@ SHA-256  59:29:B6:F4:7F:2B:C4:6F:B9:F5:4B:2F:15:BD:42:C4
 **发版就是两条命令**：
 
 ```bash
-git tag v1.3.7 && git push --tags
+git tag v1.3.8 && git push --tags
 ```
 
 已通过 `:app:assembleDebug`、`80 个 JVM 单测`、`:app:lintDebug`（0 error），并用

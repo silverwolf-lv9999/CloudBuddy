@@ -12,12 +12,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.ui.Alignment
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -38,11 +38,55 @@ sealed interface MdBlock {
     data class Paragraph(val text: AnnotatedString, val indent: Int = 0) : MdBlock
     data class Code(val lang: String, val code: String) : MdBlock
     data object Divider : MdBlock
+    /** 抄自 rikkahub 的表格块：表头 + 数据行 + 每列对齐方式。 */
+    data class Table(
+        val header: List<String>,
+        val rows: List<List<String>>,
+        val alignments: List<Alignment> = emptyList()
+    ) : MdBlock
 }
 
 // 原来这两个正则在逐行循环里现编译（五百行正文就是上千次编译），提到文件级只编译一次。
 private val ORDERED_ITEM = Regex("""^\d{1,3}[.)]\s""")
-private val TABLE_SEPARATOR = Regex("""^\|[\s:|-]+\|$""")
+private val TABLE_SEPARATOR = Regex("""^\s*\|?[\s:|-]+\|?\s*$""")
+
+/** 把 `| a | b |` 切成单元格；抄 rikkahub，支持转义的 `\|`。 */
+private fun splitTableRow(line: String): List<String> {
+    val trimmed = line.trim().trim('|')
+    val cells = mutableListOf<String>()
+    val current = StringBuilder()
+    var i = 0
+    while (i < trimmed.length) {
+        when {
+            trimmed[i] == '\\' && i + 1 < trimmed.length && trimmed[i + 1] == '|' -> {
+                current.append('|'); i += 2
+            }
+            trimmed[i] == '|' -> {
+                cells += current.toString().trim(); current.setLength(0); i++
+            }
+            else -> { current.append(trimmed[i]); i++ }
+        }
+    }
+    cells += current.toString().trim()
+    return cells
+}
+
+/** 解析 `|:---|---:|:---:|` → 左/右/中对齐。 */
+private fun parseAlignments(separator: String): List<Alignment> = splitTableRow(separator).map { cell ->
+    val left = cell.startsWith(":")
+    val right = cell.endsWith(":")
+    when {
+        left && right -> Alignment.Center
+        right -> Alignment.CenterEnd
+        else -> Alignment.CenterStart
+    }
+}
+
+/** 相邻多行表格是否构成一张表：表头行 + 分隔行。 */
+private fun looksLikeTable(lines: List<String>, index: Int): Boolean =
+    index + 1 < lines.size &&
+        lines[index].trim().startsWith("|") &&
+        TABLE_SEPARATOR.matches(lines[index + 1])
 
 fun parseMarkdown(raw: String, baseSize: Float = 15f): List<MdBlock> {
     val blocks = mutableListOf<MdBlock>()
@@ -142,16 +186,31 @@ fun parseMarkdown(raw: String, baseSize: Float = 15f): List<MdBlock> {
 
             trimmed.startsWith("|") && trimmed.endsWith("|") -> {
                 flushParagraph()
-                if (!trimmed.matches(TABLE_SEPARATOR)) {
-                    val cells = trimmed.trim('|').split('|').map { it.trim() }
-                    val text = buildAnnotatedString {
-                        cells.forEachIndexed { i, cell ->
-                            if (i > 0) withStyle(SpanStyle(color = Color(0xFF8C97A8))) { append("   ") }
-                            appendInlineMarkdown(cell, baseSize - 1)
-                        }
+                if (looksLikeTable(lines, index)) {
+                    // 表头 + 分隔行 → 一张真正的表格，后续连续的 | 行都是数据行。
+                    val header = splitTableRow(lines[index])
+                    val alignments = parseAlignments(lines[index + 1])
+                    index += 2
+                    val rows = mutableListOf<List<String>>()
+                    while (index < lines.size) {
+                        val row = lines[index].trim()
+                        if (!row.startsWith("|") || !row.endsWith("|")) break
+                        if (TABLE_SEPARATOR.matches(row)) { index++; continue }
+                        rows += splitTableRow(row)
+                        index++
                     }
-                    blocks += MdBlock.Paragraph(text, indent = 1)
+                    blocks += MdBlock.Table(header, rows, alignments)
+                    continue
                 }
+                // 不成表的孤立 pipe 行：退回原来的行内渲染，别丢字。
+                val cells = splitTableRow(trimmed)
+                val text = buildAnnotatedString {
+                    cells.forEachIndexed { i, cell ->
+                        if (i > 0) withStyle(SpanStyle(color = Color(0xFF8C97A8))) { append("   ") }
+                        appendInlineMarkdown(cell, baseSize - 1)
+                    }
+                }
+                blocks += MdBlock.Paragraph(text, indent = 1)
                 index++
             }
 
@@ -281,6 +340,8 @@ fun MarkdownText(
 
                 is MdBlock.Code -> CodeBlock(block.lang, block.code, baseSize)
 
+                is MdBlock.Table -> MarkdownTable(block, baseSize, textColor)
+
                 MdBlock.Divider -> HorizontalDivider(
                     modifier = Modifier.padding(vertical = 4.dp),
                     color = MaterialTheme.colorScheme.outlineVariant
@@ -288,6 +349,50 @@ fun MarkdownText(
             }
         }
     }
+}
+
+/** 用 rikkahub 的 DataTable 渲染表格，单元格内容仍走行内 Markdown（粗体/代码/链接）。 */
+@Composable
+private fun MarkdownTable(table: MdBlock.Table, baseSize: Float, textColor: Color) {
+    val columnCount = maxOf(table.header.size, table.rows.maxOfOrNull { it.size } ?: 0)
+    if (columnCount == 0) return
+    val headers: List<@Composable () -> Unit> = (0 until columnCount).map { c ->
+        @Composable {
+            val cell = table.header.getOrNull(c).orEmpty()
+            Text(
+                text = inlineMarkdown(cell, baseSize - 1),
+                style = TextStyle(
+                    fontSize = (baseSize - 1).sp,
+                    lineHeight = (baseSize * 1.4f).sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = textColor
+                )
+            )
+        }
+    }
+    val rows: List<List<@Composable () -> Unit>> = table.rows.map { row ->
+        (0 until columnCount).map { c ->
+            @Composable {
+                val cell = row.getOrNull(c).orEmpty()
+                Text(
+                    text = inlineMarkdown(cell, baseSize - 1),
+                    style = TextStyle(
+                        fontSize = (baseSize - 1).sp,
+                        lineHeight = (baseSize * 1.4f).sp,
+                        color = textColor
+                    )
+                )
+            }
+        }
+    }
+    DataTable(
+        headers = headers,
+        rows = rows,
+        modifier = Modifier.padding(vertical = 4.dp),
+        columnMinWidths = List(columnCount) { 56.dp },
+        columnMaxWidths = List(columnCount) { 240.dp },
+        columnAlignments = List(columnCount) { c -> table.alignments.getOrNull(c) ?: Alignment.CenterStart },
+    )
 }
 
 @Composable

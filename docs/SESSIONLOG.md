@@ -71,3 +71,16 @@
 - **15:46** 确认 1.3.6 修不了重装场景（内存态已清空），且 `finishReplay()` 会把历史 RUNNING 收敛成 IDLE → 状态只能来自 SSE 滞留的 working 事件。
 - **15:50** 改 `AcpReducer.allowRemoteRunning` + `AcpConnection.setLocalTurnActive()` + Repository 发送/回答的登记与清理；新增单测。
 - **15:53** `verify.sh` 全绿：120 单测、lint 0、正式签名；`dist/CloudBuddy-1.3.7-release.apk`，sha256 `ececd0a6...f310`。
+
+## 2026-11-24 · 抄 rikkahub 的消息渲染（进行中）
+
+- **16:02** 用户要求优化对话界面：思考内容能点击展开/收回、表格能渲染，明确「直接抄 rikkahub」「展开收回方式也抄过来，最好整个都抄」。
+- **16:03** 克隆 rikkahub 到 artifact 目录，通读关键实现：
+  - `ui/table/DataTable.kt`：SubcomposeLayout 两阶段测量、横向滚动、行内等高、列宽 min/max、对齐覆盖；
+  - `ui/components/ui/ChainOfThought.kt`：时间线卡片、整行 clickable、箭头翻转、animateContentSize、collapsed 折叠尾部步骤；
+  - `ui/components/message/ChatMessageReasoning.kt`：三态 Collapsed/Preview/Expanded、生成中渐隐预览+自动滚底、完成后自动收回。
+- **16:05** 定位 CloudBuddy 两个根因：`ThoughtRow` 标题行没有 `.clickable`（所以点了没反应）；`parseMarkdown` 把 `|...|` 行拍平成纯文本（所以表格不渲染）。
+- **16:06** 方案：把 rikkahub 的 DataTable 与 ChainOfThought 交互整段移植，图标改用它已有的 material-icons-extended（不引 bettertext/HugeIcons 重依赖）；Markdown 解析器加真正的表格 block。
+- **16:12** 新增 `DataTable.kt`（rikkahub 表格组件）、`ChainOfThought.kt`（rikkahub 时间线交互，图标换 material-icons）；`Markdown.kt` 加 `MdBlock.Table` 解析与渲染；`ChatParts.kt` 的 `ThoughtRow` 换成 rikkahub 三态交互并传 streaming。
+- **16:16** 修 3 处编译错误（ExpandLess/ExpandMore 导入误删、Alignment 重复导入、DataTable 局部变量遮蔽参数）；编译通过。
+- **16:18** 新增 `MarkdownTableTest` 6 个单测全绿；版本升 1.3.8 / versionCode 22；`verify.sh` 开跑。
