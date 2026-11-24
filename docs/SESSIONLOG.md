@@ -61,3 +61,5 @@
 - **15:30** 改 `AcpConnection`：加 `promptCall`/`cancelRequested`/`TurnCancelled`/`isStreamActive`；`cancelTurn()` 先打断本地流再异步通知云端；`postRpc` 对用户停止静默收敛（不关连接、不报错）；`close()` 也按主动停止处理。
 - **15:34** 改 `BuddyRepository`：新增 `hasLiveTurn(id)`（登记 + 90s 内 SSE 有事件），对账/补历史/发送闸门全部改用它；提示语改为「上一轮还没收尾」。
 - **15:36** 编译通过；版本升 1.3.6 / versionCode 20，`verify.sh` 后台开跑。
+- **15:38** `verify.sh` 全绿：119 单测、lint 0、正式签名；产物 `dist/CloudBuddy-1.3.6-release.apk`，sha256 `f28d0e62...3268`。
+- **15:40** 提交 `85a983e`，push main 与 tag `v1.3.6` 均成功，CI 自动发版。
