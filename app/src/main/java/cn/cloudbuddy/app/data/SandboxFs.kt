@@ -7,8 +7,10 @@ import okhttp3.MultipartBody
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import okio.Buffer
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.net.URI
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -71,7 +73,18 @@ class SandboxFs(private val http: CloudHttp, private val settings: AppSettings) 
     }
 
     /** 读取沙箱文件（原始字节）。 */
-    suspend fun read(endpoint: String, token: String, path: String): ByteArray {
+    /**
+     * 读取沙箱文件。
+     *
+     * [onProgress] 为下载到本机的场景报告 0..1 的真实字节进度；普通预览传 null，
+     * 走原来的整块读取（少一次 ByteArrayOutputStream 拷贝）。
+     */
+    suspend fun read(
+        endpoint: String,
+        token: String,
+        path: String,
+        onProgress: ((Float) -> Unit)? = null
+    ): ByteArray {
         return withContext(Dispatchers.IO) {
             val base = endpoint.trimEnd('/')
             val encoded = SandboxPath.encodePath(path)
@@ -91,7 +104,33 @@ class SandboxFs(private val http: CloudHttp, private val settings: AppSettings) 
                 val response = http.api.newCall(builder.build()).execute()
                 val code = response.code
                 val bytes = if (code in 200..299) {
-                    runCatching { response.body?.bytes() ?: ByteArray(0) }.getOrDefault(ByteArray(0))
+                    runCatching {
+                        val body = response.body ?: return@runCatching ByteArray(0)
+                        if (onProgress == null) {
+                            body.bytes()
+                        } else {
+                            // 流式读，按 Content-Length 报进度；服务端没给长度就报 -1（不确定进度）。
+                            val total = body.contentLength()
+                            val source = body.source()
+                            val buffer = Buffer()
+                            val out = ByteArrayOutputStream()
+                            var read = 0L
+                            var lastReport = 0L
+                            while (true) {
+                                val n = source.read(buffer, 32 * 1024)
+                                if (n < 0) break
+                                out.write(buffer.readByteArray())
+                                read += n
+                                // 限频：进度回调会触发 UI 重组，几十毫秒报一次足够。
+                                if (total > 0 && System.currentTimeMillis() - lastReport >= 60) {
+                                    onProgress((read.toFloat() / total).coerceIn(0f, 1f))
+                                    lastReport = System.currentTimeMillis()
+                                }
+                            }
+                            if (total > 0) onProgress(1f) else onProgress(-1f)
+                            out.toByteArray()
+                        }
+                    }.getOrDefault(ByteArray(0))
                 } else null
                 response.close()
                 if (bytes != null) return@withContext bytes

@@ -3,4 +3,6 @@
     <files-path name="downloads" path="downloads/" />
     <cache-path name="preview" path="preview/" />
     <cache-path name="uploads" path="uploads/" />
+    <!-- 下载到公共 Download 的文件要用系统应用打开，把这条路径授权给外部。 -->
+    <external-path name="public_downloads" path="Download/" />
 </paths>

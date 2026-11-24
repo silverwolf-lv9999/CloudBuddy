@@ -1459,10 +1459,14 @@ class BuddyRepository(val settings: AppSettings) {
         scope.launch { loadWorkspace(conversationId, path) }
     }
 
-    suspend fun readWorkspaceFile(conversationId: String, path: String): Result<ByteArray> = runCatching {
+    suspend fun readWorkspaceFile(
+        conversationId: String,
+        path: String,
+        onProgress: ((Float) -> Unit)? = null
+    ): Result<ByteArray> = runCatching {
         withContext(Dispatchers.IO) {
             withSandbox(conversationId) { session, endpoint ->
-                sandbox.read(endpoint, session.token, path)
+                sandbox.read(endpoint, session.token, path, onProgress)
             }
         }
     }

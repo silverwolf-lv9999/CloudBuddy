@@ -2,13 +2,16 @@ package cn.cloudbuddy.app.data
 
 import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.widget.Toast
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import java.io.File
 import java.io.IOException
 
@@ -36,6 +39,35 @@ object Downloads {
             ) != PackageManager.PERMISSION_GRANTED
 
     fun permissionName(): String = android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+
+    /**
+     * 用系统应用打开已下载的文件。
+     *
+     * Android 7+ 直接把 `file://` 塞进 ACTION_VIEW 会抛 FileUriExposedException，
+     * 所以统一走 FileProvider；APK 这类本应用打不开的文件也由此交给系统安装器/文件管理器。
+     */
+    fun open(context: Context, saved: Saved, mime: String?): Boolean {
+        val file = File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            saved.fileName
+        )
+        val uri = try {
+            FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        } catch (_: Throwable) {
+            saved.uri
+        } ?: return false
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mime?.takeIf { it.isNotBlank() } ?: "application/octet-stream")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        return try {
+            context.startActivity(intent)
+            true
+        } catch (_: Throwable) {
+            Toast.makeText(context, "没有可以打开该文件的应用", Toast.LENGTH_SHORT).show()
+            false
+        }
+    }
 
     fun save(context: Context, name: String, mime: String?, bytes: ByteArray): Saved {
         val safe = safeName(name)

@@ -2,6 +2,7 @@ package cn.cloudbuddy.app.ui.screens
 
 import android.graphics.BitmapFactory
 import android.webkit.WebView
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -31,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -50,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import cn.cloudbuddy.app.data.BuddyRepository
+import cn.cloudbuddy.app.data.Downloads
 import cn.cloudbuddy.app.data.SandboxPath
 import cn.cloudbuddy.app.ui.components.MarkdownText
 import cn.cloudbuddy.app.ui.components.rememberDownloader
@@ -73,6 +76,8 @@ fun FilePreviewScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var bytes by remember { mutableStateOf<ByteArray?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
+    var saving by remember { mutableStateOf(false) }
+    var lastSaved by remember { mutableStateOf<Pair<Downloads.Saved, String?>?>(null) }
 
     val mime = SandboxPath.mimeOf(name)
 
@@ -102,17 +107,31 @@ fun FilePreviewScreen(
                 },
                 actions = {
                     IconButton(
+                        enabled = !saving,
                         onClick = {
                             val data = bytes ?: return@IconButton
+                            saving = true
+                            notice = "正在下载 $name…"
+                            lastSaved = null
                             // 存到系统公共 Download 文件夹，文件管理器里直接能找到。
                             downloader.save(name, mime, data) { result ->
-                                notice = result.fold(
-                                    onSuccess = { "已保存到 ${it.displayPath}" },
-                                    onFailure = { "保存失败：${it.message ?: ""}" }
+                                result.fold(
+                                    onSuccess = {
+                                        lastSaved = it to mime
+                                        notice = "已保存到 ${it.displayPath}"
+                                    },
+                                    onFailure = {
+                                        notice = "保存失败：${it.message ?: ""}"
+                                        lastSaved = null
+                                    }
                                 )
+                                saving = false
                             }
                         }
-                    ) { Icon(Icons.Filled.Download, "下载") }
+                    ) {
+                        if (saving) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.Filled.Download, "下载")
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
             )
@@ -126,7 +145,19 @@ fun FilePreviewScreen(
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
                 ) {
-                    Text(it, modifier = Modifier.padding(10.dp), style = MaterialTheme.typography.labelSmall)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            it,
+                            modifier = Modifier.weight(1f).padding(10.dp),
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                        val saved = lastSaved
+                        TextButton(onClick = {
+                            if (saved != null) Downloads.open(context, saved.first, saved.second)
+                            notice = null
+                            lastSaved = null
+                        }) { Text(if (saved != null) "打开" else "知道了") }
+                    }
                 }
             }
             when {

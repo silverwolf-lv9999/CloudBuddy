@@ -159,7 +159,9 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                repo.settings.accountHint.ifBlank { "已登录" },
+                                // 顶部账号卡和下面账号列表必须是同一套脱敏规则：
+                                // 之前这里直接贴完整手机号，下面却显示 189****4407，同一串数字两种样。
+                                Account.maskHint(repo.settings.accountHint).ifBlank { "已登录" },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
                             )

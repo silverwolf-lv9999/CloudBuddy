@@ -1,7 +1,9 @@
 package cn.cloudbuddy.app.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SandboxPathTest {
@@ -49,5 +51,20 @@ class SandboxPathTest {
         assertEquals("text/markdown", SandboxPath.mimeOf("README.md"))
         assertEquals("image/png", SandboxPath.mimeOf("chart.PNG"))
         assertEquals("application/octet-stream", SandboxPath.mimeOf("archive.unknownext"))
+    }
+
+    @Test
+    fun `only previewable files open in app`() {
+        // 支持应用内预览的：图片、文本、HTML、Markdown、JSON。
+        assertTrue(SandboxPath.canPreviewInApp("chart.png"))
+        assertTrue(SandboxPath.canPreviewInApp("README.md"))
+        assertTrue(SandboxPath.canPreviewInApp("index.html"))
+        assertTrue(SandboxPath.canPreviewInApp("data.json"))
+        assertTrue(SandboxPath.canPreviewInApp("notes.txt"))
+        // 不支持的必须走「下载 + 系统应用打开」：本应用预览页只会显示一句「不支持预览」。
+        assertFalse(SandboxPath.canPreviewInApp("CloudBuddy.apk"))
+        assertFalse(SandboxPath.canPreviewInApp("report.pdf"))
+        assertFalse(SandboxPath.canPreviewInApp("doc.docx"))
+        assertFalse(SandboxPath.canPreviewInApp("bundle.zip"))
     }
 }

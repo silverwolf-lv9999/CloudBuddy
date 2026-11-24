@@ -139,3 +139,10 @@
 - **18:2x** 读 `AcpReducer.accept/updateState` 与 `AcpConnection.setLocalTurnActive/endReplay/close`：定位 `endReplay` 里 `allowRemoteRunning = localTurnActive`——大退重进后 localTurnActive=false，实时 working 被 `updateState` 挡掉，而消息分片不走该闸门，正好解释「文字在流、状态空闲」。
 - **18:2x** 确认 `accept` 已用 `!history` 过滤回放期状态，实时期无需再按「谁发起的」拦截。改 `endReplay` 为 `true`、`setLocalTurnActive` 结束时不再关闸、`close` 保持 false。
 - **18:2x** 新增回归测试（非本地发起的实时 working 点亮状态）；版本升 1.4.3 / versionCode 27。
+
+## 2026-11-24 · 设置页打码 + 下载进度/打开 + 文件分流（1.4.4）
+
+- **18:3x** 用户发设置页截图：顶部账号卡副标题显示完整手机号、下面账号行打码，要求统一。另提两点：下载加进度指示、完成弹窗「知道了」改「打开」；点击 APK 这类应用内打不开的文件应直接下载并跳转外部应用。
+- **18:3x** 定位：顶部卡片 `SettingsScreen.kt:162` 直接用 `accountHint`；账号行走 `Account.maskHint`。下载 `readWorkspaceFile` 一次性 `body.bytes()` 无进度；notice 横幅固定「知道了」；点击文件非目录一律 `onPreview`。
+- **18:3x** 实现：顶部改 `Account.maskHint`；`SandboxFs.read` 加流式进度回调、`BuddyRepository.readWorkspaceFile` 透传；`Downloads.open` 经 FileProvider + ACTION_VIEW，`file_paths.xml` 加公共 Download 授权；`SandboxPath.canPreviewInApp` 分流点击；工作区与预览页加进度条 + 「打开」按钮。
+- **18:3x** 新增 `SandboxPathTest` 分流测试；版本升 1.4.4 / versionCode 28。

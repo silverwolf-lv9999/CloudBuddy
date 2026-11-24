@@ -1305,3 +1305,25 @@ agent 进程半路没了、连接被中间层吞掉，标记会一直挂在 `run
 那两版修的是**服务端状态位滞留**（假运行中）；这版修的是**本地闸门误挡**（真运行中）。
 两者互相对冲：闸门太严会漏报，太松会误报。现在分工明确——回放期靠 `!history` 挡历史，
 实时期全部采信，云端状态位不可信的问题交给对账 + 自愈 + 手动解除那三层兜底。
+
+# 1.4.4 · 设置页手机号打码 / 下载进度与打开 / 文件类型分流
+
+## 三个改动
+1. **设置页手机号打码不一致**（截图反馈）：顶部账号卡副标题直接显示 `accountHint`
+   完整号码，下面账号列表却显示 `189****4407`。同一串数字两种样，顶部改用
+   `Account.maskHint()`，与列表统一。
+2. **下载到本机加进度指示 + 完成弹窗「知道了」改「打开」**：
+   - `SandboxFs.read` 新增可选 `onProgress`，流式读响应体、按 Content-Length 报
+     0..1 字节进度（60ms 限频，避免高频重组；无长度报 -1 走不确定进度）；
+     `readWorkspaceFile` 透传。普通预览传 null，仍走整块读取不增加拷贝。
+   - 工作区下载时顶部横幅显示 `LinearProgressIndicator`；完成后按钮变「打开」，
+     用 `Downloads.open()` 经 FileProvider + ACTION_VIEW 交给系统应用。
+   - `file_paths.xml` 增加 `external-path` 授权公共 Download 目录（Android 7+
+     直接给 `file://` 会抛 FileUriExposedException）。
+   - 预览页下载按钮同样带转圈 + 「打开」。
+3. **点击文件按类型分流**：`SandboxPath.canPreviewInApp()` 判定只有图片 / 文本 /
+   HTML / Markdown / JSON 才进应用内预览；APK / PDF / Office / 压缩包等直接下载后
+   跳转系统应用打开——不再让用户先进预览页看一句「该类型不支持预览」。
+
+## 测试
+- `SandboxPathTest` 新增 `only previewable files open in app`（5 支持 + 4 不支持）。

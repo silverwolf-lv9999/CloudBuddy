@@ -106,6 +106,19 @@ object SandboxPath {
 
     fun fileName(path: String): String = path.trimEnd('/').substringAfterLast('/').ifBlank { path }
 
+    /**
+     * 这个文件能不能在本应用里预览（FilePreviewScreen.PreviewBody 支持的那些）。
+     *
+     * 不支持的（APK / PDF / Office / 压缩包 / 二进制等）点了不该进应用内预览——
+     * 里面只能显示「该类型不支持预览」，白白多一步。直接下载后交给系统应用打开。
+     */
+    fun canPreviewInApp(name: String): Boolean {
+        val mime = mimeOf(name)
+        return mime.startsWith("image/") ||
+            mime == "text/html" || mime == "text/markdown" ||
+            mime.startsWith("text/") || mime == "application/json"
+    }
+
     fun mimeOf(name: String): String {
         val ext = name.substringAfterLast('.', "").lowercase()
         return when (ext) {

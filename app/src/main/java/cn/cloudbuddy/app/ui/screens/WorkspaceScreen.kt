@@ -45,6 +45,7 @@ import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -67,6 +68,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cn.cloudbuddy.app.data.AppUiState
 import cn.cloudbuddy.app.data.BuddyRepository
+import cn.cloudbuddy.app.data.Downloads
 import cn.cloudbuddy.app.data.SandboxEntry
 import cn.cloudbuddy.app.data.SandboxPath
 import cn.cloudbuddy.app.data.WorkspaceState
@@ -90,10 +92,54 @@ fun WorkspaceScreen(
     var deleteTarget by remember { mutableStateOf<SandboxEntry?>(null) }
     var newFolder by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf<String?>(null) }
+    // 下载进度：-1 表示服务端没给长度（不确定进度），0..1 为真实字节进度。
+    var progress by remember { mutableStateOf(-1f) }
     var notice by remember { mutableStateOf<String?>(null) }
+    // 下载完成后的提示要带「打开」动作，光靠 notice 字符串不够。
+    var lastSaved by remember { mutableStateOf<Pair<Downloads.Saved, String?>?>(null) }
 
     // 从对话页返回列表后仍能浏览「最近一次」会话的工作区。
     val conversationId = ui.activeId ?: repo.settings.lastConversation.takeIf { it.isNotBlank() }
+
+    /**
+     * 下载一个云端文件到本机：读取阶段显示真实字节进度，完成后提示可「打开」。
+     *
+     * [openWhenDone] 用于点击了本应用无法预览的文件：下载完直接交给系统应用打开，
+     * 不再让用户先进预览页看一句「该类型不支持预览」。
+     */
+    fun downloadFile(entry: SandboxEntry, openWhenDone: Boolean) {
+        val target = conversationId ?: return
+        saving = entry.path
+        progress = -1f
+        notice = "正在下载 ${entry.name}…"
+        lastSaved = null
+        scope.launch {
+            repo.readWorkspaceFile(target, entry.path, onProgress = { progress = it })
+                .onSuccess { bytes ->
+                    // 存到系统公共 Download 文件夹，文件管理器里直接能找到。
+                    downloader.save(entry.name, entry.mimeType, bytes) { result ->
+                        result.fold(
+                            onSuccess = { saved ->
+                                val mime = entry.mimeType ?: SandboxPath.mimeOf(entry.name)
+                                lastSaved = saved to mime
+                                notice = "已保存到 ${saved.displayPath}"
+                                if (openWhenDone) Downloads.open(context, saved, mime)
+                            },
+                            onFailure = {
+                                notice = "保存失败：" + (it.message ?: "")
+                                lastSaved = null
+                            }
+                        )
+                        saving = null
+                    }
+                }
+                .onFailure {
+                    notice = "下载失败：" + (it.message ?: "")
+                    lastSaved = null
+                    saving = null
+                }
+        }
+    }
 
     LaunchedEffect(conversationId) {
         if (conversationId != null) repo.loadWorkspace(conversationId, "/workspace")
@@ -176,13 +222,26 @@ fun WorkspaceScreen(
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text,
-                            modifier = Modifier.weight(1f).padding(10.dp),
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        TextButton(onClick = { notice = null }) { Text("知道了") }
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text,
+                                modifier = Modifier.weight(1f).padding(10.dp),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            val saved = lastSaved
+                            TextButton(onClick = {
+                                if (saved != null) Downloads.open(context, saved.first, saved.second)
+                                notice = null
+                                lastSaved = null
+                            }) { Text(if (saved != null) "打开" else "知道了") }
+                        }
+                        if (saving != null) {
+                            LinearProgressIndicator(
+                                progress = { if (progress >= 0f) progress else 0f },
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -283,29 +342,17 @@ fun WorkspaceScreen(
                             entry = entry,
                             saving = saving == entry.path,
                             onClick = {
-                                if (entry.isDir) repo.scopeLoad(conversationId, entry.path)
-                                else onPreview(conversationId, entry.path, entry.name)
-                            },
-                            onDownload = {
-                                saving = entry.path
-                                scope.launch {
-                                    repo.readWorkspaceFile(conversationId, entry.path)
-                                        .onSuccess { bytes ->
-                                            // 存到系统公共 Download 文件夹，文件管理器里直接能找到。
-                                            downloader.save(entry.name, entry.mimeType, bytes) { result ->
-                                                notice = result.fold(
-                                                    onSuccess = { "已保存到 ${it.displayPath}" },
-                                                    onFailure = { "保存失败：" + (it.message ?: "") }
-                                                )
-                                                saving = null
-                                            }
-                                        }
-                                        .onFailure {
-                                            notice = "下载失败：" + (it.message ?: "")
-                                            saving = null
-                                        }
+                                if (entry.isDir) {
+                                    repo.scopeLoad(conversationId, entry.path)
+                                } else if (SandboxPath.canPreviewInApp(entry.name)) {
+                                    // 图片 / 文本 / HTML / Markdown / JSON 才进应用内预览。
+                                    onPreview(conversationId, entry.path, entry.name)
+                                } else {
+                                    // APK / PDF / Office / 压缩包等本应用打不开：直接下载并交给系统应用。
+                                    downloadFile(entry, openWhenDone = true)
                                 }
                             },
+                            onDownload = { downloadFile(entry, openWhenDone = false) },
                             onDelete = { deleteTarget = entry }
                         )
                     }
