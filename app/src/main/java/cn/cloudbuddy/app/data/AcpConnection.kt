@@ -39,8 +39,9 @@ class PromptWaitTimeout : IOException("云端任务仍在运行")
  */
 class TurnCancelled : IOException("本轮已由用户停止")
 
-/** 快照推送的最小间隔：把 SSE 的高密度分片合并成约 16 次/秒的界面刷新。 */
-private const val PUSH_INTERVAL_MS = 60L
+/** 快照推送的最小间隔：把 SSE 的高密度分片合并成约 10 次/秒的界面刷新。
+ * 60ms（16fps）时低端机上每次全链路重组叠加渲染会掉帧，100ms 观感无差但省 40% 开销。 */
+private const val PUSH_INTERVAL_MS = 100L
 
 /** 回放进度上报间隔：只更新一行「已收到 N 条」，不触发消息列表重建。 */
 private const val REPLAY_PROGRESS_INTERVAL_MS = 300L

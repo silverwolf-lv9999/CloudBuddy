@@ -94,3 +94,21 @@
 - **16:34** 编译遇到 Compose 编译器 `NotImplementedError: Unknown file`（增量缓存脏），`gradle clean` 后通过。
 - **16:40** 抄 rikkahub 重做 `Composer` 输入框：圆角 Surface + 细边框容器、透明 BasicTextField + 占位符、附件 chip、模型 chip、圆形发送键（primary/禁用/error 三态 + fade/scale 动画）、ImeAction.Send 回车发送。
 - **16:42** `gradle clean` 编译通过（增量缓存的 Compose 编译器 `Unknown file` 错误靠 clean 解决）。
+- **16:44** `verify.sh` 全绿：126 单测、lint 0、正式签名；`dist/CloudBuddy-1.3.9-release.apk`，sha256 `9e60948f...01f1`。
+- **16:45** 提交 `94c204c`，push main 与 tag `v1.3.9` 成功，CI 自动发版。
+
+## 2026-11-24 · 卡顿排查与优化（1.4.0，进行中）
+
+- **17:00** 用户反馈「现在有点卡顿」。逐层排查流式渲染链路：
+  1. `AcpConnection.PUSH_INTERVAL_MS=60`：SSE 每 60ms 推一次快照 → UI 每秒 ~16 次全链路重组；
+  2. `ChatScreen window=remember(ui.messages)`：每次推送 messages 换新 list，全量重跑 windowTimeline（filterNot/map/distinct/filter/projectTimeline）；
+  3. `ThoughtRow LaunchedEffect(streaming, text)`：text 做 key，每 60ms 取消重启一次协程并 `animateScrollTo`，思考流式输出时持续重启滚动动画；
+  4. `durationMs` 每秒写 state → 整个思考卡（ChainOfThought+MarkdownText）重组，只为更新「Xs」三个字；
+  5. `StepsGroup` 外层 + `ChainOfThought` 内层双层 `animateContentSize`：步骤组默认展开，assistant 文本每 60ms 增长就反复触发高度测量+动画。
+- **17:02** 方案：降推送频率、修滚动 effect 的 text key、隔离耗时计时、流式期禁用高度动画。均为局部改动，不动状态机与网络。
+- **17:05** 落地四处优化：
+  1. `AcpConnection.PUSH_INTERVAL_MS` 60→100ms（16fps→10fps，重组 -40%）；
+  2. `ThoughtRow` 去掉 `LaunchedEffect(streaming, text)` 的 text key，改 `rememberUpdatedState` + `snapshotFlow{长度}` 采样 + 120ms 节流 + 无动画 `scrollTo`；
+  3. 思考耗时抽成独立 `ThinkingSeconds` 组件，每秒只重组一行文字，不再拖整个卡片；`ReasoningState.durationMs` 移除；
+  4. `ChainOfThought` 加 `animate` 参数，生成中关掉高度动画；`StepsGroup` 外层在运行中也关掉动画——消除双层 animateContentSize 在流式期反复测量。
+- **17:08** `gradle clean compileDebugKotlin` 通过。

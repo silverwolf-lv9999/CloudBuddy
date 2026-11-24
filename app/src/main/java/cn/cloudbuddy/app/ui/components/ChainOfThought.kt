@@ -54,6 +54,8 @@ fun <T> ChainOfThought(
     steps: List<T>,
     collapsedVisibleCount: Int = 2,
     collapsedAdaptiveWidth: Boolean = false,
+    /** 生成中的流式内容关闭高度动画，避免每个分片都触发一轮测量；展开/收回仍保留动画。 */
+    animate: Boolean = true,
     content: @Composable ChainOfThoughtScope.(T) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -64,7 +66,7 @@ fun <T> ChainOfThought(
         Column(
             modifier = Modifier
                 .padding(horizontal = 12.dp, vertical = 4.dp)
-                .animateContentSize(),
+                .then(if (animate) Modifier.animateContentSize() else Modifier),
         ) {
             val visibleSteps = if (expanded || !canCollapse) steps else steps.takeLast(collapsedVisibleCount)
 

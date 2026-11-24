@@ -1173,3 +1173,30 @@ sha256 `647c9341579822536a6802980b30fb30b3c27229b0b1cdf911ff9efe87aaf510`。
 
 ## 注
 Compose 编译器在增量缓存脏时会抛 `NotImplementedError: Unknown file`（ComposableTargetAnnotationsTransformer），`gradle clean` 后消失，非代码问题。
+
+# 1.4.0 · 流式输出卡顿优化
+
+## 现象
+1.3.9 之后用户反馈「有点卡顿」，主要在流式输出（看着文字往外冒）时。
+
+## 根因（流式高频重组链路上的四个叠加热点）
+1. `ThoughtRow` 把高频变化的 `text` 当作 `LaunchedEffect` 的 key：每个 SSE 分片（60ms）
+   都取消并重启协程，还重新启动一段 `animateScrollTo` 动画。
+2. 思考耗时 `durationMs` 每秒写一次 state，状态挂在整卡共享的 `ReasoningState` 上，
+   导致整个思考卡（含 MarkdownText、animateContentSize）每秒被拖着重组一次。
+3. `StepsGroup` 外层与 `ChainOfThought` 内层**双层** `animateContentSize`：步骤组默认展开，
+   正文/思考每增长一次就触发两轮高度测量+动画。
+4. 快照推送间隔 60ms（~16fps），低端机上每帧全链路重组叠加渲染会掉帧。
+
+## 改法
+- 推送间隔 60→100ms（~10fps），打字机观感无差，重组频率降 40%。
+- `ThoughtRow`：状态切换 effect 只用 `streaming/showThoughts` 做 key；自动滚底改用
+  `rememberUpdatedState(text.length)` + `snapshotFlow.distinctUntilChanged()` + 120ms 节流，
+  并用无动画 `scrollTo` 直接跳底。
+- 思考耗时抽成独立 `ThinkingSeconds` 可组合项，自己持有计时状态，每秒只重组那行文字。
+- `ChainOfThought` 新增 `animate` 参数；思考卡在生成中、步骤组在运行中关闭 `animateContentSize`，
+  静止/完成后仍保留完整的展开收回动画（用户要的动画不丢）。
+
+## 性能
+- 状态机、对账频率、网络逻辑一律未动，纯渲染层改动。
+- 展开收回动画在任务完成后完整保留；只在「内容持续增长的生成期」禁用高度动画。

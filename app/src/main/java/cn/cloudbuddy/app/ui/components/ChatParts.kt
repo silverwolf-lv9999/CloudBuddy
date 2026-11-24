@@ -43,7 +43,9 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -63,6 +65,7 @@ import cn.cloudbuddy.app.data.ChatRole
 import cn.cloudbuddy.app.data.ToolState
 import cn.cloudbuddy.app.data.TurnState
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.isActive
 
 @Composable
@@ -207,7 +210,7 @@ fun StepsGroup(
         Column(
             modifier = Modifier
                 .padding(horizontal = 12.dp, vertical = 6.dp)
-                .animateContentSize()
+                .then(if (running || state == TurnState.RUNNING) Modifier else Modifier.animateContentSize())
         ) {
             Row(
                 modifier = Modifier
@@ -298,7 +301,6 @@ private enum class ReasoningCardState(val expanded: Boolean) {
 @Stable
 private class ReasoningState(val scroll: ScrollState) {
     var expandState by mutableStateOf(ReasoningCardState.Collapsed)
-    var durationMs by mutableStateOf(0L)
 
     fun onExpandedChange(nextExpanded: Boolean, loading: Boolean) {
         expandState = if (loading) {
@@ -320,31 +322,39 @@ private fun ThoughtRow(text: String, showThoughts: Boolean, streaming: Boolean =
     val scroll = rememberScrollState()
     val state = remember { ReasoningState(scroll) }
 
-    LaunchedEffect(streaming, text) {
+    // 展开态的切换只依赖 streaming/showThoughts，不再把高频变化的 text 当 key——
+    // 原来每来一个分片就取消重启这个协程，是流式期的主要卡顿源之一。
+    LaunchedEffect(streaming, showThoughts) {
         if (streaming) {
             if (!state.expandState.expanded && showThoughts) {
                 state.expandState = ReasoningCardState.Preview
             }
-            scroll.animateScrollTo(scroll.maxValue)
         } else {
             if (state.expandState == ReasoningCardState.Preview) {
                 state.expandState = if (showThoughts) ReasoningCardState.Expanded else ReasoningCardState.Collapsed
             }
         }
     }
-    // 生成中每秒推进耗时；完成后停在累计值。
-    LaunchedEffect(streaming) {
-        if (streaming) {
-            val start = System.currentTimeMillis()
-            while (isActive) {
-                state.durationMs = System.currentTimeMillis() - start
-                delay(1000)
+    // 自动滚底：采样文本长度（而非文本本身）并节流到 120ms，用 scrollTo 直接跳，
+    // 不再每次分片都启动一段 animateScrollTo 动画。
+    val latestLen by rememberUpdatedState(text.length)
+    LaunchedEffect(streaming, scroll) {
+        if (!streaming) return@LaunchedEffect
+        snapshotFlow { latestLen }
+            .distinctUntilChanged()
+            .collect { len ->
+                if (len > 0) {
+                    delay(120)
+                    scroll.scrollTo(scroll.maxValue)
+                }
             }
-        }
     }
 
-    val seconds = state.durationMs / 1000
-    ChainOfThought(steps = listOf(Unit), collapsedAdaptiveWidth = false) {
+    ChainOfThought(
+        steps = listOf(Unit),
+        collapsedAdaptiveWidth = false,
+        animate = !streaming,   // 生成中关掉高度动画，避免每条分片触发两轮测量
+    ) {
         ControlledChainOfThoughtStep(
             expanded = state.expandState == ReasoningCardState.Expanded,
             onExpandedChange = { state.onExpandedChange(it, streaming) },
@@ -364,15 +374,7 @@ private fun ThoughtRow(text: String, showThoughts: Boolean, streaming: Boolean =
                     }
                 }
             },
-            extra = {
-                if (seconds > 0) {
-                    Text(
-                        "${seconds}s",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.secondary
-                    )
-                }
-            },
+            extra = { ThinkingSeconds(streaming) },
             contentVisible = state.expandState != ReasoningCardState.Collapsed,
             content = {
                 ReasoningContent(text, state.expandState, scroll, streaming)
@@ -419,6 +421,31 @@ private fun ReasoningContent(
             }
     ) {
         MarkdownText(markdown = text, baseSize = 13f, textColor = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/**
+ * 思考耗时单独成组件：它每秒更新一次自己的状态，只重组这一行文字，
+ * 不再把整个思考卡（含 MarkdownText / animateContentSize）拖着一起重组。
+ */
+@Composable
+private fun ThinkingSeconds(streaming: Boolean) {
+    var elapsed by remember { mutableStateOf(0L) }
+    LaunchedEffect(streaming) {
+        if (!streaming) return@LaunchedEffect
+        val start = System.currentTimeMillis()
+        while (isActive) {
+            elapsed = System.currentTimeMillis() - start
+            delay(1000)
+        }
+    }
+    val seconds = elapsed / 1000
+    if (seconds > 0) {
+        Text(
+            "${seconds}s",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.secondary
+        )
     }
 }
 
