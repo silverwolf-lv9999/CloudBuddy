@@ -100,6 +100,21 @@ class WorkBuddyApi(private val settings: AppSettings, private val http: CloudHtt
     suspend fun getConversation(id: String): Conversation? =
         runCatching { parseConversation(http.data(http.call("GET", "/console/as/conversations/${enc(id)}"))) }.getOrNull()
 
+    /**
+     * 批量取会话详情（官方 `batchGet`：`POST /console/as/conversations/batch-get {ids}`）。
+     *
+     * 对账只用这一条：请求体只有一个 id、响应只有一条记录，比每次拉 30 条列表便宜一个数量级，
+     * 也避免列表接口顺带返回的大字段反复占用带宽与解析开销。
+     */
+    suspend fun batchGet(ids: List<String>): List<Conversation> {
+        val unique = ids.filter { it.isNotBlank() }.distinct()
+        if (unique.isEmpty()) return emptyList()
+        val body = JSONObject().put("ids", JSONArray(unique))
+        val data = http.data(http.call("POST", "/console/as/conversations/batch-get", body))
+        val array = data.optJSONArray("conversations") ?: return emptyList()
+        return (0 until array.length()).mapNotNull { i -> parseConversation(array.optJSONObject(i)) }
+    }
+
     suspend fun createConversation(prompt: String, model: String): Pair<String, CloudSession?> {
         val plugins = JSONArray().put(JSONObject().put("name", "weixinpay").put("marketplace", "codebuddy-builtin"))
         val body = JSONObject()

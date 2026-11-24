@@ -63,6 +63,19 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
+    override fun onResume() {
+        super.onResume()
+        // 回前台立刻对一次账：切出去这段时间云端可能已经把任务跑完了，
+        // 回来还挂着「进行中」的旧角标最让人困惑。
+        (application as BuddyApp).repository.setForeground(true)
+    }
+
+    override fun onPause() {
+        // 后台停掉对账轮询：不跑网络、不重建连接，省电省流量。
+        (application as BuddyApp).repository.setForeground(false)
+        super.onPause()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()

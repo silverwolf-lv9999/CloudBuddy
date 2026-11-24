@@ -65,7 +65,7 @@ bash scripts/verify.sh           # 正式包（release），归档 dist/CloudBud
 bash scripts/verify.sh --debug   # 需要 debug 包时
 ```
 
-当前版本 1.3.3（versionCode 17），4096 位 RSA 正式密钥签名，有效期到 2054 年。
+当前版本 1.3.4（versionCode 18），4096 位 RSA 正式密钥签名，有效期到 2054 年。
 签名指纹（后续版本必须一致，否则无法覆盖安装）：
 
 ```
@@ -78,7 +78,7 @@ SHA-256  59:29:B6:F4:7F:2B:C4:6F:B9:F5:4B:2F:15:BD:42:C4
 **发版就是两条命令**：
 
 ```bash
-git tag v1.3.3 && git push --tags
+git tag v1.3.4 && git push --tags
 ```
 
 已通过 `:app:assembleDebug`、`80 个 JVM 单测`、`:app:lintDebug`（0 error），并用
@@ -101,6 +101,8 @@ MCP 服务器配置（随 `session/new` 下发），以及第二种折叠方式�
 1.3.1 修复技能市场加载失败：knot 来源对该账号返回 17012，改用官方企业聚合市场接口；单测 105 项。
 1.3.2 修复技能市场「method POST must have a request body」：OkHttp 不允许 POST 传 null body，统一在 CloudHttp 补空 RequestBody；单测 109 项。
 1.3.3 修复三个真机问题：切会话仍回放历史、长任务被客户端误判超时、输入栏串显示运行中会话的暂停按钮；单测 112 项。
+1.3.4 修复状态机与云端脱钩：会话状态改由 `batch-get` 定期对账（前台才跑、按运行态调频），
+列表不再假「进行中」、云端在跑不再显示已停止并会自动补回新输出，发送前二次确认空闲以防插队；单测 119 项。
 
 1.1.0 关于板块加了 GitHub 仓库入口与「检查更新」（读 Releases 比对版本）；改用 4096 位 RSA
 正式密钥签名并发布 Release，从此不再用 debug key 对外分发。

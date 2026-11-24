@@ -996,3 +996,49 @@ GitHub 偶尔返回错误页，解析崩了会让整个设置页挂掉。
   sha256 `34b2e7ad6c482e15c2cdb8ad8cdc6dc8f8adab37713593083cc024db53d7d8f7`。
 - **未做真机验证**：三个问题都需在用户设备上复测。超时修复只把窗口从 10 分钟放宽到
   2 小时并改成软超时；超过 2 小时的任务仍需观察 reducer 是否能靠 SSE 收敛终态。
+
+# 1.3.4 · 状态机整体与云端脱钩：假运行 / 假停止 / 跑着还能发消息
+
+## 现象
+用户真机反馈三种错位，且官方客户端也有类似问题：
+1. 任务其实做完了，会话列表还显示「进行中」；
+2. 云端任务仍在继续（网页端能看到新输出），客户端显示已停止、也不刷新新内容；
+3. 云端实际在跑，客户端却显示空闲并允许发送，消息插进正在执行的轮次，上下文被弄乱。
+
+## 根因
+不是某个分支写错，而是**架构上缺一条对账通道**：
+- ACP 每条 RPC（`session/load`、`session/prompt`）都是一条独立的短命 SSE 流，
+  `postRpc` 同步读到流结束才返回。响应一处理完，流就没有了——两条 RPC 之间客户端收不到
+  任何事件。任务在网页端 / 另一台设备 / 云端继续跑，本地 reducer 完全不知情。
+- 于是本地状态只能靠「上次自己看到的事件」推断：漏了收尾就永远 RUNNING（假进行中）；
+  重放收尾 `finishReplay()` 又会把 RUNNING 压成 IDLE（假停止）；两者都直接决定输入栏和列表角标。
+- `send()` 以前只判断输入框有没有文字，不看云端是否真的空闲。
+
+## 改法
+1. 新增 `data/StateReconciler.kt`（纯函数、可单测）：本地有流在推时以本地为准，否则采纳
+   服务端记录；「有任务 ↔ 没任务」的跨越额外触发一次历史补拉。
+2. 新增 `WorkBuddyApi.batchGet`（官方 `POST /console/as/conversations/batch-get {ids}`），
+   对账只查当前会话一个 id。
+3. `BuddyRepository` 增加对账循环 `stateSyncLoop`：打开会话后先对一次（`reconcileAfterOpen`），
+   之后按运行态调频；采纳云端 RUNNING 时输入栏自动变暂停，从而挡住发送。
+4. `silentResync`：重建连接、重放历史、静默替换消息（不显示载入条、不清空），用于把
+   云端在别处跑出来的新输出补回本地；按 `updatedAt` 去重 + 8s→60s 退避。
+5. `send()` 双重闸门：本地已知 RUNNING/WAITING 直接拒发；发送前再用 `batch-get` 确认一次
+   空闲（`confirmIdle`），本地状态过期时拒发并提示。
+6. `stop()` 支持「任务在别处发起」的情况：没有活连接时临时建一条只下发 `session/cancel`，
+   用完立刻关掉（不缓存，避免被复用成空历史）。
+
+## 性能约束（用户要求不能卡）
+- 后台完全停轮询（`MainActivity.onPause/onResume` → `setForeground`），回前台立刻补一次；
+- 间隔分档：云端在跑 10s / 本地推流 30s / 空闲 45s；列表全量刷新 60s 一次（只用来更新角标）；
+- 补历史是唯一的重操作：`updatedAt` 没前进就不补，两次之间退避到 60s，本地发送中不补；
+- UI 写入加锁且只在字段真有差异时进行，避免把 SSE 刚推上来的消息覆盖回旧快照；
+- 列表比较只比 `id/title/state/updatedAt/preview`，不用 data class 的深度 equals。
+
+## 验证（1.3.4）
+- `bash scripts/verify.sh` 全绿：119 个单测（新增 `StateReconcilerTest` 7 项），lint 0 error。
+- APK：`dist/CloudBuddy-1.3.4-release.apk`，versionCode 18，正式证书，
+  sha256 `7577871c6dfd6c87015075d9a469c848284ea83ed31e1bad97d438540dbaf28d`。
+- 真账号接口只验证过 `batch-get` 的路径与响应形状（web 产物里的官方实现），**未做真机复测**：
+  ①跑完任务的角标收敛、②网页端继续跑时手机端能否跟上并补出新输出、
+  ③云端在跑时发送是否被拦下，三项都需要在设备上确认。

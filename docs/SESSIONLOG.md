@@ -32,3 +32,12 @@
 - **11:32** 改 AcpConnection.kt（watchReplay/publishCoalesced/rpc/postRpc/prompt）与 BuddyRepository.kt（send/answerQuestion/stop/三个会话切换入口）。
 - **11:38** 新增 LoadGateTest（3 项），版本升 1.3.3 / versionCode 17，verify.sh 全绿：112 单测、lint 0、正式签名、sha256 34b2e7ad...d8f7。
 
+## 2026-11-24 · 状态机全面混乱（列表假运行 / 客户端假停止 / 云端跑着却可发消息）
+
+- **11:45** 用户反馈：任务做完列表仍显示进行中；云端还在跑（网页端能看到新输出）客户端却显示已停止、不刷新；云端实际在跑时客户端还能发消息打乱上下文。核心是 turn 状态与云端真实状态脱钩，需要系统性对齐而不是补丁。
+- **11:52** 定位：ACP 每条 RPC 是独立短命 SSE，RPC 之间无推送；本地状态纯靠推断 → 三类错位。
+- **11:58** 新增 `WorkBuddyApi.batchGet`（官方 batch-get）、`data/StateReconciler.kt`（纯策略 + 单测）。
+- **12:05** `BuddyRepository` 加 `stateSyncLoop`/`reconcile`/`reconcileAfterOpen`/`silentResync`/`confirmIdle`；`send` 双重闸门；`stop` 支持无连接时临时下发 cancel；`MainActivity` 前后台切换驱动对账。
+- **12:12** 性能收敛：后台停轮询、10s/30s/45s 分档、列表 60s、补历史按 updatedAt 去重并退避、UI 写锁 + 增量写入、列表浅比较。
+- **12:18** 版本升 1.3.4 / versionCode 18，verify.sh 全绿：119 单测、lint 0、正式签名，sha256 7577871c...f28d。
+

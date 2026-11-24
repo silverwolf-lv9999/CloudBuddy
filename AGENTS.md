@@ -280,6 +280,21 @@ release APK（`verify.sh` 里的证书 DN 校验通过，证明用的是正式�
       且后台错误会贴到 B 页面。切会话（open/start/close）一律清 `sending`；发送协程
       锁定 `targetId`，用 `applyIfActive(id)` 保证状态只写回原会话。
 
+18. **状态必须和云端对账，不能只靠本地 reducer 猜**。ACP 每条 RPC 都是一条独立的
+    短命 SSE 流（响应一到就读到结束），两条 RPC 之间客户端完全收不到事件——任务在网页端 /
+    另一台设备 / 云端继续跑时，本地一无所知。真机上表现为三种错位：做完还转圈、
+    云端在跑却显示已停止且不出新消息、云端在跑还能发消息把上下文弄乱。
+    权威来源只有 console 记录：`POST /console/as/conversations/batch-get {ids:[...]}`
+    （官方 `batchGet`，一次一个 id，响应极小）。对账规则在 `data/StateReconciler.kt`
+    （纯函数，有单测）：本地这一轮有流在推时以本地为准；否则采纳云端；
+    「有任务 ↔ 没任务」的跨越要额外补一次历史（`silentResync`，重建连接重放）。
+    性能约束（用户明确要求不能卡）：后台不轮询（`setForeground` 由 Activity 生命周期驱动）、
+    有任务 10s / 本地推流 30s / 空闲 45s、全量列表 60s 一次（角标用），
+    补历史按 `updatedAt` 去重并 8s→60s 退避，UI 写入只在字段真有差异时进行且加锁
+    避免把 SSE 刚推上来的消息覆盖回旧快照。发送前还要用 `batch-get` 再确认一次空闲
+    （`confirmIdle`），本地状态过期时直接拒发——宁可拦下，也不要把消息插进别人的轮次。
+    另外本地刚收尾的 8 秒是「收敛窗口」（`SETTLE_MS`），云端记录滞后时不要把 running 盖回来。
+
 ## 协议速查
 
 完整记录在 [docs/protocol.md](docs/protocol.md)，改协议前先读。

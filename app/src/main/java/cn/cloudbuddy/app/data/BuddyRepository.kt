@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -137,6 +138,30 @@ class BuddyRepository(val settings: AppSettings) {
     private val connections = ConcurrentHashMap<String, AcpConnection>()
     private val sessions = ConcurrentHashMap<String, CloudSession>()
 
+    /**
+     * 状态对账用的少量簿记。
+     *
+     * 对账的目的是把本地「猜」的状态和云端记录对齐（详见 [StateReconciler]），
+     * 但这对账本身不能变成负担：后台不跑、空闲慢跑、有任务才快跑，
+     * 补历史还要按 `updatedAt` 去重并退避。这几个字段就是那套节流。
+     */
+    @Volatile private var foreground = true
+    @Volatile private var resyncing = false
+    @Volatile private var lastResyncAt = 0L
+    @Volatile private var lastTurnEndAt = 0L
+    private var resyncGap = RESYNC_MIN_GAP
+    private val syncedAt = ConcurrentHashMap<String, Long>()
+    @Volatile private var lastFullListAt = 0L
+
+    /**
+     * UI 状态的写锁。
+     *
+     * 对账线程和 SSE 推送线程都会改 [_ui]：前者只该改状态角标，后者改消息。
+     * 两边各自「读—改—写」时没有临界区，对账就可能把刚推上来的消息回退成旧快照。
+     * 锁内只比几个标量字段，不做整份 state 的深度比较（消息列表很长，比一次比重建还贵）。
+     */
+    private val uiLock = Any()
+
     /** ACP session/load 下发的可用模型，按会话隔离；这是最可靠的模型来源。 */
     private val acpModels = ConcurrentHashMap<String, List<ModelChoice>>()
     @Volatile private var acpCurrentModel: String? = null
@@ -167,6 +192,238 @@ class BuddyRepository(val settings: AppSettings) {
             settings.markSessionExpired()
             _ui.value = _ui.value.copy(loggedIn = false, sessionExpired = true)
         }
+        scope.launch { stateSyncLoop() }
+    }
+
+    // ---------- 云端状态对账 ----------
+
+    /**
+     * 前台/后台切换。后台直接停掉对账：既省电省流量，也避免用户没看的时候还在重建连接。
+     * 回到前台立刻补一次，别让用户盯着过期的「进行中」。
+     */
+    fun setForeground(value: Boolean) {
+        if (foreground == value) return
+        foreground = value
+        if (value) scope.launch { reconcile(fullList = true) }
+    }
+
+    /**
+     * 对账主循环。
+     *
+     * 只做一件轻量的网络请求（`batch-get` 当前会话），其余判断都在内存里；
+     * 空闲 45 秒一次、有任务 10 秒一次、后台 0 次。
+     */
+    private suspend fun stateSyncLoop() {
+        while (true) {
+            val current = _ui.value
+            val ready = current.loggedIn && !current.booting && current.activeId != null
+            var anyActive = StateReconciler.isActive(current.state)
+            if (ready && StateReconciler.intervalMs(foreground, anyActive) > 0) {
+                anyActive = runCatching { reconcile() }.getOrDefault(anyActive)
+            }
+            val next = StateReconciler.intervalMs(foreground && ready, anyActive, current.sending)
+            delay(if (next > 0L) next else 30_000L)
+        }
+    }
+
+    /**
+     * 把当前会话的状态和云端记录对一次账。
+     *
+     * 顺带按 [FULL_LIST_GAP] 刷一次会话列表（其它会话的角标）；列表刷新比状态对账稀得多，
+     * 因为它要拉 30 条记录，而对账只需要一个 id。
+     *
+     * @return 对账后是否仍有任务在跑（决定下一次的间隔）
+     */
+    private suspend fun reconcile(fullList: Boolean = false): Boolean {
+        val current = _ui.value
+        val activeId = current.activeId ?: return StateReconciler.isActive(current.state)
+        if (!current.loggedIn || current.booting) return false
+
+        val now = System.currentTimeMillis()
+        val shouldList = fullList || now - lastFullListAt >= FULL_LIST_GAP
+
+        var activeRemote: Conversation? = null
+        var list: List<Conversation>? = null
+        if (shouldList) {
+            lastFullListAt = now
+            list = runCatching { api.listConversations() }.getOrNull()
+            activeRemote = list?.firstOrNull { it.id == activeId }
+        }
+        if (activeRemote == null) {
+            activeRemote = runCatching { api.batchGet(listOf(activeId)) }.getOrNull()?.firstOrNull()
+        }
+
+        val latest = _ui.value
+        // 本地刚收尾的那几秒，服务端记录往往还停在 running；此刻采纳会把状态弹回
+        // 「进行中」、暂停按钮重新出现，看着像任务又活了。给服务端一个收敛窗口。
+        val settling = System.currentTimeMillis() - lastTurnEndAt < SETTLE_MS
+        val action = if (activeRemote != null &&
+            !(settling && StateReconciler.isActive(activeRemote.state) && !StateReconciler.isActive(latest.state))
+        ) {
+            StateReconciler.decide(latest.state, activeRemote.state, latest.sending)
+        } else {
+            StateReconciler.Action.NONE
+        }
+        val adopted = if (action != StateReconciler.Action.NONE) activeRemote else null
+        val targetState = adopted?.state ?: latest.state
+
+        // 列表：非当前会话直接用云端角标；当前会话用对账后的状态，并保留本地的
+        // 待确认卡片与产物（REST 里没有这两项，覆盖掉会让卡片闪一下又回来）。
+        val merged = list?.map { remote ->
+            if (remote.id == activeId) {
+                remote.copy(state = targetState, artifacts = latest.artifacts.ifEmpty { remote.artifacts }, ask = latest.ask)
+            } else remote
+        } ?: if (adopted != null) {
+            // 只查了 batch-get（没到刷新列表的周期）：也得把角标改过来，
+            // 否则会话页显示「已停止」，列表里还挂着「进行中」。
+            latest.conversations.map { if (it.id == activeId) it.copy(state = targetState) else it }
+        } else {
+            null
+        }
+
+        // 只写「角标 + 状态」，且必须在锁内基于最新值重算：网络期间 SSE 线程可能刚
+        // publish 过更新的消息，拿旧快照整份覆盖会把新消息回退掉。
+        var committedState = latest.state
+        synchronized(uiLock) {
+            val cur = _ui.value
+            var next = cur
+            if (merged != null && !sameConversations(cur.conversations, merged)) {
+                next = next.copy(conversations = merged)
+            }
+            if (adopted != null) {
+                next = next.copy(
+                    state = adopted.state,
+                    error = if (adopted.state == TurnState.FAILED) adopted.error else null
+                )
+            }
+            if (next !== cur) _ui.value = next
+            committedState = next.state
+        }
+
+        if (adopted != null && action == StateReconciler.Action.ADOPT_REMOTE_AND_RELOAD) {
+            // 状态边沿（从没任务变成有任务）说明本地漏了事件，这次补历史不该等退避。
+            resyncGap = RESYNC_MIN_GAP
+            scheduleResync(activeId, adopted)
+        }
+        return StateReconciler.isActive(committedState) || StateReconciler.isActive(activeRemote?.state)
+    }
+
+    /**
+     * 列表结构比较：只比影响界面的字段。
+     *
+     * `Conversation` 是 data class，`equals` 会连 `artifacts` 一起比；列表项多、产物多时
+     * 这种深度比较反而比重建对象更贵，而界面只关心这几个字段。
+     */
+    private fun sameConversations(a: List<Conversation>, b: List<Conversation>): Boolean {
+        if (a.size != b.size) return false
+        for (i in a.indices) {
+            val x = a[i]
+            val y = b[i]
+            if (x.id != y.id || x.title != y.title || x.state != y.state ||
+                x.updatedAt != y.updatedAt || x.preview != y.preview
+            ) return false
+        }
+        return true
+    }
+
+    /**
+     * 补一次历史（云端在别处跑出来的新内容）。
+     *
+     * 这里是唯一的重操作：重建连接会重放整段历史。所以三道闸：正在本地发送时不补、
+     * `updatedAt` 没前进不补、两次之间按倍数退避到 60 秒。
+     */
+    private fun scheduleResync(id: String, remote: Conversation) {
+        if (resyncing) return
+        if (_ui.value.activeId != id || _ui.value.sending) return
+        if (!StateReconciler.shouldResync(remote.updatedAt, syncedAt[id] ?: 0L, remote.state)) return
+        val now = System.currentTimeMillis()
+        if (now - lastResyncAt < resyncGap) return
+        resyncing = true
+        scope.launch {
+            val ok = runCatching { silentResync(id) }.getOrDefault(false)
+            lastResyncAt = System.currentTimeMillis()
+            resyncGap = if (ok) {
+                (resyncGap * 3 / 2).coerceAtMost(RESYNC_MAX_GAP)
+            } else {
+                (resyncGap * 2).coerceAtMost(RESYNC_MAX_GAP)
+            }
+            resyncing = false
+        }
+    }
+
+    /**
+     * 静默重建连接并替换消息，不显示「正在载入」、不清空当前内容。
+     *
+     * 用于「任务在云端继续跑」的场景：用户不该看到进度条，只该看到内容变多。
+     */
+    private suspend fun silentResync(id: String): Boolean {
+        if (_ui.value.activeId != id || _ui.value.sending) return false
+        val conn = withContext(Dispatchers.IO) {
+            connections.remove(id)?.close()
+            connection(id)
+        }
+        if (_ui.value.activeId != id) return false
+        val snap = conn.snapshot()
+        val current = _ui.value
+        // 重放收尾会把「执行中」收敛成 IDLE；云端明明还在跑时不能跟着降级，
+        // 否则暂停按钮消失、用户又能发消息，正是要修的那个错位。
+        val state = if (snap.state == TurnState.IDLE && StateReconciler.isActive(current.state)) {
+            current.state
+        } else {
+            snap.state
+        }
+        synchronized(uiLock) {
+            val cur = _ui.value
+            if (cur.activeId != id) return false
+            _ui.value = cur.copy(
+                messages = snap.messages,
+                artifacts = snap.artifacts,
+                state = state,
+                ask = snap.ask,
+                error = snap.error,
+                loadingConversation = false,
+                historyProgress = 0
+            )
+        }
+        syncedAt[id] = runCatching { api.batchGet(listOf(id)).firstOrNull()?.updatedAt }
+            .getOrNull() ?: System.currentTimeMillis()
+        return true
+    }
+
+    /**
+     * 打开会话后立刻对一次账：`session/load` 的重放收尾会把「执行中」压成 IDLE，
+     * 而云端可能正被另一台设备驱动。这一步决定输入栏是发送还是暂停。
+     */
+    private suspend fun reconcileAfterOpen(id: String) {
+        val remote = runCatching { api.batchGet(listOf(id)) }.getOrNull()?.firstOrNull() ?: return
+        syncedAt[id] = remote.updatedAt
+        val current = _ui.value
+        if (current.activeId != id) return
+        val action = StateReconciler.decide(current.state, remote.state, current.sending)
+        // 刚载入完，消息是最新的：只采纳状态，不再触发一次重建。
+        if (action != StateReconciler.Action.NONE) {
+            synchronized(uiLock) {
+                val cur = _ui.value
+                if (cur.activeId == id) {
+                    _ui.value = cur.copy(
+                        state = remote.state,
+                        error = if (remote.state == TurnState.FAILED) remote.error else null
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * 发送前的最后一道闸：服务端记录里若仍是执行中/等待，就拒绝发送。
+     *
+     * 查不到就放行——网络抖动不该把正常发送也挡住；能查到但状态不对才是真问题。
+     */
+    private suspend fun confirmIdle(id: String): Boolean {
+        val remote = runCatching { api.batchGet(listOf(id)) }.getOrNull()?.firstOrNull() ?: return true
+        if (!StateReconciler.isActive(remote.state)) return true
+        applyIfActive(id) { copy(state = remote.state, sending = false) }
+        return false
     }
 
     // ---------- 启动 / 登录 ----------
@@ -765,6 +1022,9 @@ class BuddyRepository(val settings: AppSettings) {
                 error = snap.error,
                 activeTitle = _ui.value.conversations.firstOrNull { it.id == id }?.title ?: _ui.value.activeTitle
             )
+            // 重放收尾一律把「执行中」压成 IDLE，但云端可能正被别的设备驱动着。
+            // 这一次对账决定输入栏是发送还是暂停，也决定要不要补后续输出。
+            reconcileAfterOpen(id)
         }.onFailure { failure ->
             if (_ui.value.activeId != id) return@onFailure
             _ui.value = _ui.value.copy(
@@ -805,6 +1065,12 @@ class BuddyRepository(val settings: AppSettings) {
 
     fun send(prompt: String, attachments: List<PendingAttachment> = emptyList()) {
         if (prompt.isBlank() && attachments.isEmpty()) return
+        // 本地已知在跑：直接拦下。以前只看有没有文字，云端跑着也能发，
+        // 新消息插进正在执行的轮次里，上下文就乱了。
+        if (StateReconciler.isActive(_ui.value.state)) {
+            _events.tryEmit("云端任务仍在进行，消息未发送：请先等待，或点停止")
+            return
+        }
         _ui.value = _ui.value.copy(sending = true, error = null, ask = null)
         scope.launch {
             // 发送目标在协程启动时锁定：用户中途切到别的会话，本轮仍归原会话，
@@ -812,6 +1078,13 @@ class BuddyRepository(val settings: AppSettings) {
             val targetId = _ui.value.activeId
             try {
                 val id = targetId ?: createConversation(prompt)
+                // 本地状态可能过期（重放收尾会把执行中压成 IDLE，云端其实还在跑）：
+                // 发送前用服务端记录再确认一次，别把消息塞进别人的轮次。
+                if (targetId != null && !confirmIdle(targetId)) {
+                    applyIfActive(targetId) { copy(sending = false) }
+                    _events.tryEmit("云端任务仍在进行，消息未发送：请先等待，或点停止")
+                    return@launch
+                }
                 val conn = withContext(Dispatchers.IO) { connection(id) }
                 applyModel(conn)
                 val (blocks, sourceBlocks) = buildPrompt(conn.session, prompt, attachments)
@@ -822,6 +1095,7 @@ class BuddyRepository(val settings: AppSettings) {
                 // 不标失败、不弹红色错误；界面状态由 reducer 依事件收敛。
                 _events.tryEmit("云端任务仍在运行，可继续等待或点停止")
             } catch (e: Exception) {
+                lastTurnEndAt = System.currentTimeMillis()
                 applyIfActive(targetId) { copy(error = readable(e), state = TurnState.FAILED) }
             } finally {
                 if (_ui.value.activeId == targetId) _ui.value = _ui.value.copy(sending = false)
@@ -844,8 +1118,31 @@ class BuddyRepository(val settings: AppSettings) {
     fun stop() {
         val id = _ui.value.activeId ?: return
         scope.launch {
-            runCatching { connections[id]?.cancelTurn() }
+            val live = connections[id]?.takeIf { it.alive }
+            runCatching {
+                if (live != null) {
+                    live.cancelTurn()
+                } else {
+                    // 任务是在别处（网页端 / 另一台设备）发起的：本地没有活连接，
+                    // 临时建一条只为下发 session/cancel，用完立刻关掉，不进缓存
+                    // （没跑过 load 的连接被复用会得到空历史）。
+                    withContext(Dispatchers.IO) {
+                        val temp = AcpConnection(http, settings, sessionOf(id))
+                        try {
+                            temp.open()
+                            temp.cancelTurn()
+                            delay(600)
+                        } finally {
+                            temp.close()
+                        }
+                    }
+                }
+            }
+            // 用户主动停止：给一个收敛窗口，别让服务端滞后的 running 立刻把按钮弹回来。
+            lastTurnEndAt = System.currentTimeMillis()
             applyIfActive(id) { copy(state = TurnState.STOPPED, sending = false) }
+            // 云端收敛到停止需要一点时间；立刻对一次账，别让角标停在「进行中」。
+            reconcile()
         }
     }
 
@@ -1081,9 +1378,14 @@ class BuddyRepository(val settings: AppSettings) {
         _ui.value = current.copy(historyProgress = count, loadingConversation = true)
     }
 
-    private fun publish(id: String, snapshot: AcpSnapshot) {
+    private fun publish(id: String, snapshot: AcpSnapshot) = synchronized(uiLock) {
         val current = _ui.value
         if (current.activeId != id) return
+
+        // 记下「刚刚收尾」的时刻：对账据此给服务端一个收敛窗口（见 SETTLE_MS）。
+        if (StateReconciler.isActive(current.state) && !StateReconciler.isActive(snapshot.state)) {
+            lastTurnEndAt = System.currentTimeMillis()
+        }
 
         // 会话列表只关心状态角标 / 产物 / 待确认，纯文本分片不该重建它，
         // 否则会话页会跟着流式输出一起抖动。
@@ -1231,5 +1533,15 @@ class BuddyRepository(val settings: AppSettings) {
         /** 回放超时后的提示：说清「已显示的部分仍可用」，并给出重试入口。 */
         const val HISTORY_TIMEOUT_NOTICE =
             "历史记录未全部载入（云端回放超时），当前显示的是已经收到的部分"
+
+        /** 补历史的最小间隔；持续在跑时按倍数退避，最长 [RESYNC_MAX_GAP]。 */
+        const val RESYNC_MIN_GAP = 8_000L
+        const val RESYNC_MAX_GAP = 60_000L
+
+        /** 全量列表（其它会话的状态角标）刷新间隔：比状态对账稀得多。 */
+        const val FULL_LIST_GAP = 60_000L
+
+        /** 本地收尾后的静默窗口：等云端记录从 running 收敛，避免状态回弹。 */
+        const val SETTLE_MS = 8_000L
     }
 }
