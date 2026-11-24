@@ -159,6 +159,21 @@ class BuddyRepository(val settings: AppSettings) {
      * 对账若据此判断「本地没有流」，就会在任务正跑时重建连接、把活的 SSE 掐断。
      */
     private val inFlightTurns = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * 「本地这一轮真的还在动」：有在途登记，并且那条连接的 SSE 最近还在推事件。
+     *
+     * 只登记不校验是不够的。协程可能卡在读一个早就死掉的流上（网络切换、中间层吞连接），
+     * `inFlightTurns` 就一直有记录，对账被「本地在途优先」永久挡住——表现就是任务早就
+     * 在云端结束了，客户端还一直转圈、点停止后一发送又提示「云端仍在运行」。
+     * 这里用事件时间兜底：超过 [STREAM_STALE_MS] 没有新事件，就不再认这条在途登记。
+     */
+    private fun hasLiveTurn(id: String): Boolean {
+        if (!inFlightTurns.contains(id)) return false
+        val conn = connections[id] ?: return false
+        return conn.isStreamActive(STREAM_STALE_MS)
+    }
+
     @Volatile private var lastFullListAt = 0L
 
     /**
@@ -268,7 +283,7 @@ class BuddyRepository(val settings: AppSettings) {
         val action = if (activeRemote != null &&
             !(settling && StateReconciler.isActive(activeRemote.state) && !StateReconciler.isActive(latest.state))
         ) {
-            StateReconciler.decide(latest.state, activeRemote.state, inFlightTurns.contains(activeId))
+            StateReconciler.decide(latest.state, activeRemote.state, hasLiveTurn(activeId))
         } else {
             StateReconciler.Action.NONE
         }
@@ -342,7 +357,7 @@ class BuddyRepository(val settings: AppSettings) {
      */
     private fun scheduleResync(id: String, remote: Conversation) {
         if (resyncing) return
-        if (_ui.value.activeId != id || inFlightTurns.contains(id)) return
+        if (_ui.value.activeId != id || hasLiveTurn(id)) return
         if (!StateReconciler.shouldResync(remote.updatedAt, syncedAt[id] ?: 0L, remote.state)) return
         val now = System.currentTimeMillis()
         if (now - lastResyncAt < resyncGap) return
@@ -365,7 +380,7 @@ class BuddyRepository(val settings: AppSettings) {
      * 用于「任务在云端继续跑」的场景：用户不该看到进度条，只该看到内容变多。
      */
     private suspend fun silentResync(id: String): Boolean {
-        if (_ui.value.activeId != id || inFlightTurns.contains(id)) return false
+        if (_ui.value.activeId != id || hasLiveTurn(id)) return false
         val conn = withContext(Dispatchers.IO) {
             connections.remove(id)?.close()
             connection(id)
@@ -407,7 +422,7 @@ class BuddyRepository(val settings: AppSettings) {
         syncedAt[id] = remote.updatedAt
         val current = _ui.value
         if (current.activeId != id) return
-        val action = StateReconciler.decide(current.state, remote.state, inFlightTurns.contains(id))
+        val action = StateReconciler.decide(current.state, remote.state, hasLiveTurn(id))
         // 刚载入完，消息是最新的：只采纳状态，不再触发一次重建。
         if (action != StateReconciler.Action.NONE) {
             synchronized(uiLock) {
@@ -1073,10 +1088,15 @@ class BuddyRepository(val settings: AppSettings) {
 
     fun send(prompt: String, attachments: List<PendingAttachment> = emptyList()) {
         if (prompt.isBlank() && attachments.isEmpty()) return
-        // 本地已知在跑：直接拦下。以前只看有没有文字，云端跑着也能发，
+        // 本地确实还有一轮在跑：直接拦下。以前只看有没有文字，云端跑着也能发，
         // 新消息插进正在执行的轮次里，上下文就乱了。
-        if (StateReconciler.isActive(_ui.value.state)) {
-            _events.tryEmit("云端任务仍在进行，消息未发送：请先等待，或点停止")
+        // 但「本地显示在跑」必须配上「流还活着」才算数：否则一条僵死残留就会把
+        // 这条会话永久锁死（提示云端仍在运行，实际云端早结束了）。
+        val currentId = _ui.value.activeId
+        if (StateReconciler.isActive(_ui.value.state) &&
+            (currentId == null || hasLiveTurn(currentId))
+        ) {
+            _events.tryEmit("上一轮还没收尾，消息未发送：可稍候，或点停止后再发")
             return
         }
         _ui.value = _ui.value.copy(sending = true, error = null, ask = null)
@@ -1095,7 +1115,7 @@ class BuddyRepository(val settings: AppSettings) {
                 // 发送前用服务端记录再确认一次，别把消息塞进别人的轮次。
                 if (targetId != null && !confirmIdle(targetId)) {
                     applyIfActive(targetId) { copy(sending = false) }
-                    _events.tryEmit("云端任务仍在进行，消息未发送：请先等待，或点停止")
+                    _events.tryEmit("上一轮还没收尾，消息未发送：可稍候，或点停止后再发")
                     return@launch
                 }
                 inFlightTurns.add(id)
@@ -1108,6 +1128,8 @@ class BuddyRepository(val settings: AppSettings) {
                 // 本地等待窗口到了，但云端任务可能还在跑（SSE 仍在推进度）。
                 // 不标失败、不弹红色错误；界面状态由 reducer 依事件收敛。
                 _events.tryEmit("云端任务仍在运行，可继续等待或点停止")
+            } catch (_: TurnCancelled) {
+                // 用户点了停止，或连接被对账接管：这一轮已经安静收尾，不当失败。
             } catch (e: Exception) {
                 lastTurnEndAt = System.currentTimeMillis()
                 applyIfActive(targetId) { copy(error = readable(e), state = TurnState.FAILED) }
@@ -1184,6 +1206,8 @@ class BuddyRepository(val settings: AppSettings) {
                 }
             } catch (e: PromptWaitTimeout) {
                 _events.tryEmit("云端任务仍在运行，可继续等待或点停止")
+            } catch (_: TurnCancelled) {
+                // 同上：停止不是错误。
             } catch (e: Exception) {
                 applyIfActive(id) { copy(error = readable(e)) }
             } finally {
@@ -1563,5 +1587,13 @@ class BuddyRepository(val settings: AppSettings) {
 
         /** 本地收尾后的静默窗口：等云端记录从 running 收敛，避免状态回弹。 */
         const val SETTLE_MS = 8_000L
+
+        /**
+         * 「本地这一轮还活着」的事件新鲜度上限。
+         *
+         * 长任务里两次工具调用之间几十秒不出事件是正常的，取 90 秒足够宽松；
+         * 超过它还没有任何事件，就认为本地这条流已经僵死，交给云端记录接管。
+         */
+        const val STREAM_STALE_MS = 90_000L
     }
 }

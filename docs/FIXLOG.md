@@ -1057,3 +1057,50 @@ GitHub 偶尔返回错误页，解析崩了会让整个设置页挂掉。
 APK `dist/CloudBuddy-1.3.5-release.apk`（versionCode 19），
 sha256 `647c9341579822536a6802980b30fb30b3c27229b0b1cdf911ff9efe87aaf510`。
 
+
+# 1.3.6 · 修复「假运行」锁死：停止后仍提示云端在跑
+
+## 现象
+某个会话在客户端里**一直显示运行中**，输入栏是暂停按钮、发不出消息；点「结束」后
+输入栏变回发送，但一发消息就弹「云端任务仍在进行，消息未发送」——而同一时刻用官方
+网页端看，这个会话早就 `completed` 了。
+
+## 线上核对（真账号，`batch-get`）
+- 该会话：`status=completed`、`sessionStatus=completed`、`updatedAt` 停在完成后那一刻，
+  创建到结束跨约 1 小时 33 分，之后一个多小时没有任何变动；
+- 对照正在跑的会话：`status=working` 且 `updatedAt` 随每次活动前移 → **状态字段是实时的**；
+- `lastActivityAt` 在 17 条会话上全部等于 `createdAt`（含正在跑的那条），是死字段；
+  `currentVersionId` 恒为 0；`agentDirty` 会残留在旧会话上（`agentDirtyAt` 都停在
+  11:02:00）。这三个都不能用来判断「有没有在跑」，客户端本来也没用它们。
+
+结论：**不是云端滞后，是本地状态把自己锁死了。**
+
+## 根因
+`session/prompt` 的响应要等整轮跑完才回，本地是同步读这条 SSE。原先 `cancelTurn()`
+只做两件事：发 `session/cancel` 通知 + `reducer.markStopped()`——**读线程仍阻塞在
+`call.execute()` 上**，最长挂到 2 小时兜底（1.3.3 为修「10 分钟误判超时」加的那个）。
+这期间：
+
+1. `inFlightTurns` 里始终有该会话 → 对账 `decide()` 认为「本地在途优先」，一律返回
+   `NONE`，云端 `completed` 永远采纳不进来 → 界面永久运行中；
+2. `send()` 第一道闸看到 `state=RUNNING` 直接拒发（提示语还说是「云端」在跑）；
+3. 用户点停止只改了角标，僵尸流随后推来任何一条事件又把状态推回 `RUNNING`。
+
+## 改法
+1. `AcpConnection` 记录本轮 `promptCall`；`cancelTurn()` 先置 `cancelRequested`，**直接
+   `cancel()` 掉这条 Call** 打断阻塞读，再异步发 `session/cancel`（顺序反了会让读线程
+   先抛错、把连接按故障关掉，通知反而发不出去）。
+2. 传输层区分「用户停止」与「故障」：`cancelRequested` 为真时 `postRpc` 静默返回、
+   不 `close()`；`rpc()` 在 `PROMPT` 等待前检查该标志抛 `TurnCancelled`，避免空等 2 小时。
+   `prompt()`/上层把它当正常收尾，不标 `FAILED`。
+3. `close()` 也置 `cancelRequested`：切会话、重建连接、对账接管都会关闭连接，都不该
+   在界面上显示成红色失败。
+4. 新增 `hasLiveTurn(id)`：`inFlightTurns` 有登记 **且** 该连接的 SSE 在 90 秒内还有事件
+   （`AcpConnection.isStreamActive`，两个 `@Volatile` 字段比较，无额外开销）。对账、
+   补历史、`send()` 闸门全部改用它——僵死的残留登记不再能永久挡住状态收敛。
+5. `send()` 提示语改为「上一轮还没收尾」，不再把本地残留说成云端在跑。
+
+## 性能
+- 新增判断只是两个 volatile 读 + 一次减法和比较，对账频率未变（后台 0 / 推流 30s /
+  有任务 10s / 空闲 45s）；
+- `cancel()` 只在用户主动点停止时发生，正常路径零改动。

@@ -43,3 +43,21 @@
 - **12:26** 发现全局 `sending` 不可靠（切会话被清、切回不置位），改为按会话 `inFlightTurns` 跟踪在途轮次；`send`/`answerQuestion` 登记，`finally` 按真实 id 注销，`stop` 清理。
 - **12:30** 版本升 1.3.5 / versionCode 19，verify.sh 全绿：119 单测、lint 0、正式签名，sha256 647c9341...f510。
 
+
+## 2026-11-24 · 用真账号核对「Clone CloudBuddy repository locally」的状态
+
+- **15:05** 用户要求用已登录账号看这个会话的真实状态。短信重新登录（验证码不记），`probe_connector.py send/verify` 走通，cookie 落 `/tmp`，随后清掉。
+- **15:09** `GET /console/as/conversations/?type=cloud&page=1&size=40` 列出 17 条会话，字段名是 `name`（不是 `title`），状态取 `status` / `sessionStatus`，时间是 `updatedAt`。
+- **15:10** `POST /console/as/conversations/batch-get {ids}` 取单条：目标会话 `status=completed`、`sessionStatus=completed`、`updatedAt=2026-11-24T14:45:53+08:00`、`createdAt=13:12:36`、`agentDirty=false`。
+- **15:11** 关键发现：`lastActivityAt` 在**所有**会话上都等于 `createdAt`（包括正在跑的当前会话），是死字段；`currentVersionId` 恒为 0；`agentDirty=true` 会残留在旧会话上（`agentDirtyAt` 都停在 11:02:00）。→ 只有 `sessionStatus`/`status` + `updatedAt` 可信，客户端正好只用这两个（`WorkBuddyApi.parseConversation` 注释已写明 `sessionStatus` 优先）。
+- **15:12** 子资源（`/conversations/{id}/session`、`/messages`、`/versions`）对这份登录态一律 401 `invalid_token`，而 `batch-get`/列表 200；`GET {link}/acp` 也报 `missing bearer token`。→ 沙箱侧拿不到 ACP token，读不到消息正文，只能读 console 记录的元数据。
+- **15:13** 结论：该会话云端早已 `completed`（跑了约 1 小时 33 分后结束），现在没有任何任务在跑；「列表一直转圈 / 界面一直显示进行中」如果仍出现，只能是本地状态没被对账覆盖，不是云端滞后。
+
+## 2026-11-24 · 「假运行」锁死（1.3.6）
+
+- **15:22** 用户补充：这个会话在客户端一直显示运行中、发不出消息；点「结束」后能发，但一发就提示云端在运行。与云端 `completed` 直接矛盾 → 转为查本地状态机。
+- **15:24** 定位 `send()` 第一道闸 `isActive(state)` 与提示语；确认用户撞的是**本地**状态残留，不是云端。
+- **15:26** 读 `AcpConnection.cancelTurn()`：只发 `session/cancel` + `markStopped()`，**没有打断阻塞中的 `call.execute()`**（prompt 的 SSE 同步读）。而 `inFlightTurns` 要等 `prompt()` 返回才注销，`decide()` 又「本地在途优先」→ 状态永久锁在 RUNNING，直到 2 小时 callTimeout。
+- **15:30** 改 `AcpConnection`：加 `promptCall`/`cancelRequested`/`TurnCancelled`/`isStreamActive`；`cancelTurn()` 先打断本地流再异步通知云端；`postRpc` 对用户停止静默收敛（不关连接、不报错）；`close()` 也按主动停止处理。
+- **15:34** 改 `BuddyRepository`：新增 `hasLiveTurn(id)`（登记 + 90s 内 SSE 有事件），对账/补历史/发送闸门全部改用它；提示语改为「上一轮还没收尾」。
+- **15:36** 编译通过；版本升 1.3.6 / versionCode 20，`verify.sh` 后台开跑。

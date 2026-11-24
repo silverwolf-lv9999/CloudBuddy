@@ -31,6 +31,14 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 class PromptWaitTimeout : IOException("云端任务仍在运行")
 
+/**
+ * 用户点了停止，本地主动断开了这一轮的 SSE。
+ *
+ * 它不是错误：`session/cancel` 已经发出，云端会自己收尾。上层收到后应当安静地结束
+ * 这一轮，既不标失败也不重试，更不能把它当成「云端还在跑」。
+ */
+class TurnCancelled : IOException("本轮已由用户停止")
+
 /** 快照推送的最小间隔：把 SSE 的高密度分片合并成约 16 次/秒的界面刷新。 */
 private const val PUSH_INTERVAL_MS = 60L
 
@@ -92,6 +100,20 @@ class AcpConnection(
     private class PendingAsk(val rpcId: Any, val permission: Boolean)
 
     @Volatile private var transport: okhttp3.Call? = null
+
+    /**
+     * 正在跑的这一轮 `session/prompt` 的 Call。
+     *
+     * 停止时必须能**从本地打断**它：这条流的响应要等整轮跑完才回，只发 `session/cancel`
+     * 的话读线程仍然阻塞在 `execute()` 上，最长挂到 2 小时兜底。期间 `inFlightTurns`
+     * 一直有记录，对账被「本地在途优先」挡住，界面就永远停在运行中——用户看到的现象是
+     * 「任务早结束了，客户端还转圈，点停止后一发送就说云端仍在运行」。
+     */
+    @Volatile private var promptCall: okhttp3.Call? = null
+
+    /** 本轮正在被用户停止：传输层要静默收敛，不关连接、不报错。 */
+    @Volatile private var cancelRequested = false
+
     @Volatile private var connectionId: String = ""
     @Volatile private var acpToken: String = ""
     @Volatile private var closed = false
@@ -123,6 +145,16 @@ class AcpConnection(
     @Volatile var onModels: ((List<ModelChoice>, String?) -> Unit)? = null
 
     val alive: Boolean get() = !closed
+
+    /**
+     * 这条连接最近 [windowMs] 内还有没有收到过业务事件。
+     *
+     * 对账用它区分两种「本地在途」：SSE 正在推进（真在跑，别拿服务端滞后的状态去盖），
+     * 与协程僵在那儿、流早就不动了（残留记录，必须让服务端状态接管）。
+     * 两个 `@Volatile` 字段的读，开销可以忽略。
+     */
+    fun isStreamActive(windowMs: Long): Boolean =
+        !closed && lastEventAt > 0 && System.currentTimeMillis() - lastEventAt < windowMs
 
     /** 回放期间不推快照：历史逐条出现会像在重放当时的步骤，加载完一次性给终态。 */
     fun snapshot(): AcpSnapshot = reducer.snapshot()
@@ -263,6 +295,7 @@ class AcpConnection(
      * SSE 仍在持续推工具调用/正文，reducer 会自己收敛到终态。
      */
     fun prompt(text: String, model: String, blocks: JSONArray, sourceBlocks: JSONArray, timeoutMs: Long) {
+        cancelRequested = false
         awaitLoad()
         val params = JSONObject()
             .put("sessionId", session.acpSessionId)
@@ -283,9 +316,14 @@ class AcpConnection(
         publishCoalesced(force = true)
         try {
             rpc("session/prompt", params, timeoutMs, waitKind = WaitKind.PROMPT)
+        } catch (_: TurnCancelled) {
+            // 用户点了停止，本地已经把这轮的流断开。安静收尾：不标失败、不重试。
         } catch (_: SocketTimeoutException) {
             // 只表示本地等够了；任务可能仍在云端跑，界面状态交给 SSE 事件收敛。
             throw PromptWaitTimeout()
+        } finally {
+            cancelRequested = false
+            promptCall = null
         }
     }
 
@@ -295,11 +333,17 @@ class AcpConnection(
 
     fun cancelTurn() {
         cancelPendingAsk()
-        runCatching {
-            rpc("session/cancel", JSONObject().put("sessionId", session.acpSessionId), 8_000, notification = true)
-        }
+        // 先标记「这是用户停止」，再打断本地读，最后异步通知云端。
+        // 顺序反了的话，读线程可能先抛错、把连接按故障关掉，cancel 通知反而发不出去。
+        cancelRequested = true
+        promptCall?.cancel()
         reducer.markStopped()
         publishCoalesced(force = true)
+        scope.launch {
+            runCatching {
+                rpc("session/cancel", JSONObject().put("sessionId", session.acpSessionId), 8_000, notification = true)
+            }
+        }
     }
 
     /** 用户回答提问后，把这句话记进本轮，避免选择在界面上凭空消失。 */
@@ -366,6 +410,9 @@ class AcpConnection(
     override fun close() {
         if (closed) return
         closed = true
+        // 关闭会打断正在读的 prompt 流。按「主动停止」收尾，别让上层把它标成红色失败：
+        // 切会话、重建连接、对账接管都会走到这里，都不该显示成「执行失败」。
+        cancelRequested = true
         pending.values.forEach { it.latch.countDown() }
         runCatching { transport?.cancel() }
         runCatching { pushExecutor.shutdownNow() }
@@ -527,6 +574,9 @@ class AcpConnection(
         try {
             postRpc(payload, timeoutMs, waitKind = waitKind)
             if (request != null) {
+                // 用户在等响应期间点了停止：本轮的流已经被本地打断，响应不会再来，
+                // 再等下去就是最长 2 小时的假「运行中」。
+                if (waitKind == WaitKind.PROMPT && cancelRequested) throw TurnCancelled()
                 if (!request.latch.await(timeoutMs, TimeUnit.MILLISECONDS) && request.response == null) {
                     throw SocketTimeoutException("ACP $method 等待响应超时")
                 }
@@ -565,6 +615,7 @@ class AcpConnection(
         // 决定（不是 rpc 里的 latch.await——流一关响应早处理完了）。普通 RPC 用窗口+30s；
         // prompt 给一个很长的兜底，避免「任务还在转、10 分钟就被客户端掐断报超时」。
         // 真到兜底时抛出的超时会在 prompt() 里转成 PromptWaitTimeout，不标失败。
+        if (waitKind == WaitKind.PROMPT) promptCall = call
         val callTimeout = if (waitKind == WaitKind.PROMPT) {
             maxOf(timeoutMs + 30_000, PROMPT_CALL_TIMEOUT_MS)
         } else {
@@ -584,11 +635,16 @@ class AcpConnection(
                 }
             }
         } catch (e: InterruptedIOException) {
+            // 用户停止引发的打断不是超时，更不是故障：安静返回，连接照旧可用。
+            if (waitKind == WaitKind.PROMPT && cancelRequested) return
             throw SocketTimeoutException("ACP 请求超时")
         } catch (e: IOException) {
+            if (waitKind == WaitKind.PROMPT && cancelRequested) return
             // 服务端可能已经接收了 prompt，只丢弃这条传输，交给上层重连。
             if (fatal) close()
             throw e
+        } finally {
+            if (waitKind == WaitKind.PROMPT && promptCall === call) promptCall = null
         }
     }
 
