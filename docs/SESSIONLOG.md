@@ -158,3 +158,9 @@
 ## 2026-11-24 · 折叠组动画与小字（1.4.6）
 
 - 用户问执行中的折叠组没有展开/折叠动画是否 bug；确认是 1.4.0 性能规避，现恢复 `animateContentSize` 全程生效，并删除「展开/收起」尾注文字。版本 1.4.6 / versionCode 30。
+
+## 2026-11-24 · 旁观时角标提前跳「已完成」（1.4.7）
+
+- 用户旁观网页端发起的任务：agent 等后台工具期间，App 角标被中途的 completed 上报顶成「已完成」，工具卡还在转圈。
+- 修 `AcpReducer.updateState`：有 RUNNING 工具时不采信 DONE/IDLE 上报；`session/endTurn` 收尾清理残留转圈工具。新增 2 条测试，134。
+- 版本 1.4.7 / versionCode 31。

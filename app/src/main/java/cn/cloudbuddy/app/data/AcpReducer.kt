@@ -190,6 +190,14 @@ class AcpReducer(private val sessionId: String, private val conversationId: Stri
                         "refusal" -> TurnState.FAILED
                         else -> TurnState.DONE
                     }
+                    // 与 finishReplay 同款清理：收尾时还没等到 tool_call_update 的工具
+                    // 不该继续转圈，否则会出现「角标已完成、步骤还在转」的错位。
+                    for (i in messages.indices) {
+                        val message = messages[i]
+                        if (message.role == ChatRole.TOOL && message.toolState == ToolState.RUNNING) {
+                            messages[i] = message.copy(toolState = ToolState.NONE)
+                        }
+                    }
                     boundary = true
                 }
                 return true
@@ -343,12 +351,20 @@ class AcpReducer(private val sessionId: String, private val conversationId: Stri
         // 轮次仍在进行时，「空闲」只是一次中间态上报，不能把状态降级：
         // 否则顶部状态会在「云端执行中 / 空闲」之间反复横跳。
         if (next == TurnState.IDLE && turnActive) return
+        // 还有工具在转圈时，「已完成/空闲」不可信。用户实测：云端 agent 正等一个
+        // 后台任务（几分钟没有任何事件），一条中途的状态上报把角标顶成「已完成」，
+        // 工具卡却还在转。真正的收尾只认 session/endTurn 与 prompt 响应（finishTurn），
+        // 它们不走这里，所以这里拦掉的只会是别的来源的中间态上报。
+        if ((next == TurnState.DONE || next == TurnState.IDLE) && hasRunningTool()) return
         state = next
         if (next == TurnState.DONE || next == TurnState.FAILED || next == TurnState.STOPPED) {
             turnActive = false
             closeStream()
         }
     }
+
+    private fun hasRunningTool(): Boolean =
+        messages.any { it.role == ChatRole.TOOL && it.toolState == ToolState.RUNNING }
 
     /**
      * 官方 `UKr()`：状态优先取 **`update.sessionStatus` / `update.status`**，

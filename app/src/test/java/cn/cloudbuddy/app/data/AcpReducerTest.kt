@@ -400,4 +400,51 @@ class AcpReducerTest {
         )
         assertEquals(TurnState.RUNNING, reducer.snapshot().state)
     }
+
+    /**
+     * 用户实测（1.4.7）：云端 agent 等一个几分钟的后台任务，期间一条中途的状态上报
+     * 把角标顶成「已完成」，工具卡却还在转。只要还有工具在转圈，状态上报里的
+     * 终态就不可信——真正的收尾只认 session/endTurn 与 prompt 响应。
+     */
+    @Test
+    fun `completed status is ignored while a tool call is still running`() {
+        val reducer = AcpReducer("session-1")
+        reducer.beginTurn("看下构建结果")
+        reducer.accept(toolStatus("call-1", "in_progress"), replaying = false)
+        // 旁观场景：turnActive 为 false 也一样要拦。
+        reducer.accept(
+            sessionUpdate(
+                JSONObject().put("sessionUpdate", "session_info_update")
+                    .put("sessionStatus", "completed")
+            ),
+            replaying = false
+        )
+        assertEquals(TurnState.RUNNING, reducer.snapshot().state)
+        // 工具收尾之后，终态上报照常采信。
+        reducer.accept(toolStatus("call-1", "completed"), replaying = false)
+        reducer.accept(
+            sessionUpdate(
+                JSONObject().put("sessionUpdate", "session_info_update")
+                    .put("sessionStatus", "completed")
+            ),
+            replaying = false
+        )
+        assertEquals(TurnState.DONE, reducer.snapshot().state)
+    }
+
+    /** 收尾时还没等到 tool_call_update 的工具不该继续转圈（与 finishReplay 同款清理）。 */
+    @Test
+    fun `endTurn clears tools still showing a spinner`() {
+        val reducer = AcpReducer("session-1")
+        reducer.beginTurn("hi")
+        reducer.accept(toolStatus("call-1", "in_progress"), replaying = false)
+        reducer.accept(
+            JSONObject().put("method", "session/endTurn")
+                .put("params", JSONObject().put("stopReason", "end_turn")),
+            replaying = false
+        )
+        val snapshot = reducer.snapshot()
+        assertEquals(TurnState.DONE, snapshot.state)
+        assertEquals(ToolState.NONE, snapshot.messages.last { it.role == ChatRole.TOOL }.toolState)
+    }
 }
