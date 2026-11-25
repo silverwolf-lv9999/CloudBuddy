@@ -1148,11 +1148,6 @@ private fun ModelOption(
             modifier = Modifier.padding(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            cn.cloudbuddy.app.ui.components.BrandIcon(
-                name = m.id,
-                size = 28.dp,
-                modifier = Modifier.padding(end = 10.dp)
-            )
             Column(modifier = Modifier.weight(1f)) {
                 // 显示名是用户自己起的（「DeepSeek 便宜那个」），
                 // 比裸 ID 好认；ID 与提供商保留成小字，出问题时对得上日志。
@@ -1163,14 +1158,18 @@ private fun ModelOption(
                         if (m.title == m.id && providers.size > 1) {
                             providers.firstOrNull { it.id == m.providerId }?.let { append(it.label) }
                         }
-                        if (m.reasoning) {
-                            if (isNotEmpty()) append(" · ")
-                            append("思考")
-                        }
                     },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1
+                )
+                // 能力指示（照 RikkaHub 的模型卡标签）：模态 / 工具 / 思考 / 上下文
+                cn.cloudbuddy.app.ui.components.ModelAbilityTags(
+                    vision = m.vision,
+                    tools = m.tools,
+                    reasoning = m.reasoning,
+                    contextTokens = cn.cloudbuddy.app.data.ModelRegistry.find(m.id)?.contextLength,
+                    modifier = Modifier.padding(top = 4.dp),
                 )
             }
             if (active) {

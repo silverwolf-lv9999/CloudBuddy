@@ -2418,3 +2418,23 @@ lobehub icons（MIT，unpkg @lobehub/icons-static-svg）与 models.dev 公开 AP
   投票合并（2/3 多数、上下文取唯一记录）、坏数据静默拒绝；
 - BrandIconsTest 4 条：常见模型 ID、中文提供商名、未命中 null、具体品牌优先；
 - full/base 编译、单测、lint 全绿。
+
+# 1.6.0 追加 · 模型能力指示图标（照 RikkaHub 的 ModelModalityTag / ModelAbilityTag）
+
+## 现象（用户反馈）
+「这也没显示出 ds 图标，其实我没要你抄提供商和模型图标，我说的是模型能力指示图标。」
+
+## 改法
+1. **撤掉上一轮加的品牌图标**（lobehub 品牌图 PNG、favicon、字母头像组件全删）——
+   误解了需求；models.dev 目录与能力自动判断保留（那部分是对的）。
+2. 新增 `ui/components/AbilityTags.kt`，照 RikkaHub 模型卡的标签结构：
+   - 模态标签：输入图标（文本，读图模型多一个图片图标）→ 箭头 → 输出文本图标；
+   - 工具标签：扳手（tertiaryContainer 底）；思考标签：灯泡（primaryContainer 底）；
+   - 上下文标签：目录查到的长度（200K）。
+   两种形态：带彩色底的 chips（模型卡/聊天选择器）、裸小图标 + K 数文本（选择弹窗行内）。
+3. 生效点：提供商详情页模型行（能力一目了然，副标题只剩 ID 与「已自定义」）、
+   聊天页模型选择器（能力标签行）、远端模型选择弹窗（勾选前就能看到目录
+   自动判断的结果——没配好能力也能先看出这个模型「应该」怎么配）。
+
+## 测试
+full/base 编译、单测、lint 全绿；ModelRegistryTest 保留。

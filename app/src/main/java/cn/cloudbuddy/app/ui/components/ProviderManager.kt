@@ -117,14 +117,6 @@ fun ProviderManager(
                         modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // 站点图标（favicone.com 按 host 取真实 logo，照 RikkaHub 的 Favicon），
-                        // 拉不到回落品牌图标 / 字母头像。
-                        ProviderIcon(
-                            providerName = p.label,
-                            baseUrl = p.baseUrl,
-                            size = 36.dp,
-                            modifier = Modifier.padding(end = 10.dp)
-                        )
                         Column(
                             modifier = Modifier.weight(1f),
                             verticalArrangement = Arrangement.spacedBy(2.dp)
@@ -348,13 +340,6 @@ fun ProviderDetailPage(
             label = { Text("名称") },
             placeholder = { Text("DeepSeek 官方 / 某某中转") },
             singleLine = true,
-            leadingIcon = {
-                ProviderIcon(
-                    providerName = provider.name,
-                    baseUrl = provider.baseUrl,
-                    size = 26.dp
-                )
-            },
             modifier = Modifier.fillMaxWidth()
         )
         SecretField(
@@ -675,8 +660,6 @@ private fun RemoteModelPicker(
                                         }
                                         .padding(vertical = 4.dp)
                                 ) {
-                                    BrandIcon(name = id, size = 18.dp)
-                                    Spacer(Modifier.width(8.dp))
                                     Icon(
                                         if (checked) Icons.Filled.Check else Icons.Filled.Add,
                                         contentDescription = if (checked) "已加入" else "加入",
@@ -690,8 +673,19 @@ private fun RemoteModelPicker(
                                         style = MaterialTheme.typography.bodySmall,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
+                                        // weight 吃掉剩余宽度：能力标签固定在行尾不被挤走
                                         modifier = Modifier.weight(1f)
                                     )
+                                    Spacer(Modifier.width(4.dp))
+                                    // 目录自动判断的能力预览：勾选前就能看到读图/工具/思考/上下文
+                                    ModelAbilityTags(
+                                        vision = ModelRegistry.find(id)?.visionInput ?: false,
+                                        tools = ModelRegistry.find(id)?.tools ?: true,
+                                        reasoning = ModelRegistry.find(id)?.reasoning ?: false,
+                                        contextTokens = ModelRegistry.find(id)?.contextLength,
+                                        inline = true,
+                                    )
+                                    Spacer(Modifier.width(4.dp))
                                     if (exists) {
                                         Text(
                                             "已加入",
@@ -785,11 +779,9 @@ private fun ModelRow(
     ) {
         Column(modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // 品牌图标（照 RikkaHub 的 AutoAIIcon：按模型名正则匹配品牌图标）
-                BrandIcon(name = model.id, size = 22.dp, modifier = Modifier.padding(end = 8.dp))
                 Column(
                     modifier = Modifier.weight(1f).clickable { onSelect() },
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
@@ -809,15 +801,17 @@ private fun ModelRow(
                             )
                         }
                     }
+                    // 能力指示（照 RikkaHub 的 ModelModalityTag / ModelAbilityTag）：
+                    // 模态图标 [文本(图片)] → 输出文本、扳手=工具、灯泡=思考、200K=上下文。
+                    ModelAbilityTags(
+                        vision = model.vision,
+                        tools = model.tools,
+                        reasoning = model.reasoning,
+                        contextTokens = ModelRegistry.find(model.id)?.contextLength,
+                    )
                     Text(
                         buildString {
                             if (model.title != model.id) append(model.id + " · ")
-                            // 目录里查到的上下文长度（models.dev），一眼看出模型规格
-                            ModelRegistry.find(model.id)?.contextLength?.takeIf { it >= 1000 }
-                                ?.let { append("${it / 1000}K · ") }
-                            if (model.vision) append("读图 · ")
-                            if (model.reasoning) append("思考 · ")
-                            if (!model.tools) append("无工具 · ")
                             if (model.customized) append("已自定义")
                         }.trimEnd('·', ' '),
                         style = MaterialTheme.typography.labelSmall,
