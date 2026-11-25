@@ -633,6 +633,13 @@ release APK（`verify.sh` 里的证书 DN 校验通过，证明用的是正式�
 
 ## 协议速查
 
+GitHub 推送凭据已固化：token 存在 `~/.git-credentials`（URL 行格式）与
+`~/.config/cloudbuddy/gh_token`（备用，/tmp 会清、这里不会），credential.helper
+= store 已配置，`git push origin main` 直接可用，不需要再走设备码授权。
+token 权限 repo+workflow（推 workflow 文件的提交必须带 workflow，只给 repo 会
+推一半失败）。API 调用带 `Authorization: Bearer $(cat ~/.config/cloudbuddy/gh_token)`。
+若 token 失效（401），重新走一次设备码（scope=repo%20workflow）并重写上述两处。
+
 完整记录在 [docs/protocol.md](docs/protocol.md)，改协议前先读。
 
 | 层 | 用途 | 关键点 |
