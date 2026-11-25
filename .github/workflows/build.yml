@@ -42,7 +42,7 @@ jobs:
       - name: 编译 + 单测 + lint
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug 2>&1 | tail -80
+          ./gradlew :app:assembleFullDebug :app:testFullDebugUnitTest :app:lintFullDebug 2>&1 | tail -80
           status=${PIPESTATUS[0]}
           if [ $status -ne 0 ]; then
             echo "::error::构建失败（exit $status）"
