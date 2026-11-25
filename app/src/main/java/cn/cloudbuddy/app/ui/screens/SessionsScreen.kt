@@ -20,15 +20,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -57,7 +54,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cn.cloudbuddy.app.data.Conversation
 import cn.cloudbuddy.app.data.TurnState
-import cn.cloudbuddy.app.ui.components.StatePill
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -95,10 +91,11 @@ fun SessionsScreen(
     var deleteTarget by remember { mutableStateOf<Conversation?>(null) }
     val scope = rememberCoroutineScope()
 
+    // 30 秒一次的后台对齐（仓库里列表没变化会跳过状态写入，不再带动整页重组）。
     LaunchedEffect(Unit) {
         while (true) {
             onRefresh()
-            delay(20_000)
+            delay(30_000)
         }
     }
 
@@ -199,7 +196,7 @@ fun SessionsScreen(
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(filtered, key = { it.id }) { conversation ->
+                    items(filtered, key = { it.id }, contentType = { "conv" }) { conversation ->
                         ConversationCard(
                             conversation = conversation,
                             local = conversation.id in localIds,
@@ -258,108 +255,83 @@ private fun ConversationCard(
     onResetRun: () -> Unit
 ) {
     var menu by remember { mutableStateOf(false) }
+    // 与设置页 SettingCard 同款：无阴影 Surface（阴影滚动时每帧重绘脏区，是卡顿
+    // 主因）、18dp 圆角；行结构同 SettingRow——标题 + 小字摘要，不再用图标和
+    // 彩色徽章，主页与设置页一个观感。
     Surface(
         shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp,
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen)
     ) {
-        Column(modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 13.dp, bottom = 13.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    if (local) Icons.Filled.Terminal else Icons.Filled.AutoAwesome,
-                    contentDescription = null,
-                    tint = if (local) MaterialTheme.colorScheme.tertiary
-                    else MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(17.dp)
-                )
-                Spacer(Modifier.width(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = conversation.title,
                     style = MaterialTheme.typography.titleMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
-                Box {
-                    IconButton(onClick = { menu = true }) {
-                        Icon(Icons.Filled.MoreVert, "更多", Modifier.size(18.dp))
-                    }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(
-                            text = { Text("重命名") },
-                            leadingIcon = { Icon(Icons.Filled.Edit, null, Modifier.size(18.dp)) },
-                            onClick = { menu = false; onRename() }
-                        )
-                        // 只在「显示运行中」时出现：这就是用户被锁住的那种会话，
-                        // 给他一条不必新建会话的自救路。
-                        if (conversation.state == TurnState.RUNNING ||
-                            conversation.state == TurnState.WAITING
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("解除卡住的运行状态") },
-                                leadingIcon = {
-                                    Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp))
-                                },
-                                onClick = { menu = false; onResetRun() }
-                            )
-                        }
-                        DropdownMenuItem(
-                            text = { Text("删除") },
-                            leadingIcon = { Icon(Icons.Filled.Delete, null, Modifier.size(18.dp)) },
-                            onClick = { menu = false; onDelete() }
-                        )
-                    }
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                // 类型标签放在状态角标前面：一眼扫下来先分「哪套」，再看「在干嘛」。
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = if (local) MaterialTheme.colorScheme.tertiaryContainer
-                    else MaterialTheme.colorScheme.secondaryContainer
-                ) {
-                    Text(
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    // 类型 · 状态 · 产物，一行小字看完；已完成/空闲不再标状态，
+                    // 默认状态不上屏，扫一眼只剩有事的会话在动。
+                    listOfNotNull(
                         if (local) "本机" else "云端",
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (local) MaterialTheme.colorScheme.onTertiaryContainer
-                        else MaterialTheme.colorScheme.onSecondaryContainer
-                    )
+                        when (conversation.state) {
+                            TurnState.RUNNING -> "执行中"
+                            TurnState.WAITING -> "等待回复"
+                            TurnState.FAILED -> "执行失败"
+                            TurnState.STOPPED -> "已停止"
+                            else -> null
+                        },
+                        conversation.artifacts.takeIf { it.isNotEmpty() }?.let { "${it.size} 个产物" },
+                        conversation.updatedAt.takeIf { it > 0 }?.let { relativeTime(it) },
+                    ).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Box {
+                IconButton(onClick = { menu = true }, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Filled.MoreVert, "更多", Modifier.size(18.dp))
                 }
-                StatePill(conversation.state)
-                if (conversation.artifacts.isNotEmpty()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Filled.Folder,
-                            contentDescription = null,
-                            modifier = Modifier.size(12.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.width(3.dp))
-                        Text(
-                            "${conversation.artifacts.size} 个产物",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(
+                        text = { Text("重命名") },
+                        leadingIcon = { Icon(Icons.Filled.Edit, null, Modifier.size(18.dp)) },
+                        onClick = { menu = false; onRename() }
+                    )
+                    // 只在「显示运行中」时出现：这就是用户被锁住的那种会话，
+                    // 给他一条不必新建会话的自救路。
+                    if (conversation.state == TurnState.RUNNING ||
+                        conversation.state == TurnState.WAITING
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("解除卡住的运行状态") },
+                            leadingIcon = {
+                                Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp))
+                            },
+                            onClick = { menu = false; onResetRun() }
                         )
                     }
-                }
-                Spacer(Modifier.weight(1f))
-                if (conversation.updatedAt > 0) {
-                    Text(
-                        relativeTime(conversation.updatedAt),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    DropdownMenuItem(
+                        text = { Text("删除") },
+                        leadingIcon = { Icon(Icons.Filled.Delete, null, Modifier.size(18.dp)) },
+                        onClick = { menu = false; onDelete() }
                     )
                 }
             }
         }
     }
 }
+
+/** 只在主线程的组合里调用，共享一个 formatter 即可，免得每张卡都 new 一个。 */
+private val dayFormat = SimpleDateFormat("M月d日", Locale.CHINA)
 
 fun relativeTime(timestamp: Long): String {
     if (timestamp <= 0) return ""
@@ -370,6 +342,6 @@ fun relativeTime(timestamp: Long): String {
         diff < 3_600_000 -> "${diff / 60_000} 分钟前"
         diff < 86_400_000 -> "${diff / 3_600_000} 小时前"
         diff < 7 * 86_400_000L -> "${diff / 86_400_000} 天前"
-        else -> SimpleDateFormat("M月d日", Locale.CHINA).format(Date(timestamp))
+        else -> dayFormat.format(Date(timestamp))
     }
 }

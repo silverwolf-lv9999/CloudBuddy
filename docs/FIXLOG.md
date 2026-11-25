@@ -2513,3 +2513,33 @@ full/base 编译、单测、lint 全绿；ModelRegistryTest 保留。
 
 ## 测试
 full/base 编译、单测、lint 全绿。
+
+# 1.6.0 追加 · 主页会话列表性能 + 风格统一
+
+## 反馈
+1. 测试版感觉卡卡的。
+2. 主页会话列表要简洁一点。
+3. 主页 UI 风格与设置页不统一。
+
+## 改法
+**性能（卡顿根因）**
+1. `refreshConversations` 加去重：主页每 30 秒轮询，之前**无论列表有没有变**
+   都全量替换 `conversations` → 整页卡片跟着重组；现在先合并、与旧列表
+   equals 比对，没变就不写状态（这是「卡卡的」的最大头）。
+2. 轮询 20s → 30s（去重后不再带动重组，网络调用也少了）。
+3. 缩略图降采样（上一轮已改）：`LocalImageThumb` 先读尺寸算 inSampleSize
+   （压到 ~300px，48MB 解码变 0.3MB）+ HARDWARE 位图 + LruCache，滚动往返
+   不重复解码。
+4. LazyColumn 加 `contentType` 提升复用；`SimpleDateFormat` 提成共享常量。
+
+**简洁 + 风格统一**
+5. `ConversationCard` 换成设置页 `SettingCard`/`SettingRow` 同款结构：
+   无阴影 Surface（设置页注释里写明阴影滚动重绘是卡顿主因，主页此前恰好
+   带 tonalElevation=1）、18dp 圆角、「标题 + 一行小字摘要」。
+6. 去掉主导航图标、本机/云端彩色胶囊、StatePill 彩色角标——类型/状态/
+   产物/时间合并成一行灰色小字（`本机 · 执行中 · 2 个产物 · 5 分钟前`）；
+   已完成/空闲不标状态，默认状态不上屏，只剩有事的会话在动。
+   StatePill 在聊天页顶栏保留。
+
+## 测试
+full/base 编译、单测、lint 全绿。

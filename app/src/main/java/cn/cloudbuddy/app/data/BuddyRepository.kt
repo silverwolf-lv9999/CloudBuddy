@@ -1319,26 +1319,28 @@ class BuddyRepository(val settings: AppSettings) {
             _events.tryEmit(it.message ?: "会话列表加载失败")
             return
         }
-        _ui.value = _ui.value.copy(
-            // 能拉到列表说明网络恢复了，把启动时的离线标记清掉。
-            offline = false,
-            conversations = list.map { remote ->
-                val active = _ui.value.activeId
-                when {
-                    remote.id == active -> remote.copy(
-                        state = _ui.value.state,
-                        artifacts = _ui.value.artifacts.ifEmpty { remote.artifacts },
-                        ask = _ui.value.ask
-                    )
-                    // 本机会话的「状态」只在本机：云端那条记录是空壳（从没收到过 prompt），
-                    // 它的状态位要么恒为 null，要么是这条会话还是云会话时的历史残留。
-                    // 直接采信就会看到「本机」标签旁边挂着「云端执行中」，而且永远不消失。
-                    // 真实情况只有一种：本进程里有没有它的 job 在跑（进程一死，agent 也就没了）。
-                    isLocalConv(remote.id) -> remote.asLocal()
-                    else -> remote
-                }
+        // 主页每 30 秒轮询一次这里：列表没变就别写 _ui——写入即全量替换 conversations，
+        // 主页所有卡片跟着重组一次，哪怕内容一模一样（用户看到的「卡卡的」一大半是它）。
+        val active = _ui.value.activeId
+        val merged = list.map { remote ->
+            when {
+                remote.id == active -> remote.copy(
+                    state = _ui.value.state,
+                    artifacts = _ui.value.artifacts.ifEmpty { remote.artifacts },
+                    ask = _ui.value.ask
+                )
+                // 本机会话的「状态」只在本机：云端那条记录是空壳（从没收到过 prompt），
+                // 它的状态位要么恒为 null，要么是这条会话还是云会话时的历史残留。
+                // 直接采信就会看到「本机」标签旁边挂着「云端执行中」，而且永远不消失。
+                // 真实情况只有一种：本进程里有没有它的 job 在跑（进程一死，agent 也就没了）。
+                isLocalConv(remote.id) -> remote.asLocal()
+                else -> remote
             }
-        )
+        }
+        val prev = _ui.value
+        if (prev.conversations == merged && !prev.offline) return
+        // 能拉到列表说明网络恢复了，把启动时的离线标记清掉。
+        _ui.value = prev.copy(offline = false, conversations = merged)
         // 列表里若有别的会话挂着「运行中」而本机根本没在跑，顺手自愈（详见 scheduleHeal）。
         scheduleHeal(list)
     }
