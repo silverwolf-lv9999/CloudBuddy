@@ -474,4 +474,55 @@ class AcpReducerTest {
         reducer.finishTurn(JSONObject().put("stopReason", "end_turn"))
         assertEquals(TurnState.DONE, reducer.snapshot().state)
     }
+
+    /**
+     * 用户实测：工具调用进行中刷新 / 重进会话，角标直接跳「已完成」，之后的消息也不再出现。
+     * 回放最后停在一条还在转圈的工具调用上——这一刻的 completed 上报只是「没有 prompt
+     * 在途」的默认值，不是真的跑完，必须等到正式收尾信号。
+     */
+    @Test
+    fun `replay ending on a pending tool stays running`() {
+        val reducer = AcpReducer("session-1")
+        reducer.beginTurn("跑一下构建")
+        reducer.accept(toolStatus("call-1", "in_progress"), replaying = false)
+
+        // 重进：回放收尾，历史最后一条正是这条未完成的工具
+        reducer.finishReplay()
+
+        assertEquals(TurnState.RUNNING, reducer.snapshot().state)
+        assertTrue(reducer.hasOpenTurn())
+        // 工具卡不转圈了（避免旧会话一直转），但「这轮还在跑」的事实被记住
+        assertEquals(ToolState.NONE, reducer.snapshot().messages.last { it.role == ChatRole.TOOL }.toolState)
+
+        reducer.accept(
+            sessionUpdate(
+                JSONObject().put("sessionUpdate", "session_info_update")
+                    .put("sessionStatus", "completed")
+            ),
+            replaying = false
+        )
+        assertEquals(TurnState.RUNNING, reducer.snapshot().state)
+
+        // 正式收尾信号到了才认
+        reducer.accept(
+            JSONObject().put("method", "session/endTurn")
+                .put("params", JSONObject().put("stopReason", "end_turn")),
+            replaying = false
+        )
+        assertEquals(TurnState.DONE, reducer.snapshot().state)
+    }
+
+    /** 历史最后停在回答上（工具早完成）：回放照旧收敛成空闲，不能误判成还在跑。 */
+    @Test
+    fun `replay ending on an answer is not treated as an open turn`() {
+        val reducer = AcpReducer("session-1")
+        reducer.accept(chunk("user_message_chunk", "旧问题"), replaying = true)
+        reducer.accept(toolStatus("call-1", "in_progress"), replaying = true)
+        reducer.accept(chunk("agent_message_chunk", "旧回答"), replaying = true)
+
+        reducer.finishReplay()
+
+        assertEquals(TurnState.IDLE, reducer.snapshot().state)
+        assertTrue(!reducer.hasOpenTurn())
+    }
 }

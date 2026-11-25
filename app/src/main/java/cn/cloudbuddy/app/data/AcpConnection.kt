@@ -177,6 +177,14 @@ class AcpConnection(
     /** 回放期间不推快照：历史逐条出现会像在重放当时的步骤，加载完一次性给终态。 */
     fun snapshot(): AcpSnapshot = reducer.snapshot()
 
+    /**
+     * 回放结束时这一轮是否还挂着没收尾的工具调用。
+     *
+     * 对账层据此拒绝采纳服务端的终态：重进会话赶上工具调用时，服务端并没有 prompt
+     * 在途，`completed` 只是默认上报，不是真的跑完。
+     */
+    fun hasOpenTurn(): Boolean = reducer.hasOpenTurn()
+
     fun open() {
         val url = session.link.replace(Regex("^http://"), "https://")
         val request = http.headers(Request.Builder().url(url).get())

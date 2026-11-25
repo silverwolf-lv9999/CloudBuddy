@@ -177,3 +177,10 @@
 ## 2026-11-24 · 折叠组卡顿（1.4.10）
 
 - 用户反馈滑动卡、集中折叠处；去掉双层 animateContentSize（组内思考卡不再自带）、DropdownMenu 按需组合、两列表加 contentType。版本 1.4.10 / versionCode 34。
+
+## 2026-11-24 · 工具调用中重进：角标跳已完成 + 消息刷不出来（1.4.11）
+
+- **19:xx** 用户报：工具调用进行中刷新/重进，状态变「已完成」，之后的消也刷不出来，云端其实一直在跑。
+- **19:xx** 定位两处：①`finishReplay` 擦掉 running 工具后 `turnActive`/`hasRunningTool` 全假，一条 completed 上报把状态写成 DONE；②`scheduleResync` 只认 `updatedAt` 前进，工具期记录不动 → 不补历史，而重进后的连接早就不推事件。
+- **19:xx** 改：`AcpReducer.openTurn`（回放悬在工具上则保留 RUNNING 并拦终态上报）；`reconcile`/`reconcileAfterOpen` 拒绝可疑终态；`scheduleResync` 加「本地静默兜底」但本地有流时不重建；`settleIfStale` 遇 openTurn 不自愈（避免 cancel 真任务）。
+- **19:xx** 新增 2 条 reducer 测试，137；版本 1.4.11 / versionCode 35。

@@ -188,6 +188,15 @@ class BuddyRepository(val settings: AppSettings) {
     private fun streamAlive(id: String): Boolean =
         connections[id]?.isStreamActive(STREAM_STALE_MS) == true
 
+    /**
+     * 重进会话时这一轮还挂着未完成的工具调用。
+     *
+     * 用户实测：工具调用进行中刷新 / 重进，角标直接跳「已完成」，后续消息也不再出现。
+     * 那一刻服务端并没有 prompt 在途，`completed` 只是默认上报。所以这里既不能采纳
+     * 远端终态，也不能因为「状态没跨越」就不去补历史。
+     */
+    private fun openTurn(id: String): Boolean = connections[id]?.hasOpenTurn() == true
+
     @Volatile private var lastFullListAt = 0L
 
     /**
@@ -297,7 +306,11 @@ class BuddyRepository(val settings: AppSettings) {
         // 本地刚收尾的那几秒，服务端记录往往还停在 running；此刻采纳会把状态弹回
         // 「进行中」、暂停按钮重新出现，看着像任务又活了。给服务端一个收敛窗口。
         val settling = System.currentTimeMillis() - lastTurnEndAt < SETTLE_MS
-        val action = if (activeRemote != null &&
+        // 重进时历史停在未完成工具上：这一刻的终态多半是「没有 prompt 在途」的默认上报，
+        // 采纳它会让角标跳「已完成」、之后也不再补消息。等补历史收到底再认。
+        val suspectEnd = openTurn(activeId) && activeRemote != null &&
+            !StateReconciler.isActive(activeRemote.state)
+        val action = if (activeRemote != null && !suspectEnd &&
             !(settling && StateReconciler.isActive(activeRemote.state) && !StateReconciler.isActive(latest.state))
         ) {
             StateReconciler.decide(latest.state, activeRemote.state, hasLiveTurn(activeId))
@@ -344,6 +357,13 @@ class BuddyRepository(val settings: AppSettings) {
             // 状态边沿（从没任务变成有任务）说明本地漏了事件，这次补历史不该等退避。
             resyncGap = RESYNC_MIN_GAP
             scheduleResync(activeId, adopted)
+        } else if (activeRemote != null && !streamAlive(activeId) && !hasLiveTurn(activeId) &&
+            (StateReconciler.isActive(latest.state) || openTurn(activeId))
+        ) {
+            // 本地看着还在跑、可这条连接早就不推事件了（重进会话后的常态）：
+            // 定期重放历史，把工具跑完之后的消息捞回来。没有这一步，界面会永远
+            // 停在重进那一刻的内容上。
+            scheduleResync(activeId, activeRemote)
         }
         return StateReconciler.isActive(committedState) || StateReconciler.isActive(activeRemote?.state)
     }
@@ -369,13 +389,21 @@ class BuddyRepository(val settings: AppSettings) {
     /**
      * 补一次历史（云端在别处跑出来的新内容）。
      *
-     * 这里是唯一的重操作：重建连接会重放整段历史。所以三道闸：正在本地发送时不补、
+     * 这里是唯一的重操作：重建连接会重放整段历史。所以几道闸：正在本地发送时不补、
+     * 本地连接还在收事件时不补（重建会掐断实时流，历史还会覆盖正在流式的内容）、
      * `updatedAt` 没前进不补、两次之间按倍数退避到 60 秒。
+     *
+     * 例外是 **「本地静默但云端在跑」**：服务端只在有 prompt 在途时才往连接上推事件，
+     * 重进会话后这条流已经不推了，光等 `updatedAt` 前进永远等不到——用户看到的就是
+     * 「工具调用进行中重进，之后的消息一条都刷不出来」。这种情况按退避定期重放历史。
      */
     private fun scheduleResync(id: String, remote: Conversation) {
         if (resyncing) return
         if (_ui.value.activeId != id || hasLiveTurn(id)) return
-        if (!StateReconciler.shouldResync(remote.updatedAt, syncedAt[id] ?: 0L, remote.state)) return
+        val alive = streamAlive(id)
+        val newContent = StateReconciler.shouldResync(remote.updatedAt, syncedAt[id] ?: 0L, remote.state)
+        val catchUp = !alive && (StateReconciler.isActive(remote.state) || openTurn(id))
+        if (!newContent && !catchUp) return
         val now = System.currentTimeMillis()
         if (now - lastResyncAt < resyncGap) return
         resyncing = true
@@ -444,8 +472,11 @@ class BuddyRepository(val settings: AppSettings) {
         val current = _ui.value
         if (current.activeId != id) return
         val action = StateReconciler.decide(current.state, remote.state, hasLiveTurn(id))
+        // 回放结束时这轮还挂着未完成工具、而服务端已经报终态：多半是「没有 prompt 在途」
+        // 的默认上报，不是真跑完。此刻采纳会把角标写成「已完成」，还挡住后面的补历史。
+        val suspectEnd = openTurn(id) && !StateReconciler.isActive(remote.state)
         // 刚载入完，消息是最新的：只采纳状态，不再触发一次重建。
-        if (action != StateReconciler.Action.NONE) {
+        if (action != StateReconciler.Action.NONE && !suspectEnd) {
             synchronized(uiLock) {
                 val cur = _ui.value
                 if (cur.activeId == id) {
@@ -455,6 +486,13 @@ class BuddyRepository(val settings: AppSettings) {
                     )
                 }
             }
+        }
+        // 复用的连接可能早就不推事件了（在列表页停留过、或在会话间来回切）：
+        // 打开时立刻补一次历史，别让用户看到几分钟前的旧内容。
+        if (!streamAlive(id) && !hasLiveTurn(id) &&
+            (StateReconciler.isActive(remote.state) || openTurn(id))
+        ) {
+            scheduleResync(id, remote)
         }
     }
 
@@ -499,6 +537,9 @@ class BuddyRepository(val settings: AppSettings) {
         // 本机在途的一轮、或本地连接上还有事件在流进来（别的设备驱动时也会流）：
         // 都说明它真的在跑，不碰。
         if (hasLiveTurn(id) || streamAlive(id)) return remote
+        // 重进时历史停在未完成工具上：任务确实还挂在工具里，这时候「5 分钟没动」
+        // 是长工具调用的常态，自愈会 load + cancel，等于把用户正在跑的任务砍掉。
+        if (openTurn(id)) return remote
         val staleMs = System.currentTimeMillis() - remote.updatedAt
         if (!StateReconciler.shouldHeal(
                 remoteActive = true,

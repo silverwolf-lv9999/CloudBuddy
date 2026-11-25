@@ -50,6 +50,19 @@ class AcpReducer(private val sessionId: String, private val conversationId: Stri
     /** 本轮是否仍在进行中（`beginTurn` 到 `finishTurn`）。用于挡住中途的「空闲」上报。 */
     private var turnActive = false
 
+    /**
+     * 回放收尾时「这一轮其实还没收尾」——历史最后停在未完成的工具调用上。
+     *
+     * 用户实测：工具调用进行中刷新 / 重进会话，界面直接跳成「已完成」，后续消息也不再出现。
+     * 成因是 [finishReplay] 为了让旧会话不转圈，把历史里的 `running` 工具擦成 NONE，
+     * 于是 `turnActive` 与 `hasRunningTool()` 双双为假；紧接着一条 `completed` 状态上报
+     * （服务端此刻并没有 prompt 在途，随手就报终态）就把角标写成「已完成」。
+     *
+     * 所以回放结束时要把这个事实单独记下来，直到收到正式收尾信号
+     * （`session/endTurn` / prompt 响应 / 用户主动停止）才清。
+     */
+    private var openTurn = false
+
     private var seq = 0
     private var streamingIndex = -1
     private val toolIndex = mutableMapOf<String, Int>()
@@ -72,6 +85,8 @@ class AcpReducer(private val sessionId: String, private val conversationId: Stri
         error = null
         ask = null
         turnActive = true
+        // 新一轮开始：上一轮遗留的「未收尾」判定作废，收尾由本轮自己的信号决定。
+        openTurn = false
         // 无条件开启新的一轮：即使这次只发附件（正文为空），过程步骤也要归到本轮。
         turnSeq++
         if (text.isNotBlank()) {
@@ -87,6 +102,8 @@ class AcpReducer(private val sessionId: String, private val conversationId: Stri
         closeStream()
         turnActive = false
         localEcho = false
+        // 正式收尾信号到了：回放期留下的「未收尾」判定可以放下了。
+        openTurn = false
         if (failure != null) {
             state = TurnState.FAILED
             error = failure.optString("message").ifBlank { "云端执行失败" }
@@ -111,6 +128,7 @@ class AcpReducer(private val sessionId: String, private val conversationId: Stri
         state = TurnState.STOPPED
         turnActive = false
         localEcho = false
+        openTurn = false
         boundary = true
     }
 
@@ -148,18 +166,38 @@ class AcpReducer(private val sessionId: String, private val conversationId: Stri
     @Synchronized
     fun finishReplay() {
         closeStream()
+        // 先记「这一轮当时还没收尾」，再擦工具卡：顺序反过来就永远看不出它还在跑了。
+        // 只认「历史最后停在一条还在转圈的工具调用上」——工具之后模型又说过话，
+        // 说明这一轮早就往下走了，不能算悬在这里。
+        val tail = messages.lastOrNull()
+        openTurn = tail != null && tail.role == ChatRole.TOOL && tail.toolState == ToolState.RUNNING
         for (i in messages.indices) {
             val message = messages[i]
             if (message.role == ChatRole.TOOL && message.toolState == ToolState.RUNNING) {
                 messages[i] = message.copy(toolState = ToolState.NONE)
             }
         }
-        // 历史里「没等到收尾信号」的那一轮不是在执行，回到空闲而不是继续显示执行中。
-        if (state == TurnState.RUNNING) state = TurnState.IDLE
+        // 停在未完成工具上的那一轮，云端很可能还在跑（用户就是在这时候刷新/重进的）：
+        // 保留「运行中」而不是收敛成空闲，否则角标会显示成已经结束。
+        if (openTurn) {
+            state = TurnState.RUNNING
+        } else if (state == TurnState.RUNNING) {
+            // 历史里「没等到收尾信号」的其余轮次不是在执行，回到空闲。
+            state = TurnState.IDLE
+        }
         turnActive = false
         localEcho = false
         boundary = true
     }
+
+    /**
+     * 回放后是否还挂着一轮没收尾（历史停在未完成的工具调用）。
+     *
+     * 对账层据此拒绝采纳服务端的终态：那一刻的 `completed` 多半是「没有 prompt 在途」
+     * 的默认上报，不是真的跑完了。
+     */
+    @Synchronized
+    fun hasOpenTurn(): Boolean = openTurn
 
     /** @return 是否消费了这个事件（true 表示快照有变化，需要推给 UI）。 */
     @Synchronized
@@ -185,6 +223,7 @@ class AcpReducer(private val sessionId: String, private val conversationId: Stri
                     closeStream()
                     turnActive = false
                     localEcho = false
+                    openTurn = false
                     state = when (params.optString("stopReason")) {
                         "cancelled", "canceled" -> TurnState.STOPPED
                         "refusal" -> TurnState.FAILED
@@ -348,15 +387,18 @@ class AcpReducer(private val sessionId: String, private val conversationId: Stri
     private fun updateState(next: TurnState) {
         if (!allowRemoteRunning && (next == TurnState.RUNNING || next == TurnState.WAITING)) return
         if (next == TurnState.RUNNING && state == TurnState.STOPPED) return
-        // 终态上报（DONE/IDLE）在两种情况下都不采信：
+        // 终态上报（DONE/IDLE）在三种情况下都不采信：
         // 1. 本客户端这一轮还在跑（turnActive）：真收尾只认 session/endTurn 与
         //    prompt 响应（finishTurn），它们不走这里；静默间隙（思考几分钟、
         //    工具间隔）里来的 completed 上报一律是杂音。
         // 2. 还有工具在转圈：与谁发起无关（旁观/另一台设备驱动的轮次），
         //    用户实测 agent 等后台任务几分钟时，一条中途上报把角标顶成「已完成」，
         //    工具卡却还在转。
+        // 3. 回放结束时就挂着一轮没收尾（历史停在未完成工具）：用户正是在工具调用
+        //    中途刷新/重进的，此时服务端没有 prompt 在途，随手报的 completed 不是
+        //    真收尾；采信它会让角标跳「已完成」并且不再补后续消息。
         if (next == TurnState.DONE || next == TurnState.IDLE) {
-            if (turnActive || hasRunningTool()) return
+            if (turnActive || hasRunningTool() || openTurn) return
         }
         state = next
         if (next == TurnState.DONE || next == TurnState.FAILED || next == TurnState.STOPPED) {
