@@ -35,6 +35,7 @@ android {
         applicationId = "cn.cloudbuddy.app"
         minSdk = 26
         targetSdk = 35
+        // 1.5.5：本机重写 UI 后的版本号；上游 1.5.1 的本机会话修复已并入。
         versionCode = 41
         versionName = "1.5.5"
         vectorDrawables { useSupportLibrary = true }
@@ -80,10 +81,13 @@ android {
      *
      * `base` 与 `full` 是**同一个应用的两个档位**：包名相同，装哪个都是覆盖，数据原样保留。
      * 想从基础版升到完整版，直接装 `full`；想退回去，再装 `base` 即可，登录态不会丢。
-     * 这也是上游 CloudBuddy 的包名，所以这两个包的应用内更新照常跟随上游 Release。
+     * 这也是上游 CloudBuddy 的包名，所以这两个包也能覆盖上游发的老版本。
      *
      * `plus` 是给"基础版留着、另外再装一个完整版"的人：包名不同，可以同时装。
-     * 它换包名也换了签名来源，因此不跟随上游更新（见 SettingsCommon.FOLLOWS_UPSTREAM）。
+     *
+     * 三个包的应用内更新都指向本仓库的 Release，按 EDITION_NAME 挑属于自己档位的
+     * APK 资产（UpdateChecker.selectAsset）：base 拿 `-base-`、plus 拿 `-plus-`、
+     * full 拿不带中缀的那个。三个包同一把正式签名，各自覆盖升级都没问题。
      *
      * 三个包的应用名相同，靠包名而不是名字区分，所以这里也不加 versionName 后缀。
      * 做法参照开源阅读 MD3 版的多 flavor 分发。
@@ -93,15 +97,18 @@ android {
         create("base") {
             dimension = "edition"
             buildConfigField("boolean", "EDITION_FULL", "false")
+            buildConfigField("String", "EDITION_NAME", "\"base\"")
         }
         create("full") {
             dimension = "edition"
             buildConfigField("boolean", "EDITION_FULL", "true")
+            buildConfigField("String", "EDITION_NAME", "\"full\"")
         }
         create("plus") {
             dimension = "edition"
             applicationIdSuffix = ".plus"
             buildConfigField("boolean", "EDITION_FULL", "true")
+            buildConfigField("String", "EDITION_NAME", "\"plus\"")
         }
     }
 
@@ -179,7 +186,17 @@ dependencies {
         add(conf, "ai.koog:prompt-executor-llms:0.6.0")
         // ktor 的 HTTP 引擎需使用方自备（http-client-ktor 只依赖 ktor-client-core）。
         // 用 OkHttp 引擎：复用项目已有的 okhttp 4.12.0，版本完全一致，不引入第二套网络栈。
-        add(conf, "io.ktor:ktor-client-okhttp:3.2.2")
+        // 3.2.3：MCP Kotlin SDK 0.8.1（由 agents-mcp 传递引入）锁的是 3.2.3，
+        // ktor 各模块必须同版本，否则运行期会因 ABI 不一致炸在传输层。
+        add(conf, "io.ktor:ktor-client-okhttp:3.2.3")
+        // SSE 插件本身就在 ktor-client-core 3.x 里（io.ktor.client.plugins.sse），不用单独引。
+        // MCP 桥接：把远端 MCP 工具转成 Koog 的 Tool（含 JSON Schema → 工具描述符转换）。
+        // 排除 llms-all：它会带进 Anthropic / Gemini / Ollama 等全部厂商客户端，
+        // 我们只用 OpenAI 兼容接口，那几个包纯属给 APK 增重。
+        add(conf, "ai.koog:agents-mcp:0.6.0") {
+            exclude(group = "ai.koog", module = "prompt-executor-llms-all-jvm")
+            exclude(group = "ai.koog", module = "prompt-executor-llms-all")
+        }
     }
 
     debugImplementation("androidx.compose.ui:ui-tooling")

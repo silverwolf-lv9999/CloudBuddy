@@ -19,6 +19,8 @@ data class CustomModel(
     val id: String,
     /** 显示名；空则回落到 [id]。只影响界面，不影响请求。 */
     val name: String = "",
+    /** 所属提供商（[LlmProvider.id]）。空 = 旧数据，挂在迁移前的全局端点下。 */
+    val providerId: String = "",
     /** 是否是会思考的模型。只用于打标签，以及决定默认要不要显示思考强度。 */
     val reasoning: Boolean = false,
     /** 该模型用的思考强度（见 [ThinkingEffort]）；空表示跟随全局。 */
@@ -30,6 +32,13 @@ data class CustomModel(
 ) {
     /** 界面上真正显示的名字。 */
     val title: String get() = name.trim().ifBlank { id }
+
+    /**
+     * 全局唯一的选择键。不同提供商下可以有同名模型（两个中转都有
+     * `deepseek-v3`），选型存裸 ID 会串台——存储与选型一律用这个键，
+     * 请求时再拆回模型 ID。
+     */
+    val selKey: String get() = if (providerId.isBlank()) id else "$providerId/$id"
 
     /** 有没有任何覆盖项——列表里据此标一个「已自定义」。 */
     val customized: Boolean
@@ -74,6 +83,7 @@ data class CustomModel(
                 array.put(
                     JSONObject().apply {
                         put("id", m.id)
+                        if (m.providerId.isNotBlank()) put("p", m.providerId)
                         if (m.name.isNotBlank()) put("name", m.name)
                         if (m.reasoning) put("reasoning", true)
                         if (m.thinkingEffort.isNotBlank()) put("effort", m.thinkingEffort)
@@ -89,7 +99,7 @@ data class CustomModel(
          * 解析，兼容旧格式。
          *
          * 1.5.x 存的是纯字符串数组 `["deepseek-chat"]`，升级上来的用户的列表不能丢，
-         * 所以字符串元素按「只有 ID 的模型」处理。重复 ID 只留第一条，空 ID 丢掉。
+         * 所以字符串元素按「只有 ID 的模型」处理。重复条目按选择键去重，空 ID 丢掉。
          */
         fun decode(raw: String?): List<CustomModel> {
             if (raw.isNullOrBlank()) return emptyList()
@@ -102,6 +112,7 @@ data class CustomModel(
                         if (id.isBlank()) continue
                         CustomModel(
                             id = id,
+                            providerId = item.optString("p").trim(),
                             name = item.optString("name").trim(),
                             reasoning = item.optBoolean("reasoning", false),
                             thinkingEffort = item.optString("effort").trim(),
@@ -113,7 +124,7 @@ data class CustomModel(
                     is String -> CustomModel(item.trim())
                     else -> continue
                 }
-                if (model.id.isNotBlank()) out.putIfAbsent(model.id, model)
+                if (model.id.isNotBlank()) out.putIfAbsent(model.selKey, model)
             }
             return out.values.toList()
         }

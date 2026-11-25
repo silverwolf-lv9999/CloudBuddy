@@ -29,8 +29,31 @@ class AppSettings(context: Context) {
     /** 本机 MCP 服务器表（随会话下发，见 [McpStore] 的说明）。 */
     val mcp = McpStore(prefs)
 
-    /** 自定义模型模式的对话历史（云端记录里没有这部分，只能本地存）。 */
-    val agentMemory = AgentMemoryStore(prefs)
+    /** 提示词片段表（编码规范、项目约定这类可复用的补充，见 [PromptPreset]）。 */
+    val prompts = PromptStore(prefs)
+
+    /**
+     * 本机技能库（`filesDir/skills`）。
+     *
+     * 和云端技能是两套：云端那批在账号里、由云端 agent 执行；这里只喂给本机会话。
+     */
+    val localSkills = LocalSkillStore(java.io.File(context.applicationContext.filesDir, "skills"), prefs)
+
+    /**
+     * 本机会话的完整消息流（思考、工具调用、回答、失败记录都在里面）。
+     *
+     * 放在 `filesDir/sessions` 下按会话一个 JSON：内容比偏好项大得多，
+     * 塞 SharedPreferences 会让每次 `apply()` 都把整份 XML 重写一遍。
+     */
+    val sessionStore = SessionStore(java.io.File(context.applicationContext.filesDir, "sessions"))
+
+    /**
+     * 自定义模型模式的对话历史。
+     *
+     * 现在它只是 [sessionStore] 的一个视图（见 [TranscriptMemory]），
+     * [AgentMemoryStore] 仅用于把老版本存在 SharedPreferences 里的历史搬过来。
+     */
+    val agentMemory: AgentMemory = TranscriptMemory(sessionStore, AgentMemoryStore(prefs))
 
     init {
         migrateSingleAccountIfNeeded()
@@ -259,16 +282,78 @@ class AppSettings(context: Context) {
         customModels.firstOrNull { it.id == id }
 
     /**
-     * 加入模型（已存在则跳过）。
+     * 按选择键找一条模型配置。
+     *
+     * 选择键是 `providerId/modelId`（或旧数据的裸 modelId），全局唯一；
+     * 裸 ID 先按选择键找，找不到再按纯模型 ID 兜底（旧会话存的就是裸 ID）。
+     */
+    fun customModelEntryByKey(key: String): CustomModel? =
+        customModels.firstOrNull { it.selKey == key }
+            ?: customModels.firstOrNull { it.id == key }
+
+    // ---------- 提供商（多端点） ----------
+    //
+    // 之前只有一个全局 baseUrl+Key，想同时用 DeepSeek 官方和一个中转站就没法配。
+    // 提供商成为独立实体后，模型挂在提供商下面，会话按「提供商 + 模型」选。
+
+    var llmProviders: List<LlmProvider>
+        get() = LlmProvider.decodeList(prefs.getString("llm_providers", ""))
+        set(value) = prefs.edit().putString("llm_providers", LlmProvider.encodeList(value)).apply()
+
+    fun providerOf(id: String): LlmProvider? = llmProviders.firstOrNull { it.id == id }
+
+    fun upsertProvider(provider: LlmProvider) {
+        val current = llmProviders.toMutableList()
+        val index = current.indexOfFirst { it.id == provider.id }
+        if (index >= 0) current[index] = provider else current.add(provider)
+        llmProviders = current
+    }
+
+    /**
+     * 删提供商。它名下的模型一起删（留着也是指着一个不存在的端点），
+     * 当前选型指向被删模型时回落到剩下的第一个。
+     */
+    fun removeProvider(id: String) {
+        llmProviders = llmProviders.filterNot { it.id == id }
+        val next = customModels.filterNot { it.providerId == id }
+        customModels = next
+        if (next.none { it.selKey == customModelId }) {
+            customModelId = next.firstOrNull()?.selKey.orEmpty()
+        }
+    }
+
+    /**
+     * 旧数据迁移：全局端点（customBaseUrl/customApiKey）搬成第一个提供商，
+     * 旗下模型全部挂过去。只在还没有任何提供商时执行一次，幂等。
+     *
+     * 旧的全局字段不清空：万一迁移有遗漏（比如旧会话存的是裸模型 ID），
+     * [customModel] 的解析仍能回落到它们，不至于一下全断。
+     */
+    fun ensureProvidersMigrated() {
+        if (llmProviders.isNotEmpty()) return
+        if (customBaseUrl.isBlank() && customApiKey.isBlank()) return
+        val provider = LlmProvider(
+            id = LlmProvider.newId(),
+            name = "默认提供商",
+            baseUrl = customBaseUrl,
+            apiKey = customApiKey,
+        )
+        llmProviders = listOf(provider)
+        val migrated = customModels.map { m -> if (m.providerId.isBlank()) m.copy(providerId = provider.id) else m }
+        customModels = migrated
+    }
+
+    /**
+     * 加入模型（按选择键去重）。
      *
      * 返回真正新增的条数：调用方据此判断要不要顺手把当前模型也设过去。
      */
     fun addCustomModels(added: List<CustomModel>): Int {
         val current = customModels.toMutableList()
-        val known = current.map { it.id }.toMutableSet()
+        val known = current.map { it.selKey }.toMutableSet()
         var count = 0
         added.forEach { m ->
-            if (m.id.isNotBlank() && known.add(m.id)) {
+            if (m.id.isNotBlank() && known.add(m.selKey)) {
                 current.add(m)
                 count++
             }
@@ -277,18 +362,18 @@ class AppSettings(context: Context) {
         return count
     }
 
-    fun removeCustomModel(id: String) {
-        val next = customModels.filterNot { it.id == id }
+    fun removeCustomModel(key: String) {
+        val next = customModels.filterNot { it.selKey == key }
         customModels = next
-        // 删掉的正好是当前模型：回落到剩下的第一个，别留一个指向不存在模型的 ID。
-        if (customModelId == id) customModelId = next.firstOrNull()?.id.orEmpty()
+        // 删掉的正好是当前模型：回落到剩下的第一个，别留一个指向不存在模型的键。
+        if (customModelId == key) customModelId = next.firstOrNull()?.selKey.orEmpty()
     }
 
-    /** 覆盖某条模型（显示名、能力、参数）。ID 变了等于换模型，按旧 ID 匹配以免改丢。 */
-    fun updateCustomModel(originalId: String, model: CustomModel) {
-        val next = customModels.map { if (it.id == originalId) model else it }
+    /** 覆盖某条模型（显示名、能力、参数）。选择键变了等于换模型，按旧键匹配以免改丢。 */
+    fun updateCustomModel(originalKey: String, model: CustomModel) {
+        val next = customModels.map { if (it.selKey == originalKey) model else it }
         customModels = next
-        if (customModelId == originalId) customModelId = model.id
+        if (customModelId == originalKey) customModelId = model.selKey
     }
 
     /**
@@ -347,13 +432,19 @@ class AppSettings(context: Context) {
      *
      * 顺序是「全局默认 + 该模型的覆盖」：某个模型单独设了思考强度或系统提示词，
      * 只在这一条上生效，换回别的模型立刻回到全局那套。
+     *
+     * 端点归属：模型键是 `providerId/modelId` 时按提供商取地址与 Key；
+     * 旧数据的裸 ID / 空提供商回落到迁移前的全局字段——迁移只搬数据不清字段，
+     * 就是为了让这些旧引用不至于一下全断。
      */
     fun customModel(conversationId: String? = null): CustomModelConfig {
-        val modelId = customModelFor(conversationId)
-        val entry = customModelEntry(modelId)
+        val key = customModelFor(conversationId)
+        val entry = customModelEntryByKey(key)
+        val modelId = entry?.id ?: key.substringAfterLast('/')
+        val (baseUrl, apiKey) = endpointFor(entry)
         return CustomModelConfig(
-            baseUrl = customBaseUrl,
-            apiKey = customApiKey,
+            baseUrl = baseUrl,
+            apiKey = apiKey,
             modelId = modelId,
             temperature = customTemperature.toDouble(),
             maxIterations = customMaxIterations,
@@ -361,7 +452,17 @@ class AppSettings(context: Context) {
             systemPrompt = entry?.systemPrompt?.takeIf { it.isNotBlank() } ?: customSystemPrompt,
             thinkingStyle = customThinkingStyle,
             thinkingEffort = entry?.thinkingEffort?.takeIf { it.isNotBlank() } ?: customThinkingEffort,
+            // 片段是全局的（不跟模型走）：一条「提交前跑测试」对哪个模型都成立，
+            // 按模型各存一份只会让用户在换模型后发现规矩莫名其妙没了。
+            presets = prompts.enabled(),
         )
+    }
+
+    /** 一条模型的端点与 Key：挂在提供商下取提供商的，旧数据回落全局字段。 */
+    private fun endpointFor(entry: CustomModel?): Pair<String, String> {
+        val provider = entry?.providerId?.takeIf { it.isNotBlank() }?.let { providerOf(it) }
+        if (provider != null) return provider.baseUrl to provider.apiKey
+        return customBaseUrl to customApiKey
     }
 
     /**

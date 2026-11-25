@@ -514,8 +514,10 @@ release APK（`verify.sh` 里的证书 DN 校验通过，证明用的是正式�
     再用 `layoutInfo.totalItemsCount - 1`。
 
 55. **设置页合并优先于拆分**。两个二级页互相跳（推理页里有"去配端点"的入口），
-    比一个长页面更绕。判断标准是"用户是不是要来回看同一件事"——引擎选择和端点配置
-    就是一回事的两面，合并成「模型与推理」一页反而短了。
+    比一个长页面更绕。判断标准是"用户是不是要来回看同一件事"——同一件事就别拆两页。
+    但分栏的主轴必须是**能力归属**，不是参数类型：技能/连接器/MCP 只对云端会话生效、
+    端点/模型/提示词片段只对本机会话生效，混在「推理」「扩展」这种按功能起的名字下，
+    用户没法判断一个开关到底影响哪套会话。「会话引擎」是唯一的跨后端开关，单独一栏。
 
 56. **用户找一个"栏目"，不是找一张卡**。设置页缺「账号与额度」被报了两次：
     第一次我把积分签到做成一张独立小卡挂首页，用户仍说"没有这一栏"。因为栏目 =
@@ -546,8 +548,97 @@ release APK（`verify.sh` 里的证书 DN 校验通过，证明用的是正式�
 61. **多 flavor 共用实现要用 `sourceSets` 指过去，别复制文件**。
     `plus` 与 `full` 功能完全一样，`sourceSets["plus"].java.srcDir("src/full/java")`
     一行就够；复制一份的后果是修一个 bug 要改两处，第二次总会漏。
+62. **思考内容不在 `AIAgent.run()` 的返回值里**。Koog 把 `reasoning_content` 反序列化成
+    `Message.Reasoning` 之后，在 agent 内部就消化掉了，`run()` 只回最终文本。
+    所以「思考强度调成中却没反应」和「参数根本没发出去」看起来一模一样，
+    不要先去改 `ThinkingParams`（那个用 curl 就能验证）。办法是在 `PromptExecutor`
+    这层套装饰（`ReasoningTee`）：`execute()` 原样转发、原样返回，只从返回列表里
+    抄一份 `Message.Reasoning` 的文本回调给上层。一次工具循环会调多次 `execute`，
+    每段思考独立回调，上层才能把它和工具调用按时间顺序排开。
+63. **`baseUrl` 里不能留路径**。Koog 0.6.0 的 `chatCompletionsPath` 是**相对路径**，
+    ktor 解析时会替换掉 base 的最后一段：base=`https://h/v1` + path=`chat/completions`
+    实际打到 `/chat/completions`（`/v1` 没了）→ 404。所以 `EndpointResolver` 只保留
+    `scheme://host:port`，前缀整段进 `chatCompletionsPath`。这个 bug 的迷惑之处在于
+    **模型列表能拉到**（`modelsUrl` 是我们自己拼的完整 URL）、发消息却 404，
+    用户会以为是 key 错了。`EndpointPathTest` 用 MockWebServer 抓真实 path 锁住它。
+64. **自定义会话的历史要在「发请求之前」落盘**。以前只在整轮成功结束时把
+    「提问 + 回答」一起写进 history，于是跑长任务（看仓库、装依赖）时用户退出去
+    再进来、或进程被系统回收，磁盘上什么都没有 —— 会话看起来是空的，用户会以为
+    消息被吞了。现在 `send()` 一进来就写提问；失败 / 被停止再补一条 `error=true`
+    的记录（显示给人看，`buildPrompt` 回放时过滤掉，模型不该把报错当成自己说过的话）。
+    顺带一个隐性问题：`agent.run(input)` 会把输入接到 prompt 后面，所以
+    `buildPrompt` 里**不要再手写一遍本轮提问**，否则同一句话发两遍，模型会反复确认需求。
+
+65. **会话的真相是「完整消息流」，不是「提问 + 回答」两句话**。抄 rikkahub 的做法：
+    界面上看到什么就存什么（思考、工具调用、回答、失败记录），重进时按原顺序放回去。
+    只存问答的后果是用户只要中途退出，思考与工具过程就永久消失，折叠条里
+    「N 个步骤 · X 次工具调用 · Y 段思考」再也回不来。存储见 `SessionStore`
+    （一会话一 JSON、原子替换、写盘串行），模型上下文由 `Transcript.turnsOf` 从
+    消息流里派生——**别为了「上下文裁剪」再单独存一份历史**，两份对不上时
+    用户看到的历史和模型看到的历史就不是同一段对话。
+
+66. **裁消息只能整轮裁**。按条从头删会留下「没有提问的折叠条」或「没有回答的提问」，
+    看起来像会话被撕掉了一角。`SessionStore.trim` 是找到第二个 USER 再把前面整轮切掉，
+    头部必须停在用户提问上。
+
+67. **进程被杀会留下两种残局，打开会话时要先收尾**：挂着「运行中」的工具（界面上
+    永远转圈）和没有下文的提问（用户以为回答被吞了）。`SessionStore.sealInterrupted`
+    在 `restoreCustomConversation` 读之前跑，对应 rikkahub 的 `cancelInterruptedTools()`。
+    收尾必须幂等：它每次打开会话都会执行，重复补说明就是满屏「上一轮没有跑完」。
+
+68. **同一轮的所有消息必须拿到同一个轮次号**。本地消息原来用
+    `messages.count { role == USER }` 算，导致提问是第 N 轮、回答变成第 N+1 轮，
+    上一轮的思考会被分到下一轮的折叠组里。现在统一走 `turnOf`：提问开启新的一轮，
+    其余消息归到当前轮；`restoreCustomConversation` 读回来时按消息流**重算**，
+    不信任存储里的旧值。
+
+69. **提示词分成「全局」和「片段」两件事，别合并成一个输入框**。全局系统提示词是这次
+    任务的总体要求；片段是可复用的一批补充（编码规范、项目约定），各自有开关、注入位置
+    和顺序（`PromptStore` + `PromptComposer`，照 rikkahub 的 `PromptInjection` 只留手动
+    开关那一支）。两条硬约束：一条片段都没有时系统提示词必须**逐字不变**
+    （否则升级等于偷偷改了所有人的模型行为）；顺序由 `priority` 决定，只挪列表位置不会
+    改变拼装结果——`move()` 交换的是 priority，就是为了躲这个坑。
+
+70. **异步落盘 + 删除 = 复活竞态，删完必须作废排队中的写**。`SessionStore` 的写盘走
+    IO 队列，`clear()` 只删文件是不够的，有两个窗口都会让「删了的消息」回来：①删完
+    立刻 `messages()`，磁盘文件还在，整条流被读回缓存；②快照在 IO 任务执行时才取，
+    取完还没写盘就发生 `clear`，写任务把旧内容原样写回去。修法：删除同步做（
+    `File.delete()` 不贵，贵的是写 JSON），落盘代数 +1，写任务带排队时的代数、写前
+    对不上就作废。回归测试用可控执行器把写任务扣到 clear 之后放行，确定性复现。
+
+71. **路径穿越检查要连「目录不存在」一起拦**。`readRelative` 用 canonical 路径前缀
+    判断目标是否在技能目录内，但 `File.getCanonicalFile` 对**不存在的路径**照样能算——
+    `<root>/nope/SKILL.md` 天然在 `<root>/nope` 之下，检查通过。判之前先
+    `takeIf { it.isDirectory }`。MCP/技能这类「内容可从外部导入」的目录，逃逸检查
+    必须有单测锁住。
+
+72. **多包分发的应用内更新必须按档位挑资产，不能抓第一个 `.apk`**。三个包共用同一个
+    Release：base 用户点了更新拿到 full 的包，同包名能覆盖——但这等于**静默换档**，
+    不是用户点「更新」时期待的事；反过来 full 拿到 base 的包会把功能降没；plus 拿错
+    直接装不上（包名不同）。规则：资产名带 `-base-`/`-plus-` 中缀的按档位严格匹配，
+    匹配不到宁可给 null（回退 Release 页面），也不糊弄；老发布（三包拆分前）只有一个
+    不带中缀的 APK，那时才允许「第一个」。同一把正式签名后，共存版也能自查更新——
+    「plus 不跟随更新」这种限制一旦写入要在换签名策略时记得拆掉。
+
+73. **本机会话与云端的隔离必须是「出口全封死」，漏一条通道就会吃掉用户的消息**。
+    本机会话在云端是空壳（故意不传 prompt），但仓库里有一堆地方会顺手建 ACP 连接
+    （历史迁移、模型推送、静默补历史……），每条连接的 `onUpdate` 都会拿云端空快照
+    **整份覆盖**界面消息——表现正是用户报的「历史消息消失」。堵法分三层，缺一不可：
+    ①出口拦截：`publish` / `publishModels` / `silentResync` 见本机会话直接返回；
+    ②入口拦截：`connection()` 对本机会话 `check` 报错，宁可炸也不静默冲数据；
+    ③判定自愈：归属记录（按账号前缀存，换账号会丢）不可全信，
+    `isLocalConv()` 统一按「记录是 CUSTOM ‖ 在标记表里 ‖ SessionStore 有内容」判，
+    分流、恢复、发送全走它。历史迁移（seedCustomHistory）必须用**临时**连接用完即关，
+    不许走会进缓存的 `connection()`。
 
 ## 协议速查
+
+GitHub 推送凭据已固化：token 存在 `~/.git-credentials`（URL 行格式）与
+`~/.config/cloudbuddy/gh_token`（备用，/tmp 会清、这里不会），credential.helper
+= store 已配置，`git push origin main` 直接可用，不需要再走设备码授权。
+token 权限 repo+workflow（推 workflow 文件的提交必须带 workflow，只给 repo 会
+推一半失败）。API 调用带 `Authorization: Bearer $(cat ~/.config/cloudbuddy/gh_token)`。
+若 token 失效（401），重新走一次设备码（scope=repo%20workflow）并重写上述两处。
 
 完整记录在 [docs/protocol.md](docs/protocol.md)，改协议前先读。
 

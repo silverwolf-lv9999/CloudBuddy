@@ -2241,3 +2241,110 @@ IDLE（`turnActive` 时降级返回），**没挡 DONE**——所以即使这轮
 - 新增 2 条：历史停在未完成工具时回放保留 RUNNING、且 completed 上报被忽略
   （endTurn 后照常收尾）；历史停在回答上时不被误判成「悬空」。
 - 135 → 137。
+
+# 1.5.0 · 本机会话照 RikkaHub 重做：消息流持久化 + 本机技能/MCP/提示词
+
+## 现象（用户反馈）
+1. 本地 API 会话消息有时消失：退出再进，提问和回复都没了。
+2. 思考强度调成中，仍看不到思考内容。
+3. 地址填 `https://xxx/v1` 请求 404。
+4. Skill / MCP 只对云端模型生效，给自定义 API 用的设置没有；设置页排布不科学。
+
+## 根因
+1. 历史只在整轮成功结束时写盘，中途退出 = 什么都没存；`AgentTurn` 只存「提问+回答」，
+   思考与工具过程根本不在数据模型里。
+2. Koog 的 `AIAgent.run()` 只回最终文本，`Message.Reasoning` 在框架内部被丢弃——
+   不是参数没配对。
+3. ktor 对 `chatCompletionsPath` 的相对路径处理是替换 base 的最后一段，
+   base 带 `/v1` 时拼出 `/chat/completions` → 404。
+4. 本机会话没有技能/MCP/提示词通道；设置页按「设置类型」分组而不是按「能力归属」。
+
+## 改法
+1. **SessionStore**：一个会话一个 JSON，整条消息流原子落盘；先落盘再执行，失败与中断
+   留痕；`sealInterrupted` 收尾进程被杀的残局（`runing` 工具 → 失败+「已中断」，
+   悬空提问 → 补说明）。测试过程中修出两个真竞态：
+   - `clear()` 异步删文件，删后立刻读会把消息流从磁盘加载回来 → 删除改同步；
+   - 排队中的写盘任务在 clear 之后把旧内容写回去（快照先取、写盘后到）→
+     落盘代数 +1，写任务带代数、写前对不上就作废（可控执行器的确定性回归测试）。
+2. **ReasoningTee**：装饰 PromptExecutor，转发时抄出 reasoning 流回调写入 THOUGHT 消息。
+3. **EndpointResolver**：base 只留 `scheme://host:port`，前缀整段进 path。
+4. **本机三件套**：PromptPreset（片段 + 位置 + 优先级，零片段时系统提示逐字不变）、
+   LocalSkillStore（目录式 SKILL.md + frontmatter + use_skill 渐进披露 + 路径逃逸拦截，
+   修过 canonicalFile 对不存在目录照样通过的漏洞）、LocalMcp（url 型桥进 ToolRegistry，
+   失败降级）；MCP 卡片双作用域开关。
+5. **设置页**：首页六栏（账号与额度 / 会话引擎 / 云端会话 / 本机模型 / 通用 / 其他），
+   分栏主线是能力归属。
+6. **应用内更新适配三包**：`selectAsset` 按档位（EDITION_NAME）挑 APK 资产，选错包
+   等于静默换档；共存版与另两包同一把正式签名，取消「plus 不检查更新」的旧限制。
+
+## 测试
+- 新增：SessionStore（12+竞态回归）、TranscriptMemory、PromptComposer、SkillFrontmatter、
+  LocalSkillStore、UpdateChecker 三包资产选择（12）等。
+- 876 → 951，三变体 lint 0 error。
+
+# 1.5.1 · 本机会话历史消息再次消失（云端同步通道没关干净）
+
+## 现象（用户反馈）
+自定义 API 会话的历史消息仍会消失；用户猜测「是不是又在这些会话里关闭了云端同步」。
+
+## 根因
+本机会话在云端是空壳（故意不传 prompt），但仓储里多条路径仍会为它建 ACP 连接：
+1. `seedCustomHistory` 走 `connection()`——那条连接带着 `onUpdate → publish` 进缓存，
+   之后云端任何事件推送都会用空快照把本机消息整份覆盖掉；
+2. `publishModels` 会把云端模型 ID 写进本机会话的模型设置；
+3. `silentResync` 对本机会话执行的「补历史」语义就是「替换为云端内容（空）」；
+4. 引擎归属记录按账号前缀存在 SharedPreferences，换账号后 `kindOf` 回落成「云端」，
+   会话被当成云会话打开——ACP 回放空历史，界面上就是「消息全没了」。
+
+## 改法（三层）
+1. **出口拦截**：`publish` / `publishModels` / `silentResync` 见本机会话直接返回。
+2. **入口拦截**：`connection()` 对本机会话 `check` 报错；历史迁移改用临时连接用完即关。
+3. **判定自愈**：新增 `isLocalConv()`——归属记录是 CUSTOM ‖ 在自定义标记表 ‖
+   SessionStore 有内容，满足其一即本机；`openConversation` 恢复、`send` 分流、
+   对账、自愈、模型推送全部换用，记录丢失时自动改回 CUSTOM。
+4. `restoreCustomConversation` 补 `activeId` 守卫（恢复期间切走不再串台）。
+
+## 测试
+- 951 项全绿（base/full/plus），lint 0 error。
+
+# 1.6.0 开发中 · 思考显示自研引擎重做 + 多提供商模型管理
+
+## 现象（用户反馈）
+1. 自定义 API 会话依旧不显示思考；要求照搬 RikkaHub 的会话框架，不要再局限于云端会话那套。
+2. 模型管理没有照搬：只能配一个模型提供商。
+3. 设置页排版也要抄 RikkaHub。
+
+## 根因
+1. **Koog 0.6.0 根本不解析 `reasoning_content`**——在它的 OpenAI 客户端 jar 里搜不到这个
+   字符串（实测）。DeepSeek 及大量中转站的思考内容正是用这个字段流式下发的，
+   所以上一轮的 ReasoningTee 建立在错误前提上：Koog 上游就没收到过思考。
+2. 单一提供商：`customBaseUrl/customApiKey` 是全局一对，所有模型挤在同一个端点下。
+
+## 改法
+1. **自研流式引擎**（照 RikkaHub 协议层做法，彻底脱离 Koog agent 框架）：
+   - `OpenAiStreamClient`：ktor + SSE 手工解析，`reasoning_content ?: reasoning`
+     双字段兜底（DeepSeek / OpenRouter 写法都接住），content / tool_calls 分片
+     （按 index 拼装）/ finish_reason 全拿到；请求体自己拼，思考参数直接平铺，
+     拆掉 OkHttp 拦截器补丁。
+   - 工具循环自实现：assistant tool_calls → 执行 → tool 结果回传 → 再问，
+     直到最终回答或达最大迭代；工具失败转错误文本回给模型。
+   - Koog 工具表通过 `asChatTool()` 适配（descriptor→JSON Schema，decodeArgs 执行），
+     沙箱 / 技能 / MCP 工具实现零改动。
+   - **流式显示**：仓储新增 pushStreamLocal / appendStreamLocal / endStreamLocal，
+     思考与回答逐字进界面（打字机效果），定稿才落盘；中断/失败路径把半截内容
+     收口落盘，不悬在「打字中」。
+   - 修一个真 bug：agent 收尾 remember 的回答与流式落盘的回答重复（中间隔着思考
+     消息，连续去重拦不住）→ TranscriptMemory 增加本轮内去重，跨轮不误杀。
+   - ReasoningTee / CustomLlmClient（Koog 客户端 + 拦截器）整体删除。
+2. **多提供商**（照 RikkaHub ProviderSetting 结构）：
+   - `LlmProvider(id/name/baseUrl/apiKey/enabled)` 实体；模型挂提供商下，
+     选择键 `providerId/modelId` 全局唯一，不同端点同名模型不串台。
+   - 旧数据迁移：全局端点自动搬成第一个提供商（幂等），旧字段保留兜底。
+   - 设置页新增「提供商」卡：增改删、启用开关、逐提供商测试连接；
+     模型拉取按提供商进行；候选池切提供商即清空。
+   - 聊天页模型弹窗按提供商分组（RikkaHub ModelListSheet 做法），顶栏显示模型名。
+   - 手填模型 ID 入口移进候选框（不提供 /models 的自建 vLLM 仍可用）。
+
+## 测试
+- 新增 ChatStreamTest（SSE 解析 6 形状）、流式回答去重回归等；963 项全绿（+12），
+  三变体 lint 0 error。

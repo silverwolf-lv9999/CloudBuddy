@@ -46,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cn.cloudbuddy.app.data.CustomModel
+import cn.cloudbuddy.app.data.LlmProvider
 import cn.cloudbuddy.app.data.ThinkingEffort
 
 /**
@@ -55,10 +56,15 @@ import cn.cloudbuddy.app.data.ThinkingEffort
  * 几十上百个模型，全平铺进选择器没人找得到；而每次拉取都覆盖的话，用户改过的
  * 显示名和参数就白改了。所以照开源客户端（RikkaHub）的做法切成两层：
  * 候选池只读，勾选后进入「我的模型」，后者才是会话里能选的那几个。
+ *
+ * 模型挂在提供商（[LlmProvider]）下面：拉取、手动添加都发生在「当前选中」的
+ * 提供商上；列表条目按选择键（providerId/modelId）唯一，不同提供商下的同名模型
+ * 互不干扰。
  */
 @Composable
 fun CustomModelManager(
     models: List<CustomModel>,
+    providers: List<LlmProvider>,
     selectedId: String,
     candidates: List<String>,
     /** 全局思考强度，用于展示「跟随全局（中）」这类回退说明。 */
@@ -67,8 +73,9 @@ fun CustomModelManager(
     globalTurns: Int,
     fetching: Boolean,
     error: String?,
-    onFetch: () -> Unit,
-    onAdd: (List<String>) -> Unit,
+    onFetch: (String) -> Unit,
+    onClearCandidates: () -> Unit,
+    onAdd: (List<String>, String) -> Unit,
     onRemove: (String) -> Unit,
     onUpdate: (String, CustomModel) -> Unit,
     onSelect: (String) -> Unit,
@@ -76,6 +83,14 @@ fun CustomModelManager(
     var pickerOpen by remember { mutableStateOf(false) }
     var expandedId by remember { mutableStateOf<String?>(null) }
     var showAll by remember { mutableStateOf(false) }
+    // 拉取/添加发生在哪个提供商上。默认取第一个启用的；没有提供商时为空串（旧入口）。
+    var activeProviderId by remember { mutableStateOf(providers.firstOrNull { it.enabled }?.id ?: "") }
+    val activeProvider = providers.firstOrNull { it.id == activeProviderId }
+
+    // 提供商列表变化（删除了当前选中的）时兜底。
+    if (activeProviderId.isNotBlank() && providers.none { it.id == activeProviderId }) {
+        activeProviderId = providers.firstOrNull()?.id ?: ""
+    }
 
     // 拉取成功就把选择器弹出来：用户点「拉取」的下一步必然是「挑几个」，让这一步自动发生。
     // 判断依据是「本次拉取结束了且池子非空」，不是「池子变长了」——后者在重复拉同一个
@@ -89,7 +104,7 @@ fun CustomModelManager(
     }
     val startFetch = {
         awaitingPicker = true
-        onFetch()
+        onFetch(activeProviderId)
     }
 
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -102,21 +117,57 @@ fun CustomModelManager(
             CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
             Spacer(Modifier.width(6.dp))
         }
-        TextButton(onClick = startFetch, enabled = !fetching) {
+        TextButton(onClick = startFetch, enabled = !fetching && activeProviderId.isNotBlank()) {
             Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(4.dp))
             Text(if (fetching) "拉取中…" else "拉取")
         }
-        TextButton(onClick = { pickerOpen = true }) {
+        TextButton(
+            onClick = { pickerOpen = true },
+            enabled = activeProviderId.isNotBlank(),
+        ) {
             Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
             Text("添加")
         }
     }
 
+    // 多个提供商时先选一个：拉取与添加都落在它名下。照 RikkaHub 的
+    // Provider 选择器做法，横向一排可点的小胶囊。
+    if (providers.size > 1) {
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            providers.forEach { p ->
+                val active = p.id == activeProviderId
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = if (active) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.clickable {
+                        activeProviderId = p.id
+                        // 换提供商等于换端点：候选池是上一个端点的，清掉。
+                        onClearCandidates()
+                    }
+                ) {
+                    Text(
+                        p.label + if (p.enabled) "" else "（停用）",
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (active) MaterialTheme.colorScheme.onPrimary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+
     if (models.isEmpty()) {
         Text(
-            "还没有模型。点「拉取」从端点列一份清单，勾几个进来；端点不提供模型列表时，" +
-                "也可以在上面直接手填模型 ID。",
+            "还没有模型。选好提供商后点「拉取」列一份清单，勾几个进来；端点不提供模型列表时，" +
+                "也可以在添加框里直接手填模型 ID。",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -126,19 +177,20 @@ fun CustomModelManager(
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             val shown = if (showAll) models else models.take(COLLAPSED_MODELS)
             shown.forEach { model ->
-                val expanded = expandedId == model.id
+                val expanded = expandedId == model.selKey
                 ModelRow(
                     model = model,
-                    selected = model.id == selectedId,
+                    provider = providers.firstOrNull { it.id == model.providerId },
+                    selected = model.selKey == selectedId,
                     expanded = expanded,
                     globalEffort = globalEffort,
                     globalTurns = globalTurns,
-                    onSelect = { onSelect(model.id) },
-                    onToggleExpand = { expandedId = if (expanded) null else model.id },
-                    onUpdate = { onUpdate(model.id, it) },
+                    onSelect = { onSelect(model.selKey) },
+                    onToggleExpand = { expandedId = if (expanded) null else model.selKey },
+                    onUpdate = { onUpdate(model.selKey, it) },
                     onRemove = {
-                        if (expandedId == model.id) expandedId = null
-                        onRemove(model.id)
+                        if (expandedId == model.selKey) expandedId = null
+                        onRemove(model.selKey)
                     }
                 )
             }
@@ -167,11 +219,12 @@ fun CustomModelManager(
     if (pickerOpen) {
         CandidatePicker(
             candidates = candidates,
-            models = models,
+            models = models.filter { it.providerId == activeProviderId },
             fetching = fetching,
             onFetch = startFetch,
+            onManualAdd = { id -> onAdd(listOf(id), activeProviderId) },
             onConfirm = {
-                onAdd(it)
+                onAdd(it, activeProviderId)
                 pickerOpen = false
             },
             onDismiss = { pickerOpen = false }
@@ -182,6 +235,7 @@ fun CustomModelManager(
 @Composable
 private fun ModelRow(
     model: CustomModel,
+    provider: LlmProvider?,
     selected: Boolean,
     expanded: Boolean,
     globalEffort: String,
@@ -223,6 +277,8 @@ private fun ModelRow(
                     }
                     Text(
                         buildString {
+                            // 提供商标签放最前：同名模型挂在两个提供商下时靠它区分。
+                            if (provider != null) append(provider.label + " · ")
                             if (model.title != model.id) append(model.id)
                             if (model.reasoning) {
                                 if (isNotEmpty()) append(" · ")
@@ -350,13 +406,16 @@ private fun CandidatePicker(
     models: List<CustomModel>,
     fetching: Boolean,
     onFetch: () -> Unit,
+    onManualAdd: (String) -> Unit,
     onConfirm: (List<String>) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
     var picked by remember { mutableStateOf(emptySet<String>()) }
-    val added = remember(models) { models.map { it.id }.toSet() }
+    var manual by remember { mutableStateOf("") }
     // 已加入的也要显示，但勾不动——否则用户会以为「端点列表少了一截」。
+    // 这里的 models 已由调用方按当前提供商过滤，按裸 ID 判断重复即可。
+    val added = remember(models) { models.map { it.id }.toSet() }
     val visible = remember(candidates, query) {
         val list = candidates.map { CustomModel(it) }
         CustomModel.filter(list, query)
@@ -367,6 +426,27 @@ private fun CandidatePicker(
         title = { Text("从端点添加模型") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // 手动输入永远可用：不少自建 vLLM 不提供 /models，这是唯一入口。
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedTextField(
+                        value = manual,
+                        onValueChange = { manual = it },
+                        label = { Text("手动输入模型 ID") },
+                        placeholder = { Text("deepseek-chat") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(
+                        onClick = {
+                            val id = manual.trim()
+                            if (id.isNotBlank()) {
+                                onManualAdd(id)
+                                manual = ""
+                            }
+                        },
+                        enabled = manual.isNotBlank()
+                    ) { Text("加入") }
+                }
                 if (candidates.isEmpty()) {
                     Text(
                         "候选池还是空的。点下面的按钮拉一次端点清单——只在这一次请求，不会后台自动拉。",

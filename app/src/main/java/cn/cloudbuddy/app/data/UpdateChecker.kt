@@ -2,6 +2,7 @@ package cn.cloudbuddy.app.data
 
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
@@ -18,7 +19,7 @@ data class ReleaseInfo(
     val tag: String,
     val notes: String,
     val pageUrl: String,
-    /** Release 里附带的 APK 直链；没有资产时为 null，回退到页面地址。 */
+    /** 与当前档位匹配的 APK 直链；Release 没有对应资产时为 null，回退到页面地址。 */
     val apkUrl: String?
 )
 
@@ -38,11 +39,13 @@ object UpdateChecker {
     }
 
     /**
-     * 拉取最新 release。仓库还没有 release 时 GitHub 返回 404，这里当成「没有可用更新」。
+     * 拉取最新 release 里**属于当前档位**的那个包。仓库还没有 release 时 GitHub
+     * 返回 404，这里当成「没有可用更新」。
      *
+     * @param edition 当前包的档位（`base` / `full` / `plus`，取自 BuildConfig.EDITION_NAME）。
      * @throws java.io.IOException 网络不通；调用方据此区分「检查失败」与「已是最新」。
      */
-    fun fetchLatest(): ReleaseInfo? {
+    fun fetchLatest(edition: String = "full"): ReleaseInfo? {
         val request = Request.Builder()
             .url(LATEST_API)
             .header("Accept", "application/vnd.github+json")
@@ -54,29 +57,61 @@ object UpdateChecker {
                 throw java.io.IOException("GitHub 返回 HTTP ${response.code}")
             }
             val body = response.body?.string().orEmpty()
-            return parseRelease(body)
+            return parseRelease(body, edition)
         }
     }
 
     /** 解析 `releases/latest` 的响应体；字段缺失或形状怪时返回 null 而不是抛。 */
-    fun parseRelease(json: String): ReleaseInfo? {
+    fun parseRelease(json: String, edition: String = "full"): ReleaseInfo? {
         val root = runCatching { JSONObject(json) }.getOrNull() ?: return null
         val tag = root.optString("tag_name").trim()
         if (tag.isEmpty()) return null
-        val apk = root.optJSONArray("assets")?.let { assets ->
-            (0 until assets.length())
-                .mapNotNull { assets.optJSONObject(it) }
-                .firstOrNull { it.optString("name").endsWith(".apk", ignoreCase = true) }
-                ?.optString("browser_download_url")
-                ?.takeIf { it.isNotBlank() }
-        }
+        val assets = root.optJSONArray("assets")?.let(::assets).orEmpty()
         return ReleaseInfo(
             version = tag.removePrefix("v").removePrefix("V"),
             tag = tag,
             notes = root.optString("body").trim(),
             pageUrl = root.optString("html_url").ifBlank { RELEASES_URL },
-            apkUrl = apk
+            apkUrl = selectAsset(assets, edition)
         )
+    }
+
+    /** 资产名 → 下载直链。 */
+    private fun assets(arr: JSONArray): List<Pair<String, String>> =
+        (0 until arr.length())
+            .mapNotNull { i ->
+                val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                val name = o.optString("name").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                name to o.optString("browser_download_url")
+            }
+
+    /**
+     * 三个包的资产命名（见 `scripts/verify.sh`）：基础版 `-base-`、共存版 `-plus-`、
+     * 完整版不带中缀（`CloudBuddy-1.5.0-release.apk`）。
+     *
+     * 选错包的后果不只是下错文件：base 用户拿到完整版的包虽然能覆盖安装（同包名），
+     * 但「静默升级成另一个档位」不是用户点「更新」时期待的事；反过来 full 拿到 base
+     * 的包会把功能降没。所以这里按档位严格匹配，匹配不到宁可给 null（回退到
+     * Release 页面让用户自己挑），也不抓第一个 `.apk` 糊弄。
+     *
+     * 老发布（三包拆分之前）只有一个不带中缀的 APK，资产里没有任何 `-base-`/`-plus-`
+     * 标记时按旧形态处理：那个包就是唯一选择。
+     *
+     * @param assets 资产名 → 下载直链
+     * @return 匹配档位的 APK 直链
+     */
+    fun selectAsset(assets: List<Pair<String, String>>, edition: String): String? {
+        val apks = assets.filter { it.first.endsWith(".apk", ignoreCase = true) }
+        if (apks.isEmpty()) return null
+        val splitRelease = apks.any { it.first.contains("-base-") || it.first.contains("-plus-") }
+        if (!splitRelease) return apks.first().second
+        return when (edition) {
+            "base" -> apks.firstOrNull { it.first.contains("-base-") }?.second
+            "plus" -> apks.firstOrNull { it.first.contains("-plus-") }?.second
+            else -> apks.firstOrNull {
+                !it.first.contains("-base-") && !it.first.contains("-plus-")
+            }?.second
+        }
     }
 
     /**

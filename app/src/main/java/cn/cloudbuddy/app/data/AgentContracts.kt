@@ -22,14 +22,24 @@ data class CustomModelConfig(
     val thinkingStyle: String = ThinkingStyle.AUTO.key,
     /** 思考强度，见 [ThinkingEffort]。 */
     val thinkingEffort: String = ThinkingEffort.MEDIUM.key,
+    /**
+     * 已启用的提示词片段（见 [PromptPreset]），按注入位置插进系统提示词两侧。
+     *
+     * 放在配置里而不是每次现读设置：一轮对话里系统提示词会被取用多次
+     * （拼 prompt、重试），中途用户改了片段不该让同一轮前后两次请求的提示词不一样。
+     */
+    val presets: List<PromptPreset> = emptyList(),
 ) {
     val usable: Boolean get() = baseUrl.isNotBlank() && apiKey.isNotBlank() && modelId.isNotBlank()
 
     /** 归一化后的端点，见 [EndpointResolver]。 */
     val endpoint: EndpointResolver.Resolved get() = EndpointResolver.resolve(baseUrl)
 
-    /** 实际下发给模型的系统提示词。 */
-    val effectiveSystemPrompt: String get() = composeSystemPrompt(systemPrompt)
+    /** 实际下发给模型的系统提示词：片段 → 全局提示词（含沙箱规则）→ 片段。 */
+    val effectiveSystemPrompt: String get() = PromptComposer.system(systemPrompt, presets)
+
+    /** 贴在每条用户消息前面的片段（`每条消息之前` 那一档），空表示没有。 */
+    val userPrefix: String get() = PromptComposer.userPrefix(presets)
 
     companion object {
         /** DeepSeek 官方开放平台的默认值，作为表单预填。 */
@@ -89,23 +99,52 @@ data class CustomModelConfig(
  * 只存 user / assistant 文本。[note] 记录该轮调用过的工具（如 `run_shell: ls -la`），
  * 回放时附在回答前面——不然模型换了一轮就"忘记"自己刚才读过哪些文件，
  * 会反复读同一个文件、重复执行同样的命令。
+ *
+ * [error] 标的是「失败或中断留下的记录」：要显示给用户看（否则重进会话时
+ * 这一轮凭空消失），但**不回放给模型**——模型不该把一句报错当成自己说过的话。
  */
 data class AgentTurn(
     val fromUser: Boolean,
     val text: String,
     val note: String? = null,
+    val error: Boolean = false,
 )
 
 /**
- * agent 历史的存取。
+ * agent 历史对外的读写口。
  *
- * 抽成接口而不是直接读 SharedPreferences，一是让实现能在 JVM 单测里跑，
+ * 抽成接口而不是直接读文件，一是让实现能在 JVM 单测里跑，
  * 二是不把 Android 依赖泄进数据层。
+ *
+ * 真正的实现在 [TranscriptMemory]：它从会话的完整消息流里派生「给模型看的那部分」。
  */
 interface AgentMemory {
     fun load(conversationId: String): List<AgentTurn>
+
+    /**
+     * 整份替换。
+     *
+     * **只给一次性导入用**（从云端 ACP 历史搬过来、旧格式迁移）。
+     * 别拿它做「裁剪历史」：那会把思考与工具过程一起抹掉，重进会话就只剩干巴巴的问答。
+     * 上下文长度由 `SessionAgent` 在拼 prompt 时截取。
+     */
     fun save(conversationId: String, turns: List<AgentTurn>)
     fun clear(conversationId: String)
+
+    /**
+     * 追加一条。
+     *
+     * 默认实现就是「读-判重-写」。判重放在这里而不是各个调用方：提问有两个入口
+     * （发消息的仓储还没拿到沙箱就先记一笔、agent 真正发请求前再记一笔），
+     * 两边都写再由实现去重，比规定"只能谁写"要稳——漏一个入口就是一轮消息凭空消失，
+     * 而两条一样的提问会让模型以为用户催了一遍。
+     */
+    fun append(conversationId: String, turn: AgentTurn) {
+        val current = load(conversationId)
+        val last = current.lastOrNull()
+        if (last != null && last.fromUser == turn.fromUser && last.text == turn.text) return
+        save(conversationId, current + turn)
+    }
 
     /** 不落盘的实现，供单测与"不记忆"场景使用。 */
     object None : AgentMemory {
@@ -161,14 +200,25 @@ interface AgentSession {
  * 增强版才把 ONNX / ML Kit 放进依赖图。
  */
 interface AgentRuntime {
+    /**
+     * [onThought] 是模型的思考文本（OpenAI 兼容端点的 `reasoning_content`），
+     * 一段思考想完时回调一次（一次流式请求一段）。
+     *
+     * [onDelta] 是逐字流式增量（THOUGHT / ASSISTANT），上层实时显示用。
+     * 单独回调而不是塞进 [AgentReply]：一轮里模型可能想好几次（每次工具调用前
+     * 各想一段），只有回调才能按真实时间顺序和工具调用交错显示。不思考的模型
+     * （或思考强度为「关闭」）永远不触发，上层不必判断。
+     */
     fun get(
         conversationId: String,
         endpoint: String,
         token: String,
         config: CustomModelConfig,
         tokenRefresher: suspend () -> String? = { null },
+        onThought: (String) -> Unit = {},
         onToolEvent: (SandboxToolEvent) -> Unit = {},
         onExecuted: (String, Long, SandboxExec.Result) -> Unit = { _, _, _ -> },
+        onDelta: (ChatRole, String) -> Unit = { _, _ -> },
     ): AgentSession
 
     fun drop(conversationId: String)

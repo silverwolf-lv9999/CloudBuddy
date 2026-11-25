@@ -147,25 +147,47 @@ jobs:
           full_sha=$(sha256sum "$full_apk" | cut -d' ' -f1)
           base_sha=$(sha256sum "$base_apk" | cut -d' ' -f1)
           plus_sha=$(sha256sum "$plus_apk" | cut -d' ' -f1)
+
+          # 版本说明优先取仓库里的 docs/releases/<tag>.md：
+          #   1) 写说明和写代码在同一个 commit 里，review 时一起看，不会"发完才想起来补"；
+          #   2) 说明里有版本专属内容（这版改了什么），模板生成不出来；
+          #   3) 手写网页那版改不了历史，这一份跟着 tag 走。
+          # 找不到文件时退回下面的兜底模板，保证 Release 不会光秃秃的。
+          NOTES="docs/releases/${GITHUB_REF_NAME}.md"
+          if [ -f "$NOTES" ]; then
+            echo "使用版本说明：$NOTES"
+            cp "$NOTES" /tmp/notes.md
+          else
+            echo "::warning::没有 $NOTES，退回默认模板（这版会缺少「更新了什么」）"
+            {
+              echo "## CloudBuddy ${GITHUB_REF_NAME#v}"
+              echo
+              echo "版本号与 tag 一致，使用正式密钥签名。同一份代码三个包，按需要选一个。"
+            } > /tmp/notes.md
+          fi
+
+          # 安装包清单与校验值由构建产物算出来，必须自动生成——手抄 sha256 迟早抄错。
           {
-            echo "## CloudBuddy ${GITHUB_REF_NAME#v}"
             echo
-            echo "版本号与 tag 一致，使用正式密钥签名。同一份代码三个包，按需要选一个："
+            echo "---"
             echo
-            echo "| 包 | 包名 | 包含 | sha256 |"
-            echo "|---|---|---|---|"
-            echo "| 基础版 | \`cn.cloudbuddy.app\` | 只有云端模型；不含本机 agent、第三方 API、终端 | \`$base_sha\` |"
-            echo "| 完整版 | \`cn.cloudbuddy.app\` | 云端模型 + 本机 agent（Koog）+ 第三方 OpenAI 兼容 API + 终端命令行 | \`$full_sha\` |"
-            echo "| 共存版 | \`cn.cloudbuddy.app.plus\` | 内容同完整版；包名不同，可与上面两个同时安装 | \`$plus_sha\` |"
+            echo "## 安装包"
             echo
-            echo "**基础版与完整版包名相同**，装完整版就是覆盖升级，登录态与设置原样保留；"
-            echo "想退回基础版再装一次即可，同样不丢数据——这两个是同一个应用的两个档位。"
+            echo "| 包 | 文件 | 包名 | 包含 | sha256 |"
+            echo "|---|---|---|---|---|"
+            echo "| 基础版 | \`$(basename "$base_apk")\` | \`cn.cloudbuddy.app\` | 只有云端模型 | \`$base_sha\` |"
+            echo "| 完整版 | \`$(basename "$full_apk")\` | \`cn.cloudbuddy.app\` | 云端 + 本机 agent + 第三方 API + 终端 | \`$full_sha\` |"
+            echo "| 共存版 | \`$(basename "$plus_apk")\` | \`cn.cloudbuddy.app.plus\` | 同完整版，可与前两者共存 | \`$plus_sha\` |"
             echo
-            echo "**共存版包名不同**，可以同时安装（桌面上会并排出现两个同名图标，"
-            echo "卸载或升级时按「应用信息」里的包名区分）。三个包版本号一致，各升各的。"
-          } > /tmp/notes.md
+            echo "三个包 versionCode 相同、签名证书相同。基础版与完整版包名一致，"
+            echo "装完整版即覆盖升级，登录态与设置保留；装回基础版同样不丢数据。"
+            echo "共存版包名不同，可与前两者同时安装（桌面同名，按「应用信息」里的包名区分）。"
+          } >> /tmp/notes.md
+
           # 已存在同名 Release 时补传资产，不重建——重建会丢已写的说明。
+          # 说明用 --notes-file 覆盖一次：重跑 workflow 时正文应当跟着仓库里的 md 更新。
           gh release create "$GITHUB_REF_NAME" \
             --title "CloudBuddy ${GITHUB_REF_NAME#v}" \
             --notes-file /tmp/notes.md "$full_apk" "$base_apk" "$plus_apk" \
-            || gh release upload "$GITHUB_REF_NAME" "$full_apk" "$base_apk" "$plus_apk" --clobber
+            || { gh release upload "$GITHUB_REF_NAME" "$full_apk" "$base_apk" "$plus_apk" --clobber;
+                 gh release edit "$GITHUB_REF_NAME" --notes-file /tmp/notes.md; }

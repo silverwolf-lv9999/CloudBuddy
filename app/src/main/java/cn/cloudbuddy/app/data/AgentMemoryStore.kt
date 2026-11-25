@@ -32,6 +32,8 @@ class AgentMemoryStore(private val prefs: SharedPreferences) : AgentMemory {
                     fromUser = o.optBoolean("u", false),
                     text = text,
                     note = o.optString("n").ifBlank { null },
+                    // 老数据没有这个字段：默认 false，正好是「正常一轮」。
+                    error = o.optBoolean("e", false),
                 )
             )
         }
@@ -46,6 +48,7 @@ class AgentMemoryStore(private val prefs: SharedPreferences) : AgentMemory {
                     .put("u", t.fromUser)
                     .put("t", t.text.take(MAX_TEXT))
                     .put("n", t.note.orEmpty().take(MAX_NOTE))
+                    .put("e", t.error)
             )
         }
         prefs.edit().putString(key(conversationId), arr.toString()).apply()

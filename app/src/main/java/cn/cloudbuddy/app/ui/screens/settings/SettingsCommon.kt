@@ -90,14 +90,26 @@ internal fun SettingsList(
 }
 
 @Composable
-internal fun SectionTitle(text: String, icon: ImageVector) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(start = 4.dp, top = 8.dp)
-    ) {
-        Icon(icon, null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.primary)
-        Spacer(Modifier.width(6.dp))
-        Text(text, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+internal fun SectionTitle(text: String, icon: ImageVector, hint: String? = null) {
+    Column {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(start = 4.dp, top = 8.dp)
+        ) {
+            Icon(icon, null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(6.dp))
+            Text(text, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        }
+        // 一句话交代这一栏管哪套会话。设置里最容易迷路的地方不是「找不到开关」，
+        // 是「不知道这个开关对谁生效」——两套后端并存时尤其如此。
+        if (hint != null) {
+            Text(
+                hint,
+                modifier = Modifier.padding(start = 4.dp, top = 1.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 
@@ -108,8 +120,8 @@ internal fun SectionTitle(text: String, icon: ImageVector) {
  * 混用同一批槽位时，滚动经过交界处每个槽位都要丢掉旧的组合再建新的，
  * 视觉上就是一跳一跳的。
  */
-internal fun LazyListScope.title(text: String, icon: ImageVector) {
-    item(key = "title:$text", contentType = "title") { SectionTitle(text, icon) }
+internal fun LazyListScope.title(text: String, icon: ImageVector, hint: String? = null) {
+    item(key = "title:$text", contentType = "title") { SectionTitle(text, icon, hint) }
 }
 
 @Composable
@@ -264,12 +276,10 @@ internal fun openUrl(context: Context, url: String) {
 }
 
 /**
- * 是否跟随上游 GitHub release 更新。
- *
- * 只有 applicationId 与原版一致的构建才成立。共存版换了包名（也换了签名），
- * 上游发的是原版 APK，下载下来只会安装失败——所以直接关掉这条路，如实说明。
+ * ~~是否跟随上游更新~~ 已废弃删除：Release 现在发在本仓库（REPO_SLUG），
+ * 三个包由 CI 用同一把正式签名出，共存版下载自己档位的 APK 同样能覆盖升级。
+ * 应用内更新按 `Edition.name` 匹配资产，不再有「哪一版不能自查更新」的分支。
  */
-internal val FOLLOWS_UPSTREAM = BuildConfig.APPLICATION_ID == "cn.cloudbuddy.app"
 
 /** 余额文案：有等级时一起展示，避免再多一行。 */
 internal fun balanceText(ui: AppUiState): String {
@@ -291,4 +301,12 @@ internal fun customApiSummary(repo: BuddyRepository, ui: AppUiState): String {
     val model = repo.settings.customModelId.ifBlank { "未选模型" }
     val count = ui.customModels.size
     return host + " · " + model + if (count > 0) " · $count 个模型" else ""
+}
+
+/** 提示词片段的一句话摘要。空着时给一句用法提示，免得入口看起来像个没用的开关。 */
+internal fun promptSummary(ui: AppUiState): String {
+    val all = ui.promptPresets
+    if (all.isEmpty()) return "放编码规范、项目约定这类可复用的要求"
+    val enabled = all.count { it.enabled }
+    return "已启用 $enabled 条 · 共 ${all.size} 条"
 }

@@ -73,6 +73,7 @@ import cn.cloudbuddy.app.data.UpdateChecker
 import cn.cloudbuddy.app.ui.components.ConnectorCard
 import cn.cloudbuddy.app.ui.components.CustomModelManager
 import cn.cloudbuddy.app.ui.components.McpCard
+import cn.cloudbuddy.app.ui.components.ProviderManager
 import cn.cloudbuddy.app.ui.components.SkillsCard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -309,19 +310,12 @@ internal fun checkinHint(ui: AppUiState): String? {
 
 // ============================ 自定义 API ============================
 
-/** 「测试连接」的三种状态。 */
-private sealed interface ProbeState {
-    data object Idle : ProbeState
-    data object Running : ProbeState
-    data class Done(val ok: Boolean, val text: String) : ProbeState
-}
-
 @Composable
 internal fun CustomApiSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack: () -> Unit) {
     // 精简版没有这一页的能力。入口已经在首页隐藏，这里再拦一道：
     // 万一从旧状态或深链进来，看到的是一句说明，不是半张空表单。
     if (!Edition.full) {
-        SettingsPageScaffold("模型与推理", onBack) { padding ->
+        SettingsPageScaffold("本机模型", onBack) { padding ->
             SettingsList(padding) {
                 title("本版本不含此功能", Icons.Filled.Info)
                 item {
@@ -339,8 +333,7 @@ internal fun CustomApiSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack
     }
 
     val scope = rememberCoroutineScope()
-    var customBaseUrl by remember { mutableStateOf(repo.settings.customBaseUrl) }
-    var customApiKey by remember { mutableStateOf(repo.settings.customApiKey) }
+    // 当前模型的选择键（providerId/modelId 或旧数据的裸 ID），会话默认值。
     var customModelId by remember { mutableStateOf(repo.settings.customModelId) }
     var customTemperature by remember { mutableStateOf(repo.settings.customTemperature) }
     var customMaxIter by remember { mutableStateOf(repo.settings.customMaxIterations.toString()) }
@@ -348,107 +341,61 @@ internal fun CustomApiSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack
     var customPrompt by remember { mutableStateOf(repo.settings.customSystemPrompt) }
     var thinkingEffort by remember { mutableStateOf(repo.settings.customThinkingEffort) }
     var thinkingStyle by remember { mutableStateOf(repo.settings.customThinkingStyle) }
-    var probeState by remember { mutableStateOf<ProbeState>(ProbeState.Idle) }
+    // 提供商测试：正在测哪个 + 结果（<providerId, 文本>）。
+    var testingId by remember { mutableStateOf<String?>(null) }
+    var providerTestResult by remember { mutableStateOf<Pair<String, String>?>(null) }
     var fetching by remember { mutableStateOf(false) }
     var fetchError by remember { mutableStateOf<String?>(null) }
-    var engineMode by remember { mutableStateOf(repo.settings.engineMode) }
 
-    SettingsPageScaffold("模型与推理", onBack) { padding ->
+    // 这一页只管**本机自定义 API** 的参数。引擎切换（新会话用云端还是本机）不在这里：
+    // 它决定的是「这个 App 走哪套后端」，不是某一套后端的配置，放在首页单独一栏。
+    SettingsPageScaffold("本机模型", onBack) { padding ->
         SettingsList(padding) {
-            title("推理引擎", Icons.Filled.Psychology)
+            title("提供商", Icons.Filled.Extension)
             item {
                 SettingCard {
                     Column(
                         modifier = Modifier.padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Text("新会话默认用哪个引擎", style = MaterialTheme.typography.titleMedium)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(
-                                AppSettings.ENGINE_WB to "云端模型",
-                                AppSettings.ENGINE_CUSTOM to "自定义 API"
-                            ).forEach { (value, label) ->
-                                val active = engineMode == value
-                                Surface(
-                                    shape = RoundedCornerShape(50),
-                                    color = if (active) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.surfaceVariant,
-                                    modifier = Modifier.clickable {
-                                        engineMode = value
-                                        repo.settings.engineMode = value
+                        // 一个提供商一个端点：名称 + 地址 + Key + 开关。
+                        // 模型挂在提供商下面（见下方「模型」卡），会话按「提供商 + 模型」选。
+                        ProviderManager(
+                            providers = ui.llmProviders,
+                            testingId = testingId,
+                            testResult = providerTestResult,
+                            onAdd = { p ->
+                                repo.upsertProvider(p)
+                                providerTestResult = null
+                            },
+                            onUpdate = { p ->
+                                repo.upsertProvider(p)
+                                // 配置变了，旧的测试结果不再成立。
+                                providerTestResult = null
+                            },
+                            onRemove = { id ->
+                                repo.removeProvider(id)
+                                customModelId = repo.settings.customModelId
+                                providerTestResult = null
+                            },
+                            onTest = { p ->
+                                if (testingId != null) return@ProviderManager
+                                testingId = p.id
+                                scope.launch {
+                                    val r = repo.testProvider(p)
+                                    testingId = null
+                                    providerTestResult = p.id to if (r.ok) {
+                                        "连接成功 · 端点上有 ${r.models.size} 个模型"
+                                    } else {
+                                        r.error ?: "连接失败"
                                     }
-                                ) {
-                                    Text(
-                                        label,
-                                        modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = if (active) MaterialTheme.colorScheme.onPrimary
-                                        else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
                                 }
                             }
-                        }
-                        Text(
-                            if (engineMode == AppSettings.ENGINE_WB) {
-                                "走云端会话协议：扣账号积分，任务在云端 agent 里执行。"
-                            } else {
-                                // 自定义引擎的定位说清楚：省的是积分，不是沙箱。
-                                "走本机 agent + 你自己的 OpenAI 兼容接口：不扣积分、不产生云端对话记录，" +
-                                    "工具调用仍在云端沙箱（/workspace）里执行。"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            "两套会话彻底分开：云端会话只能用云端模型，本机会话只能用你接口上的模型，" +
-                                "会话列表里有「云端 / 本机」标签。类型在新建时定下，之后不再互转——" +
-                                "一条会话两种引擎跑出来的历史本来就对不上号。",
+                            "Key 只存在本机，不上传、不写日志、不进沙箱工作区。",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-
-            title("端点", Icons.Filled.Extension)
-            item {
-                SettingCard {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = customBaseUrl,
-                            onValueChange = { customBaseUrl = it; repo.settings.customBaseUrl = it },
-                            label = { Text("接口地址") },
-                            placeholder = { Text(CustomModelConfig.DEEPSEEK_BASE_URL) },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        OutlinedTextField(
-                            value = customApiKey,
-                            onValueChange = { customApiKey = it; repo.settings.customApiKey = it },
-                            label = { Text("API Key") },
-                            placeholder = { Text("sk-…") },
-                            singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        // 当前模型仍可直接手填：端点不提供 /models（不少自建 vLLM 就是这样）
-                        // 时这是唯一入口，拉取只是「省得手抄」的便利，不能成为前提。
-                        OutlinedTextField(
-                            value = customModelId,
-                            onValueChange = { customModelId = it; repo.settings.customModelId = it },
-                            label = { Text("当前模型 ID") },
-                            placeholder = { Text(CustomModelConfig.DEEPSEEK_MODEL) },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            supportingText = {
-                                Text(
-                                    "这就是新本机会话默认用的模型，每条会话还能在聊天页单独改。",
-                                    style = MaterialTheme.typography.labelSmall
-                                )
-                            }
                         )
                     }
                 }
@@ -465,24 +412,31 @@ internal fun CustomApiSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack
                         // 每条可以单独改显示名 / 思考强度 / 系统提示词（见 CustomModelManager）。
                         CustomModelManager(
                             models = ui.customModels,
+                            providers = ui.llmProviders,
                             selectedId = customModelId,
                             candidates = ui.customCandidates,
                             globalEffort = thinkingEffort,
                             globalTurns = customCtxTurns.toIntOrNull() ?: repo.settings.customContextTurns,
                             fetching = fetching,
                             error = fetchError,
-                            onFetch = {
-                                if (fetching) return@CustomModelManager
+                            onFetch = { providerId ->
+                                if (fetching || providerId.isBlank()) return@CustomModelManager
                                 fetching = true
                                 fetchError = null
                                 scope.launch {
-                                    val r = repo.fetchCustomModels()
+                                    val p = ui.llmProviders.firstOrNull { it.id == providerId }
+                                    val r = if (p == null) {
+                                        cn.cloudbuddy.app.data.CustomModelCatalog.Result(emptyList(), "提供商不存在")
+                                    } else {
+                                        repo.fetchProviderModels(p)
+                                    }
                                     fetching = false
                                     fetchError = if (r.ok) null else r.error
                                 }
                             },
-                            onAdd = { ids ->
-                                repo.addCustomModels(ids)
+                            onClearCandidates = { repo.clearCustomCandidates() },
+                            onAdd = { ids, providerId ->
+                                repo.addCustomModels(ids, providerId)
                                 customModelId = repo.settings.customModelId
                             },
                             onRemove = { id ->
@@ -511,8 +465,14 @@ internal fun CustomApiSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack
                     ) {
                         // 把归一化后的真实请求地址摊开给用户看：填了 /v1 也不会拼成
                         // /v1/v1/chat/completions，这里显示的就是最终会打的那一条。
+                        // 按当前选中模型实际用的端点展示：多提供商后没有统一端点了。
+                        val previewBase = remember(ui.customModels, ui.llmProviders, customModelId) {
+                            ui.customModels.firstOrNull { it.selKey == customModelId }?.let { m ->
+                                ui.llmProviders.firstOrNull { it.id == m.providerId }?.baseUrl
+                            } ?: repo.settings.customBaseUrl
+                        }
                         Text(
-                            "请求将发往：" + EndpointResolver.previewPath(customBaseUrl),
+                            "请求将发往：" + EndpointResolver.previewPath(previewBase),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -642,7 +602,11 @@ internal fun CustomApiSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack
                             ?.takeIf { it.isNotBlank() } ?: thinkingEffort
                         val overridden = effectiveEffort != thinkingEffort
                         Text(
-                            ThinkingParams.describe(customBaseUrl, thinkingStyle, effectiveEffort, customModelId) +
+                            ThinkingParams.describe(
+                                repo.settings.customModel()?.baseUrl ?: "",
+                                thinkingStyle, effectiveEffort,
+                                repo.settings.customModel()?.modelId ?: ""
+                            ) +
                                 if (overridden) {
                                     "\n（该模型单独设了强度：${ThinkingEffort.of(effectiveEffort).label}）"
                                 } else {
@@ -742,44 +706,6 @@ internal fun CustomApiSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack
                 }
             }
 
-            title("连接", Icons.Filled.Hub)
-            item {
-                SettingCard {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = {
-                                if (probeState is ProbeState.Running) return@OutlinedButton
-                                probeState = ProbeState.Running
-                                scope.launch {
-                                    val r = repo.testCustomEndpoint()
-                                    probeState = ProbeState.Done(r.ok, r.detail)
-                                }
-                            },
-                            enabled = probeState !is ProbeState.Running,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                when (probeState) {
-                                    is ProbeState.Running -> "测试中…"
-                                    else -> "测试连接"
-                                }
-                            )
-                        }
-                        (probeState as? ProbeState.Done)?.let { done ->
-                            Text(
-                                done.text,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (done.ok) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.error
-                            )
-                        }
-                    }
-                }
-            }
-
             item { Spacer(Modifier.size(24.dp)) }
         }
     }
@@ -795,7 +721,6 @@ internal fun AppearanceSettingsPage(ui: AppUiState, repo: BuddyRepository, onBac
     var showThoughts by remember { mutableStateOf(repo.settings.showThoughts) }
     var enterSend by remember { mutableStateOf(repo.settings.enterSend) }
     var historyTurns by remember { mutableStateOf(repo.settings.historyTurns) }
-    var historyTimeout by remember { mutableStateOf(repo.settings.historyTimeoutSec) }
 
     SettingsPageScaffold("外观与对话", onBack) { padding ->
         SettingsList(padding) {
@@ -905,7 +830,54 @@ internal fun AppearanceSettingsPage(ui: AppUiState, repo: BuddyRepository, onBac
                         historyTurns = it
                         repo.settings.historyTurns = it
                     }
-                    Divider()
+                    // 「历史加载超时」不在这里：它只影响云端 ACP 回放（本机会话直接读本地文件，
+                    // 不存在回放），所以归到「云端能力」页，跟着云端设置走。
+                }
+            }
+            item { Spacer(Modifier.size(24.dp)) }
+        }
+    }
+}
+
+// ============================ 云端能力 ============================
+
+/**
+ * 云端 agent 的能力配置：技能、连接器、MCP 服务器，外加云端历史回放。
+ *
+ * 这三样**只对云端会话生效**——它们是账号里的资产，随 `session/new` 下发给云端
+ * agent 执行；本机会话跑在自己的接口上，拿不到也不该假装拿得到。所以它们单独成页，
+ * 页首把那句边界写在最显眼的地方，而不是让用户在本机会话里翻半天开关。
+ */
+@Composable
+internal fun CloudSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack: () -> Unit) {
+    var historyTimeout by remember { mutableStateOf(repo.settings.historyTimeoutSec) }
+
+    SettingsPageScaffold("云端能力", onBack) { padding ->
+        SettingsList(padding) {
+            item {
+                SettingCard {
+                    Text(
+                        "下面这些由云端 agent 使用，随会话下发给服务端：只在「云端模型」的会话里生效。" +
+                            "本机会话（自定义 API）走你自己的接口与本机 agent，用的是沙箱工具，不读这里的配置。",
+                        modifier = Modifier.padding(14.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            title("技能", Icons.Filled.Extension)
+            item { SkillsCard(ui, repo) }
+
+            title("连接器", Icons.Filled.Hub)
+            item { ConnectorCard(ui, repo) }
+
+            title("MCP 服务器", Icons.Filled.Hub)
+            item { McpCard(ui, repo) }
+
+            title("历史回放", Icons.Filled.Cloud)
+            item {
+                SettingCard {
                     ChipSetting(
                         title = "历史加载超时",
                         subtitle = "对话越长云端回放越慢；超时只会少显示早期内容，不影响继续对话",
@@ -917,25 +889,6 @@ internal fun AppearanceSettingsPage(ui: AppUiState, repo: BuddyRepository, onBac
                     }
                 }
             }
-            item { Spacer(Modifier.size(24.dp)) }
-        }
-    }
-}
-
-// ============================ 扩展 ============================
-
-@Composable
-internal fun ExtensionsSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack: () -> Unit) {
-    SettingsPageScaffold("技能与扩展", onBack) { padding ->
-        SettingsList(padding) {
-            title("技能", Icons.Filled.Extension)
-            item { SkillsCard(ui, repo) }
-
-            title("连接器", Icons.Filled.Hub)
-            item { ConnectorCard(ui, repo) }
-
-            title("MCP 服务器", Icons.Filled.Hub)
-            item { McpCard(ui, repo) }
 
             item { Spacer(Modifier.size(24.dp)) }
         }
@@ -964,7 +917,9 @@ internal fun AboutSettingsPage(repo: BuddyRepository, onBack: () -> Unit) {
         updateState = UpdateCheck.Checking
         scope.launch {
             updateState = try {
-                val info = withContext(Dispatchers.IO) { UpdateChecker.fetchLatest() }
+                // 传档位：三包共用同一个 Release，必须挑属于自己档位的 APK，
+                // 抓第一个下回来会静默换档（base↔full）或装不上（plus 换包名）。
+                val info = withContext(Dispatchers.IO) { UpdateChecker.fetchLatest(Edition.name) }
                 when {
                     info == null -> UpdateCheck.UpToDate
                     UpdateChecker.isNewer(info.version, BuildConfig.VERSION_NAME) ->
@@ -989,7 +944,7 @@ internal fun AboutSettingsPage(repo: BuddyRepository, onBack: () -> Unit) {
                         ) {
                             Text(stringResource(R.string.app_name), style = MaterialTheme.typography.titleMedium)
                             Text(
-                                "版本 ${BuildConfig.VERSION_NAME} · 第三方客户端\n${BuildConfig.APPLICATION_ID}",
+                                "版本 ${BuildConfig.VERSION_NAME} · ${Edition.label} · 第三方客户端\n${BuildConfig.APPLICATION_ID}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1005,19 +960,14 @@ internal fun AboutSettingsPage(repo: BuddyRepository, onBack: () -> Unit) {
                         AboutRow(
                             title = "检查更新",
                             subtitle = when (val s = updateState) {
-                                // 改版装的是另一个包名、另一把签名，上游 release 的 APK
-                                // 下下来也装不上（包名不同 + 签名不同）。直接说明，
-                                // 免得用户点了半天以为是自己手机的问题。
-                                UpdateCheck.Idle ->
-                                    if (FOLLOWS_UPSTREAM) "从 GitHub Releases 获取最新版本"
-                                    else "Plus 改版不跟随上游更新，新版请自行构建"
+                                UpdateCheck.Idle -> "从 GitHub Releases 获取 ${Edition.label}的最新版本"
                                 UpdateCheck.Checking -> "正在连接 GitHub…"
                                 UpdateCheck.UpToDate -> "当前 ${BuildConfig.VERSION_NAME} 已是最新"
                                 is UpdateCheck.Available -> "发现新版本 ${s.info.version}，点击查看"
                                 is UpdateCheck.Failed -> "检查失败：${s.message}"
                             },
                             trailing = when (val s = updateState) {
-                                UpdateCheck.Idle -> if (FOLLOWS_UPSTREAM) "检查" else "—"
+                                UpdateCheck.Idle -> "检查"
                                 UpdateCheck.Checking -> "…"
                                 UpdateCheck.UpToDate -> "已是最新"
                                 is UpdateCheck.Available -> "v${s.info.version}"
@@ -1027,7 +977,6 @@ internal fun AboutSettingsPage(repo: BuddyRepository, onBack: () -> Unit) {
                             onClick = {
                                 val current = updateState
                                 when {
-                                    !FOLLOWS_UPSTREAM -> Unit
                                     current is UpdateCheck.Available ->
                                         openUrl(context, current.info.apkUrl ?: current.info.pageUrl)
                                     else -> checkUpdate()
