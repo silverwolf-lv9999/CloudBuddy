@@ -66,7 +66,6 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -93,6 +92,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
@@ -223,8 +223,12 @@ fun ChatScreen(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                ui.models.firstOrNull { it.id == ui.selectedModel }?.name
-                                    ?: ui.selectedModel.ifBlank { "云端沙箱" },
+                                if (ui.loadingConversation) {
+                                    "同步云端历史…"
+                                } else {
+                                    ui.models.firstOrNull { it.id == ui.selectedModel }?.name
+                                        ?: ui.selectedModel.ifBlank { "云端沙箱" }
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -347,7 +351,7 @@ fun ChatScreen(
         Column(modifier = Modifier.padding(padding).fillMaxSize().imePadding()) {
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 when {
-                    // 有本地缓存时不要整屏盖住：直接显示缓存内容，只在顶部给一条细进度条。
+                    // 有本地缓存时不要整屏盖住：直接显示缓存内容，加载态只体现在顶栏副标题里。
                     // 以前 loadingConversation 一律走全屏 loading，缓存等于白读。
                     ui.loadingConversation && ui.messages.isEmpty() -> Column(
                         modifier = Modifier.fillMaxSize(),
@@ -408,14 +412,8 @@ fun ChatScreen(
                     }
 
                     else -> Column(modifier = Modifier.fillMaxSize()) {
-                        // 有缓存时后台仍在同步云端历史：顶部一条细进度条，不打断阅读。
-                        if (ui.loadingConversation) {
-                            LinearProgressIndicator(
-                                modifier = Modifier.fillMaxWidth().height(2.dp),
-                                color = MaterialTheme.colorScheme.primary,
-                                trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
-                            )
-                        }
+                        // 这里不要再放全宽色块（曾经的 2dp LinearProgressIndicator 带浅灰 track）。
+                        // 它紧贴标题胶囊下沿，视觉上就是一条挡内容的灰条。加载态改到顶栏副标题。
                         LazyColumn(
                             state = listState,
                             modifier = Modifier.fillMaxSize(),
@@ -458,26 +456,40 @@ fun ChatScreen(
                                     )
                                 }
                             }
-                        }
-                        ui.ask?.let { ask ->
-                            item("ask") {
-                                AskCard(ask = ask, onSubmit = { repo.answerQuestion(it) })
                             }
-                        }
-                        if (ui.sending || ui.state == TurnState.RUNNING) {
-                            item("sending") {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.Center
-                                ) {
-                                    ContainedLoadingIndicator(modifier = Modifier.size(24.dp))
+                            ui.ask?.let { ask ->
+                                item("ask") {
+                                    AskCard(ask = ask, onSubmit = { repo.answerQuestion(it) })
                                 }
                             }
-                        }
+                            if (ui.sending || ui.state == TurnState.RUNNING) {
+                                item("sending") {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        ContainedLoadingIndicator(modifier = Modifier.size(24.dp))
+                                    }
+                                }
+                            }
                             item("tail") { Spacer(Modifier.height(8.dp)) }
                         }
                     }
                 }
+                // 顶栏是透明的，列表向上滚动时上沿会把某张卡片硬切成一条浅灰色横边，
+                // 看起来就像标题胶囊下面多了一条挡视线的东西。这里盖一层与背景同色的
+                // 竖向渐变把视口上沿虚化；它不参与手势，不拦截点击。
+                Box(
+                    Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .height(18.dp)
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(MaterialTheme.colorScheme.background, Color.Transparent)
+                            )
+                        )
+                )
             }
 
             ui.historyNotice?.let { notice ->

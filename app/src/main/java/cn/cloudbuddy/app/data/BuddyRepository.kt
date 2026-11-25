@@ -254,6 +254,9 @@ class BuddyRepository(val settings: AppSettings) {
     private var resyncGap = RESYNC_MIN_GAP
     private val syncedAt = ConcurrentHashMap<String, Long>()
 
+    /** 消息缓存最近一次落盘时刻：流式期间每 100ms 全量序列化 200 条太浪费。 */
+    private val lastCacheWriteAt = ConcurrentHashMap<String, Long>()
+
     /**
      * 自愈簿记：会话 id → 首次观察到「运行中」的时刻 / 上次动手指令时刻 / 已尝试次数。
      *
@@ -1636,7 +1639,9 @@ class BuddyRepository(val settings: AppSettings) {
         if (!settings.hasEngineFor(id)) settings.setEngineFor(id, convKind)
         val local = convKind == AppSettings.ENGINE_CUSTOM
         // 先读本地缓存，立即显示内容，避免白屏等云端全量拉取。
-        val cached = settings.loadMessageCache(id)
+        // 必须切到 IO：200 条带 toolOutput 的 JSON 解析在主线程要几百毫秒，
+        // 调用方（SessionsScreen.onOpen）用的是 rememberCoroutineScope（Main）。
+        val cached = withContext(Dispatchers.IO) { settings.loadMessageCache(id) }
         _ui.value = _ui.value.copy(
             activeId = id,
             draft = false,
@@ -1721,6 +1726,14 @@ class BuddyRepository(val settings: AppSettings) {
     }
 
     fun closeConversation() {
+        // 退出前先把当前消息落盘：publish 的实时写入受 activeId 闸门限制，
+        // 一旦这里把 activeId 清空，最后一段消息就再也写不进缓存，
+        // 下次重进会先闪旧内容再等回放。
+        val exitingId = _ui.value.activeId
+        val exitingMessages = _ui.value.messages
+        if (exitingId != null && exitingMessages.isNotEmpty()) {
+            scope.launch { runCatching { settings.saveMessageCache(exitingId, exitingMessages) } }
+        }
         _ui.value = _ui.value.copy(
             activeId = null,
             draft = false,
@@ -2785,9 +2798,16 @@ class BuddyRepository(val settings: AppSettings) {
             historyProgress = 0
         )
 
-        // 实时消息也落缓存，下次打开直接显示。
+        // 实时消息也落缓存，下次打开直接显示。流式期间按 1.5 秒节流，
+        // 收尾那一刻强制写一次——否则退出会话时缓存会少掉最后一段。
         if (snapshot.messages.isNotEmpty()) {
-            settings.saveMessageCache(id, snapshot.messages)
+            val now = System.currentTimeMillis()
+            val ended = StateReconciler.isActive(current.state) && !StateReconciler.isActive(snapshot.state)
+            val lastWrite = lastCacheWriteAt[id] ?: 0L
+            if (ended || now - lastWrite >= CACHE_WRITE_GAP_MS) {
+                lastCacheWriteAt[id] = now
+                settings.saveMessageCache(id, snapshot.messages)
+            }
         }
 
         if (listDirty) {
@@ -2947,6 +2967,9 @@ class BuddyRepository(val settings: AppSettings) {
 
         /** 本地收尾后的静默窗口：等云端记录从 running 收敛，避免状态回弹。 */
         const val SETTLE_MS = 8_000L
+
+        /** 实时快照写消息缓存的最小间隔：流式时每 100ms 全量序列化太浪费。 */
+        const val CACHE_WRITE_GAP_MS = 1_500L
 
         /**
          * 「本地这一轮还活着」的事件新鲜度上限。

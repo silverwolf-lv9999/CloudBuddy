@@ -572,12 +572,12 @@ class AppSettings(context: Context) {
             val obj = org.json.JSONObject().apply {
                 put("id", msg.id)
                 put("role", msg.role.name)
-                put("text", msg.text)
+                put("text", msg.text.take(MSG_FIELD_MAX))
                 put("toolState", msg.toolState.name)
                 put("turn", msg.turn)
                 msg.toolName?.let { put("toolName", it) }
-                msg.toolInput?.let { put("toolInput", it) }
-                msg.toolOutput?.let { put("toolOutput", it) }
+                msg.toolInput?.let { put("toolInput", it.take(MSG_FIELD_MAX)) }
+                msg.toolOutput?.let { put("toolOutput", it.take(MSG_FIELD_MAX)) }
             }
             array.put(obj)
         }
@@ -714,5 +714,13 @@ class AppSettings(context: Context) {
 
         /** 每个会话最多缓存的消息条数，防止无限膨胀。 */
         private const val MSG_CACHE_LIMIT = 200
+
+        /**
+         * 单条消息单个字段的缓存上限。
+         *
+         * 工具输出可能有几 MB（`cat` 大文件），原样序列化进 SharedPreferences
+         * 会让每次落盘都变成一次大 JSON 写入，重新打开时解析也慢。
+         */
+        private const val MSG_FIELD_MAX = 16_000
     }
 }

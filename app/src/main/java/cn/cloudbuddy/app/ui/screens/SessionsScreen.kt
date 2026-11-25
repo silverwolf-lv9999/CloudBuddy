@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -166,7 +167,11 @@ fun SessionsScreen(
                 shape = MaterialTheme.shapes.largeIncreased
             )
         },
-        containerColor = MaterialTheme.colorScheme.background
+        containerColor = MaterialTheme.colorScheme.background,
+        // 这里嵌在 MainActivity 外层 Scaffold 的内容区里，底部避让已经由外层 bottomBar
+        // 的 innerPadding 完成。默认的 ScaffoldDefaults.contentWindowInsets 会再扣一次
+        // navigationBars，和外层胶囊高度叠在一起，表现为胶囊上方多出一截同色空白。
+        contentWindowInsets = WindowInsets(0, 0, 0, 0)
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
             OutlinedTextField(
@@ -224,7 +229,9 @@ fun SessionsScreen(
                 }
             } else {
                 LazyColumn(
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 24.dp),
+                    // 胶囊已经被外层 Scaffold 的 bottomBar 高度避让掉了，这里只留一点点
+                    // 呼吸空间；再垫 24dp 会在胶囊上方形成一块明显的同色空白。
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(filtered, key = { it.id }) { conversation ->

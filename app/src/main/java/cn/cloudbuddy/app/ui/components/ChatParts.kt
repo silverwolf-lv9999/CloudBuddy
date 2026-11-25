@@ -547,9 +547,17 @@ private fun ToolCallCard(message: ChatMessage) {
         ToolState.FAILED -> MaterialTheme.colorScheme.error
         ToolState.NONE -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    val hasInput = !message.toolInput.isNullOrBlank()
-    val hasOutput = !message.toolOutput.isNullOrBlank()
+    val input = message.toolInput?.takeIf { it.isNotBlank() }
+    val output = message.toolOutput?.takeIf { it.isNotBlank() }
+    val hasInput = input != null
+    val hasOutput = output != null
+    val canExpand = hasInput || hasOutput
+    // 折行计数只在输出变化时算一次：流式期间重组很频繁，切分大段文本不值当。
+    val outputLineCount = remember(output) {
+        output?.trimEnd()?.count { it == '\n' }?.plus(1) ?: 0
+    }
     var expanded by remember(message.id) { mutableStateOf(false) }
+    val toggle = { expanded = !expanded }
 
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -557,11 +565,14 @@ private fun ToolCallCard(message: ChatMessage) {
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            // 标题行：图标 + 名称 + 状态指示
+            // 标题行：图标 + 名称 + 状态指示；整行可点击展开/收起
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(MaterialTheme.shapes.small)
+                    .clickable(enabled = canExpand, onClick = toggle)
             ) {
                 Icon(
                     Icons.Filled.Build,
@@ -596,51 +607,63 @@ private fun ToolCallCard(message: ChatMessage) {
                 }
             }
 
-            // 命令/输入：monospace 高亮块
-            if (hasInput) {
-                Spacer(Modifier.height(8.dp))
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                    shape = MaterialTheme.shapes.small
-                ) {
-                    Text(
-                        text = message.toolInput!!,
-                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                    )
+            if (expanded) {
+                // 输入：monospace 高亮块（仅展开时显示）
+                if (input != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                        shape = MaterialTheme.shapes.small
+                    ) {
+                        Text(
+                            text = input,
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        )
+                    }
                 }
-            }
 
-            // 输出：默认折叠，点击展开
-            if (hasOutput) {
-                Spacer(Modifier.height(8.dp))
-                val output = message.toolOutput!!
-                val lines = output.lines()
-                val preview = if (expanded) output else lines.take(3).joinToString("\n")
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.6f),
-                    shape = MaterialTheme.shapes.small,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = preview,
-                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                    )
+                // 输出：展开时全量显示
+                if (output != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.6f),
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = output,
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        )
+                    }
                 }
-                if (lines.size > 3) {
+
+                if (canExpand) {
                     TextButton(
-                        onClick = { expanded = !expanded },
+                        onClick = toggle,
                         contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
                     ) {
                         Text(
-                            if (expanded) "收起" else "展开剩余 ${lines.size - 3} 行",
+                            "收起",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary
                         )
                     }
+                }
+            } else if (canExpand) {
+                // 折叠态：不渲染输入/输出内容，只留一个展开入口
+                TextButton(
+                    onClick = toggle,
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                ) {
+                    Text(
+                        text = if (hasOutput) "展开输出 · $outputLineCount 行" else "展开详情",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                 }
             }
         }

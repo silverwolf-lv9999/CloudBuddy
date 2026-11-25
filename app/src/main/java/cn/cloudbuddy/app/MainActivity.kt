@@ -245,11 +245,21 @@ private fun AppRoot(repo: BuddyRepository) {
                                     }
                                 }
                             ) { innerPadding ->
+                                // 胶囊可见时 bottomBar 高度已含底部留白；收起后 bottomBar
+                                // 高度归零，若只用 innerPadding，内容和 FAB 会落到系统导航栏
+                                // 下面。取两者的较大值，收起状态仍保留 navigationBars 的避让。
+                                val navInset = WindowInsets.navigationBars
+                                    .asPaddingValues()
+                                    .calculateBottomPadding()
+                                val contentBottom = maxOf(
+                                    innerPadding.calculateBottomPadding(),
+                                    navInset
+                                )
                                 Box(
                                     Modifier
                                         .fillMaxSize()
                                         .nestedScroll(connection)
-                                        .padding(bottom = innerPadding.calculateBottomPadding())
+                                        .padding(bottom = contentBottom)
                                 ) {
                                     when (currentTab) {
                                         Tab.SESSIONS -> SessionsScreen(
@@ -327,10 +337,11 @@ private fun AppRoot(repo: BuddyRepository) {
 }
 
 /**
- * 悬浮胶囊导航栏。尺寸与间距照搬 KernelSU
- * （manager/.../ui/component/bottombar/BottomBarMiuix.kt 的 FloatingBottomBar 分支）：
+ * 悬浮胶囊导航栏。结构照搬 KernelSU
+ * （manager/.../ui/component/bottombar/BottomBarMiuix.kt 的 FloatingBottomBar 分支），
+ * 底部留白按本应用需要收紧：
  * - 胶囊总高 64dp，内部 padding 4dp（内容 56dp）
- * - 左右各留 28dp，底部按导航栏 inset 决定（有 inset 时 8dp + inset，否则 28dp）
+ * - 左右各留 28dp，底部按导航栏 inset 决定（有 inset 时 8dp + inset，否则 12dp）
  * - 宽度按内容 intrinsic 收缩，不铺满整行
  */
 @Composable
@@ -339,9 +350,10 @@ private fun FloatingTabBar(
     onTabSelected: (Tab) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // 与 KernelSU 一致：有手势/三键导航栏 inset 时贴紧凑，没有才留大间距。
+    // 有手势/三键导航栏 inset 时贴紧凑；没有 inset（沉浸式/无系统栏）时也只留
+    // 12dp 呼吸空间，不能沿用 28dp 那种大间距，否则胶囊下方会多出一截空白。
     val navInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    val bottomPadding = if (navInset != 0.dp) 8.dp + navInset else 28.dp
+    val bottomPadding = if (navInset != 0.dp) 8.dp + navInset else 12.dp
 
     Box(
         modifier = modifier.fillMaxWidth(),
