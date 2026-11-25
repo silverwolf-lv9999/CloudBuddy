@@ -35,10 +35,10 @@ android {
         applicationId = "cn.cloudbuddy.app"
         minSdk = 26
         targetSdk = 35
-        // 版本号接云端仓库（origin/main 是 1.4.11 / 35）：下一个就是 1.4.12 / 36。
-        // 之前 1.5.x–1.7.0 是本地测试线，未对外发布，那些号一律不占位。
-        versionCode = 36
-        versionName = "1.4.12"
+        // 1.5.0：本机技能 / 本机 MCP / 提示词片段 + 会话消息流持久化（功能版）。
+        // 远端已发到 v1.4.12，这版起本地功能线与发布线并轨，versionCode 顺延 37。
+        versionCode = 37
+        versionName = "1.5.0"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -75,10 +75,13 @@ android {
      *
      * `base` 与 `full` 是**同一个应用的两个档位**：包名相同，装哪个都是覆盖，数据原样保留。
      * 想从基础版升到完整版，直接装 `full`；想退回去，再装 `base` 即可，登录态不会丢。
-     * 这也是上游 CloudBuddy 的包名，所以这两个包的应用内更新照常跟随上游 Release。
+     * 这也是上游 CloudBuddy 的包名，所以这两个包也能覆盖上游发的老版本。
      *
      * `plus` 是给"基础版留着、另外再装一个完整版"的人：包名不同，可以同时装。
-     * 它换包名也换了签名来源，因此不跟随上游更新（见 SettingsCommon.FOLLOWS_UPSTREAM）。
+     *
+     * 三个包的应用内更新都指向本仓库的 Release，按 EDITION_NAME 挑属于自己档位的
+     * APK 资产（UpdateChecker.selectAsset）：base 拿 `-base-`、plus 拿 `-plus-`、
+     * full 拿不带中缀的那个。三个包同一把正式签名，各自覆盖升级都没问题。
      *
      * 三个包的应用名相同，靠包名而不是名字区分，所以这里也不加 versionName 后缀。
      * 做法参照开源阅读 MD3 版的多 flavor 分发。
@@ -88,15 +91,18 @@ android {
         create("base") {
             dimension = "edition"
             buildConfigField("boolean", "EDITION_FULL", "false")
+            buildConfigField("String", "EDITION_NAME", "\"base\"")
         }
         create("full") {
             dimension = "edition"
             buildConfigField("boolean", "EDITION_FULL", "true")
+            buildConfigField("String", "EDITION_NAME", "\"full\"")
         }
         create("plus") {
             dimension = "edition"
             applicationIdSuffix = ".plus"
             buildConfigField("boolean", "EDITION_FULL", "true")
+            buildConfigField("String", "EDITION_NAME", "\"plus\"")
         }
     }
 

@@ -276,12 +276,10 @@ internal fun openUrl(context: Context, url: String) {
 }
 
 /**
- * 是否跟随上游 GitHub release 更新。
- *
- * 只有 applicationId 与原版一致的构建才成立。共存版换了包名（也换了签名），
- * 上游发的是原版 APK，下载下来只会安装失败——所以直接关掉这条路，如实说明。
+ * ~~是否跟随上游更新~~ 已废弃删除：Release 现在发在本仓库（REPO_SLUG），
+ * 三个包由 CI 用同一把正式签名出，共存版下载自己档位的 APK 同样能覆盖升级。
+ * 应用内更新按 `Edition.name` 匹配资产，不再有「哪一版不能自查更新」的分支。
  */
-internal val FOLLOWS_UPSTREAM = BuildConfig.APPLICATION_ID == "cn.cloudbuddy.app"
 
 /** 余额文案：有等级时一起展示，避免再多一行。 */
 internal fun balanceText(ui: AppUiState): String {

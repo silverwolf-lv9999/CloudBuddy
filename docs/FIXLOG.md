@@ -2172,3 +2172,43 @@ IDLE（`turnActive` 时降级返回），**没挡 DONE**——所以即使这轮
 - 新增 2 条：历史停在未完成工具时回放保留 RUNNING、且 completed 上报被忽略
   （endTurn 后照常收尾）；历史停在回答上时不被误判成「悬空」。
 - 135 → 137。
+
+# 1.5.0 · 本机会话照 RikkaHub 重做：消息流持久化 + 本机技能/MCP/提示词
+
+## 现象（用户反馈）
+1. 本地 API 会话消息有时消失：退出再进，提问和回复都没了。
+2. 思考强度调成中，仍看不到思考内容。
+3. 地址填 `https://xxx/v1` 请求 404。
+4. Skill / MCP 只对云端模型生效，给自定义 API 用的设置没有；设置页排布不科学。
+
+## 根因
+1. 历史只在整轮成功结束时写盘，中途退出 = 什么都没存；`AgentTurn` 只存「提问+回答」，
+   思考与工具过程根本不在数据模型里。
+2. Koog 的 `AIAgent.run()` 只回最终文本，`Message.Reasoning` 在框架内部被丢弃——
+   不是参数没配对。
+3. ktor 对 `chatCompletionsPath` 的相对路径处理是替换 base 的最后一段，
+   base 带 `/v1` 时拼出 `/chat/completions` → 404。
+4. 本机会话没有技能/MCP/提示词通道；设置页按「设置类型」分组而不是按「能力归属」。
+
+## 改法
+1. **SessionStore**：一个会话一个 JSON，整条消息流原子落盘；先落盘再执行，失败与中断
+   留痕；`sealInterrupted` 收尾进程被杀的残局（`runing` 工具 → 失败+「已中断」，
+   悬空提问 → 补说明）。测试过程中修出两个真竞态：
+   - `clear()` 异步删文件，删后立刻读会把消息流从磁盘加载回来 → 删除改同步；
+   - 排队中的写盘任务在 clear 之后把旧内容写回去（快照先取、写盘后到）→
+     落盘代数 +1，写任务带代数、写前对不上就作废（可控执行器的确定性回归测试）。
+2. **ReasoningTee**：装饰 PromptExecutor，转发时抄出 reasoning 流回调写入 THOUGHT 消息。
+3. **EndpointResolver**：base 只留 `scheme://host:port`，前缀整段进 path。
+4. **本机三件套**：PromptPreset（片段 + 位置 + 优先级，零片段时系统提示逐字不变）、
+   LocalSkillStore（目录式 SKILL.md + frontmatter + use_skill 渐进披露 + 路径逃逸拦截，
+   修过 canonicalFile 对不存在目录照样通过的漏洞）、LocalMcp（url 型桥进 ToolRegistry，
+   失败降级）；MCP 卡片双作用域开关。
+5. **设置页**：首页六栏（账号与额度 / 会话引擎 / 云端会话 / 本机模型 / 通用 / 其他），
+   分栏主线是能力归属。
+6. **应用内更新适配三包**：`selectAsset` 按档位（EDITION_NAME）挑 APK 资产，选错包
+   等于静默换档；共存版与另两包同一把正式签名，取消「plus 不检查更新」的旧限制。
+
+## 测试
+- 新增：SessionStore（12+竞态回归）、TranscriptMemory、PromptComposer、SkillFrontmatter、
+  LocalSkillStore、UpdateChecker 三包资产选择（12）等。
+- 876 → 951，三变体 lint 0 error。

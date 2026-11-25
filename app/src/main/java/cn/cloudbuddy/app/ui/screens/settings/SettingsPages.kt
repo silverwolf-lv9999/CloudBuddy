@@ -934,7 +934,9 @@ internal fun AboutSettingsPage(repo: BuddyRepository, onBack: () -> Unit) {
         updateState = UpdateCheck.Checking
         scope.launch {
             updateState = try {
-                val info = withContext(Dispatchers.IO) { UpdateChecker.fetchLatest() }
+                // 传档位：三包共用同一个 Release，必须挑属于自己档位的 APK，
+                // 抓第一个下回来会静默换档（base↔full）或装不上（plus 换包名）。
+                val info = withContext(Dispatchers.IO) { UpdateChecker.fetchLatest(Edition.name) }
                 when {
                     info == null -> UpdateCheck.UpToDate
                     UpdateChecker.isNewer(info.version, BuildConfig.VERSION_NAME) ->
@@ -959,7 +961,7 @@ internal fun AboutSettingsPage(repo: BuddyRepository, onBack: () -> Unit) {
                         ) {
                             Text(stringResource(R.string.app_name), style = MaterialTheme.typography.titleMedium)
                             Text(
-                                "版本 ${BuildConfig.VERSION_NAME} · 第三方客户端\n${BuildConfig.APPLICATION_ID}",
+                                "版本 ${BuildConfig.VERSION_NAME} · ${Edition.label} · 第三方客户端\n${BuildConfig.APPLICATION_ID}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -975,19 +977,14 @@ internal fun AboutSettingsPage(repo: BuddyRepository, onBack: () -> Unit) {
                         AboutRow(
                             title = "检查更新",
                             subtitle = when (val s = updateState) {
-                                // 改版装的是另一个包名、另一把签名，上游 release 的 APK
-                                // 下下来也装不上（包名不同 + 签名不同）。直接说明，
-                                // 免得用户点了半天以为是自己手机的问题。
-                                UpdateCheck.Idle ->
-                                    if (FOLLOWS_UPSTREAM) "从 GitHub Releases 获取最新版本"
-                                    else "Plus 改版不跟随上游更新，新版请自行构建"
+                                UpdateCheck.Idle -> "从 GitHub Releases 获取 ${Edition.label}的最新版本"
                                 UpdateCheck.Checking -> "正在连接 GitHub…"
                                 UpdateCheck.UpToDate -> "当前 ${BuildConfig.VERSION_NAME} 已是最新"
                                 is UpdateCheck.Available -> "发现新版本 ${s.info.version}，点击查看"
                                 is UpdateCheck.Failed -> "检查失败：${s.message}"
                             },
                             trailing = when (val s = updateState) {
-                                UpdateCheck.Idle -> if (FOLLOWS_UPSTREAM) "检查" else "—"
+                                UpdateCheck.Idle -> "检查"
                                 UpdateCheck.Checking -> "…"
                                 UpdateCheck.UpToDate -> "已是最新"
                                 is UpdateCheck.Available -> "v${s.info.version}"
@@ -997,7 +994,6 @@ internal fun AboutSettingsPage(repo: BuddyRepository, onBack: () -> Unit) {
                             onClick = {
                                 val current = updateState
                                 when {
-                                    !FOLLOWS_UPSTREAM -> Unit
                                     current is UpdateCheck.Available ->
                                         openUrl(context, current.info.apkUrl ?: current.info.pageUrl)
                                     else -> checkUpdate()

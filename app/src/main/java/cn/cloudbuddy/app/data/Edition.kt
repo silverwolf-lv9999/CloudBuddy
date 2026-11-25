@@ -13,8 +13,18 @@ import cn.cloudbuddy.app.BuildConfig
  * 真正的隔离靠源集（见 [AgentRuntime]），这里多一个 if 只是让用户看不见走不通的入口。
  */
 object Edition {
+    /** 当前包的档位 ID（base / full / plus），与 Release 资产命名一一对应。 */
+    val name: String = BuildConfig.EDITION_NAME
+
     /** true = 完整版（full / plus）；false = 基础版（base）。 */
     val full: Boolean = BuildConfig.EDITION_FULL
+
+    /** 给用户看的档位名：三个包应用名相同，「关于」页和更新弹窗里要能分清装的是哪个。 */
+    val label: String = when (name) {
+        "base" -> "基础版"
+        "plus" -> "共存版"
+        else -> "完整版"
+    }
 
     /** 设置页里对缺失能力的说明。 */
     const val CORE_ONLY_CLOUD =
