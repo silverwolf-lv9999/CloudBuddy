@@ -33,7 +33,7 @@ class TimelineProjectionTest {
             msg("a1", ChatRole.ASSISTANT, "这是最终回答", turn = 0)
         )
 
-        val items = projectTimeline(messages)
+        val items = projectTimeline(messages, FoldMode.WHOLE)
 
         assertEquals(3, items.size)
         assertTrue(items[0] is ChatItem.Single)
@@ -47,7 +47,7 @@ class TimelineProjectionTest {
     }
 
     @Test
-    fun `each turn is grouped on its own`() {
+    fun `each turn is projected on its own`() {
         val messages = listOf(
             msg("u0", ChatRole.USER, "第一个问题", turn = 0),
             msg("c0", ChatRole.TOOL, "Bash", turn = 0),
@@ -59,19 +59,33 @@ class TimelineProjectionTest {
 
         val items = projectTimeline(messages)
 
+        // 每轮只有 1 个步骤 → 按统一规则内联成单条，不再包一层折叠条。
         assertEquals(6, items.size)
         assertEquals(
-            listOf("msg:u0", "steps:0", "msg:a0", "msg:u1", "steps:1", "msg:a1"),
+            listOf("msg:u0", "msg:c0", "msg:a0", "msg:u1", "msg:c1", "msg:a1"),
             items.map { it.key }
         )
-        assertEquals(
-            listOf("c0"),
-            (items[1] as ChatItem.Steps).steps.map { it.id }
+    }
+
+    @Test
+    fun `single step renders inline and two steps fold`() {
+        val oneStep = listOf(
+            msg("u0", ChatRole.USER, "跑一下", turn = 0),
+            msg("c0", ChatRole.TOOL, "Bash", turn = 0, toolState = ToolState.RUNNING)
         )
-        assertEquals(
-            listOf("c1"),
-            (items[4] as ChatItem.Steps).steps.map { it.id }
+        val single = projectTimeline(oneStep)
+        // 只有 1 步：直接露出工具行，不折成「1 个步骤」。
+        assertEquals(listOf("msg:u0", "msg:c0"), single.map { it.key })
+        assertTrue(single.none { it is ChatItem.Steps })
+
+        val twoSteps = listOf(
+            msg("u0", ChatRole.USER, "跑一下", turn = 0),
+            msg("t0", ChatRole.THOUGHT, "想想", turn = 0),
+            msg("c0", ChatRole.TOOL, "Bash", turn = 0, toolState = ToolState.RUNNING)
         )
+        val folded = projectTimeline(twoSteps)
+        // 2 步：成组折叠，规则只看步骤数，与内容长短无关。
+        assertEquals(listOf("msg:u0", "steps:0"), folded.map { it.key })
     }
 
     @Test
@@ -248,17 +262,17 @@ class TimelineProjectionTest {
         assertEquals(1, window.hiddenTurns)
         assertEquals(3, window.hiddenMessages)
         assertTrue(window.hasMore)
-        assertEquals(listOf("msg:u1", "steps:1", "msg:a1", "msg:u2", "steps:2", "msg:a2"),
+        // 每轮只有 1 个工具步骤 → 内联单条，key 是 msg:cN。
+        assertEquals(listOf("msg:u1", "msg:c1", "msg:a1", "msg:u2", "msg:c2", "msg:a2"),
             window.items.map { it.key })
     }
 
     @Test
-    fun `window never splits a step group`() {
+    fun `window never splits a turn`() {
         val window = windowTimeline(threeTurns(), turns = 1)
 
-        val steps = window.items.filterIsInstance<ChatItem.Steps>()
-        assertEquals(listOf(2), steps.map { it.turn })
-        assertEquals(listOf("c2"), steps.single().steps.map { it.id })
+        // 最后一轮完整保留：提问 + 工具 + 回答。
+        assertEquals(listOf("msg:u2", "msg:c2", "msg:a2"), window.items.map { it.key })
     }
 
     @Test
