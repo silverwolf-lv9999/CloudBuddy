@@ -66,6 +66,7 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -937,8 +938,9 @@ fun ModelDialog(
         sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         shape = MaterialTheme.shapes.extraLargeIncreased,
-        // 不要系统栏 inset：默认值会在内容下方留一块同色不透明区域（用户看到的底部色条）。
-        windowInsets = WindowInsets(0, 0, 0, 0)
+        // 默认 contentWindowInsets 会把系统栏高度垫进 sheet 内部，容器色在内容下方
+        // 多出一块不透明色条。置零后由内容自己用 navigationBarsPadding 控制间距。
+        contentWindowInsets = { WindowInsets(0, 0, 0, 0) }
     ) {
         Column(
             modifier = Modifier

@@ -1775,7 +1775,8 @@ class BuddyRepository(val settings: AppSettings) {
                     applyIfActive(targetId) { copy(sending = false) }
                     _events.tryEmit("上一轮还没收尾，消息未发送：可稍候，或点停止后再发")
                     return@launch
-                }                inFlightTurns.add(id)
+                }
+                inFlightTurns.add(id)
                 val conn = withContext(Dispatchers.IO) { connection(id) }
                 turnConn = conn
                 // 这一轮是本客户端发起的：允许它的 SSE 事件推进度/状态。
