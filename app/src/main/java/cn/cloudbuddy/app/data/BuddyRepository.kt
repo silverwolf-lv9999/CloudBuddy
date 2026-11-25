@@ -2077,7 +2077,10 @@ class BuddyRepository(val settings: AppSettings) {
                 val askText = prompt.ifBlank {
                     attachments.joinToString("、") { it.name }.ifBlank { "（附件）" }
                 }
-                pushLocal(id, ChatRole.USER, askText)
+                // display 同 askText：这本身就是干净文本；附件元数据带上，
+                // 气泡里显示缩略图 / 文件片（TranscriptMemory 会把这条升级成
+                // 带 <attachments>/<attached_images> 提示块的全文，display 不变）。
+                pushLocal(id, ChatRole.USER, askText, display = askText, attachments = attachments)
                 // 上面这一句已经落盘（[pushLocal] 同时写界面与消息流）。
                 // 后面拿沙箱、传附件、调模型任何一步失败或被打断，用户已经说出口的
                 // 这句话都不能跟着一起消失——重进会话时至少还在。
@@ -2163,7 +2166,7 @@ class BuddyRepository(val settings: AppSettings) {
                     "data:" + a.mimeType + ";base64," +
                         android.util.Base64.encodeToString(a.bytes, android.util.Base64.NO_WRAP)
                 }
-                val reply = agent.send(ask, directImages)
+                val reply = agent.send(ask, directImages, askText)
                 flushThought(id)
                 finishToolPlaceholder(id)
                 if (answerMsg != null) {
@@ -2311,8 +2314,22 @@ class BuddyRepository(val settings: AppSettings) {
         text: String,
         toolState: ToolState = ToolState.NONE,
         failed: Boolean = false,
+        /** 界面显示文本（不带提示块）；空 = 用 text。 */
+        display: String = "",
+        /** 用户随消息发的附件（只在本机会话的用户消息里传）。 */
+        attachments: List<PendingAttachment> = emptyList(),
     ): String {
         val msgId = "local-" + System.nanoTime() + "-" + localMsgSeq.incrementAndGet()
+        // 图片复制一份进 filesDir（气泡里显示缩略图）；其他文件只存元信息，
+        // 内容在沙箱里，模型按路径用工具读。
+        val atts = if (role == ChatRole.USER) attachments.map { a ->
+            MsgAttachment(
+                name = a.name,
+                mimeType = a.mimeType,
+                size = a.bytes.size,
+                path = if (a.mimeType.startsWith("image/")) stashAttachment(id, a) else null,
+            )
+        } else emptyList()
         val msg = ChatMessage(
             id = msgId,
             role = role,
@@ -2321,11 +2338,22 @@ class BuddyRepository(val settings: AppSettings) {
             streaming = false,
             turn = turnOf(id, role),
             failed = failed,
+            display = display,
+            attachments = atts,
         )
         applyIfActive(id) { copy(messages = messages + msg) }
         runCatching { settings.sessionStore.append(id, StoredMessage.of(msg)) }
         return msgId
     }
+
+    /** 图片副本进 `filesDir/attachments/<会话>/`，气泡缩略图用；失败返回 null（只影响显示）。 */
+    private fun stashAttachment(convId: String, a: PendingAttachment): String? = runCatching {
+        val dir = java.io.File(settings.attachmentDir, convId).apply { mkdirs() }
+        val safe = a.name.replace(Regex("[\\/:*?\"<>|\\s]"), "_").take(80).ifBlank { "image" }
+        val out = java.io.File(dir, "${System.nanoTime()}-$safe")
+        out.writeBytes(a.bytes)
+        out.absolutePath
+    }.getOrNull()
 
     /**
      * 开一条流式消息（打字机效果）。首段增量直接进去，别留空消息——

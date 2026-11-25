@@ -2464,3 +2464,35 @@ full/base 编译、单测、lint 全绿；ModelRegistryTest 保留。
 ## 测试
 - AttachmentPromptTest +1：inlineImagesHint 空/内容/禁止工具读的口径；
 - full/base 编译、单测、lint 全绿。
+
+# 1.6.0 追加 · 提示块不进气泡 + 消息显示附件 + 图片/文件入口分开 + 设置摘要
+
+## 反馈
+1. 发消息时气泡没显示 `<attached_images>` 那段，退出重进才冒出来。
+2. 消息里要显示发的附件（照 RikkaHub：图片缩略图 + 文件片）。
+3. 附件输入要分图片 / 文件两个按钮——有些格式根本没法直发模型。
+4. 设置入口摘要不管配没配都显示「未配置接口地址」。
+
+## 改法
+1. **提示块重复入流的根因**：`pushLocal` 写干净提问 → `SessionAgent.send` 又把
+   带 `<attached_images>/<attachments>` 提示块的全文 append 进同一存储（text
+   不同，去重拦不住），重进会话就看到第二句。改法：
+   - `AgentTurn` / `StoredMessage` / `ChatMessage` 都加 `display`（界面显示文本）；
+     存储存全文（模型回放需要提示块接续上下文），界面显示 display；
+   - `TranscriptMemory.append` 认得「同一句话的两个版本」：display 匹配上一条
+     时**就地升级**（text→全文，display/附件保留），不再追加第二条；
+   - `AgentSession.send` 加 `displayText` 参数，sendCustom 传干净提问。
+2. **消息里显示附件**：`pushLocal` 支持 `attachments`——image/* 复制进
+   `filesDir/attachments/<会话>/`（气泡缩略图用），其他文件只存元信息；
+   `MsgAttachment`（name/mime/size/path）随消息落盘。用户气泡照 RikkaHub 排：
+   图片缩略图（240dp 圆角）在上、文件片（图标+文件名）其次、文本气泡最后。
+3. **图片 / 文件入口分开**：图片按钮 `GetContent("image/*")` 只出图片
+   （读图模型可直发），文件按钮 `OpenDocument("*/*")` 进沙箱。
+4. **设置摘要**：`customApiSummary` 优先看提供商表（"N 个提供商 · M 个模型 ·
+   当前 xxx"），没有提供商才回落旧全局端点判断——之前只看迁移前的全局字段，
+   有提供商也显示「未配置接口地址」。
+
+## 测试
+- TranscriptMemoryTest +2：干净版/全文版就地升级（不追加、display 保留、
+  模型派生用全文）、display 字段落盘往返；
+- full/base 编译、单测、lint 全绿。

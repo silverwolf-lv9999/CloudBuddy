@@ -28,8 +28,60 @@ data class ChatMessage(
      * 单独一个字段而不是塞进 [text]：失败记录要显示（否则重进会话时这一轮凭空消失），
      * 但回放给模型时必须跳过——模型不该把一句报错当成自己上一轮说过的话。
      */
-    val failed: Boolean = false
-)
+    val failed: Boolean = false,
+    /**
+     * 界面显示用的文本（空 = 用 [text]）。
+     *
+     * 存储里的 [text] 是发给模型的全文（可能带 `<attachments>` 这类提示块，
+     * 模型需要它们接续上下文），界面不该把这些内部标记展示出来。
+     */
+    val display: String = "",
+    /** 用户随这条消息发的附件（只有本机会话有，见 [pushLocal]）。 */
+    val attachments: List<MsgAttachment> = emptyList(),
+) {
+    val shownText: String get() = display.ifBlank { text }
+}
+
+/**
+ * 消息里的一条附件元数据。图片带 [path]（本机副本，气泡里显示缩略图）；
+ * 其他文件只有元信息（显示成文件片，内容在沙箱里由模型按路径读）。
+ */
+data class MsgAttachment(
+    val name: String,
+    val mimeType: String,
+    val size: Int,
+    /** 本机图片副本路径；非图片为 null。 */
+    val path: String? = null,
+) {
+    fun encode(): JSONObject = JSONObject()
+        .put("n", name)
+        .put("m", mimeType)
+        .put("s", size)
+        .putOpt("p", path)
+
+    companion object {
+        fun listFromJson(raw: String?): List<MsgAttachment> {
+            if (raw.isNullOrBlank()) return emptyList()
+            val array = runCatching { JSONArray(raw) }.getOrNull() ?: return emptyList()
+            return (0 until array.length()).mapNotNull { i ->
+                val o = array.optJSONObject(i) ?: return@mapNotNull null
+                MsgAttachment(
+                    name = o.optString("n"),
+                    mimeType = o.optString("m"),
+                    size = o.optInt("s"),
+                    path = o.optString("p").takeIf { it.isNotBlank() },
+                )
+            }
+        }
+
+        fun listToJson(items: List<MsgAttachment>): String {
+            if (items.isEmpty()) return ""
+            val array = JSONArray()
+            items.forEach { array.put(it.encode()) }
+            return array.toString()
+        }
+    }
+}
 
 enum class ToolState { NONE, RUNNING, DONE, FAILED }
 

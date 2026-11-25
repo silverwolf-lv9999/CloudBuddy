@@ -78,7 +78,7 @@ class SessionAgent(
      * 与旧 Koog 版的语义对齐：重试、中断留痕、失败落盘都在 [send]；
      * 这里只负责单次（可能多步的）执行。
      */
-    override suspend fun send(userText: String, imageUrls: List<String>): AgentReply {
+    override suspend fun send(userText: String, imageUrls: List<String>, displayText: String): AgentReply {
         if (!config.usable) {
             return AgentReply("自定义模型未配置完整：需要接口地址、API Key 与模型 ID。请到「设置 → 自定义模型」补齐。")
         }
@@ -94,7 +94,7 @@ class SessionAgent(
         // （看一个仓库、装个依赖动辄几十秒）时用户退出去再进来，任务还没跑完，
         // 磁盘上什么都没有 —— 会话看起来是空的，用户会以为消息被吞了。
         // 提问是用户已经说过的话，任何中断都不该让它消失。
-        remember(AgentTurn(fromUser = true, text = userText))
+        remember(AgentTurn(fromUser = true, text = userText, display = displayText))
 
         var attempt = 0
         var lastError: Exception? = null

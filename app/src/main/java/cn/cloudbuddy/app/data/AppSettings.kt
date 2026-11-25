@@ -50,6 +50,9 @@ class AppSettings(context: Context) {
     /** 模型能力目录的本地缓存（远程刷新后落这里，见 [ModelRegistry]）。 */
     val modelCatalogFile = java.io.File(context.applicationContext.filesDir, "models_dev_slim.json")
 
+    /** 聊天里发的图片副本（按会话分子目录），消息气泡里显示缩略图用。 */
+    val attachmentDir = java.io.File(context.applicationContext.filesDir, "attachments")
+
     init {
         // 模型能力目录（models.dev 快照）：远程刷新过的文件优先，没有再落回 assets 快照。
         // 加载失败只影响「自动判断模型设置」，不影响其他功能，静默即可。

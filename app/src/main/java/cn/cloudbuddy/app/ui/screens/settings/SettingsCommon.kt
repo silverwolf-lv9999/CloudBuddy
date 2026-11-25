@@ -294,13 +294,26 @@ internal fun balanceText(ui: AppUiState): String {
 
 /** 自定义端点的一句话摘要：首页入口与推理引擎页共用，避免两处说法不一致。 */
 internal fun customApiSummary(repo: BuddyRepository, ui: AppUiState): String {
-    val base = repo.settings.customBaseUrl
-    if (base.isBlank()) return "未配置接口地址"
-    val host = EndpointResolver.resolve(base).baseUrl
-        .removePrefix("https://").removePrefix("http://").trimEnd('/')
-    val model = repo.settings.customModelId.ifBlank { "未选模型" }
+    val providers = ui.llmProviders
+    if (providers.isEmpty()) {
+        // 一个提供商都没有：回落旧的全局端点（迁移前的老数据）。
+        val base = repo.settings.customBaseUrl
+        if (base.isBlank()) return "未配置接口地址"
+        val host = EndpointResolver.resolve(base).baseUrl
+            .removePrefix("https://").removePrefix("http://").trimEnd('/')
+        val model = repo.settings.customModelId.ifBlank { "未选模型" }
+        val count = ui.customModels.size
+        return host + " · " + model + if (count > 0) " · $count 个模型" else ""
+    }
+    // 有提供商（多提供商重构后的常态）：给「几个提供商、几个模型、当前用哪个」，
+    // 只看全局字段就会永远显示「未配置」，正是之前用户报的问题。
     val count = ui.customModels.size
-    return host + " · " + model + if (count > 0) " · $count 个模型" else ""
+    val current = ui.customModels.firstOrNull { it.selKey == repo.settings.customModelId }
+    return buildString {
+        append("${providers.size} 个提供商")
+        if (count > 0) append(" · $count 个模型") else append(" · 还没加模型")
+        current?.let { append(" · 当前 ${it.title}") }
+    }
 }
 
 /** 提示词片段的一句话摘要。空着时给一句用法提示，免得入口看起来像个没用的开关。 */

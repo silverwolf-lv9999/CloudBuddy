@@ -130,6 +130,8 @@ data class CustomModelConfig(
 data class AgentTurn(
     val fromUser: Boolean,
     val text: String,
+    /** 界面显示用的文本（空 = 用 [text]）：text 可能带提示块，界面不展示。 */
+    val display: String = "",
     val note: String? = null,
     val error: Boolean = false,
 )
@@ -216,7 +218,12 @@ interface AgentSession {
      * 只有「读图」开着（[CustomModel.vision]）才非空；历史轮不回放图片，
      * 图片证据需要长期保留时走沙箱文件路径。
      */
-    suspend fun send(userText: String, imageUrls: List<String> = emptyList()): AgentReply
+    suspend fun send(
+        userText: String,
+        imageUrls: List<String> = emptyList(),
+        /** 界面显示用的提问文本（不带提示块）；空缺省 = 用 [userText]。 */
+        displayText: String = userText,
+    ): AgentReply
 }
 
 /**

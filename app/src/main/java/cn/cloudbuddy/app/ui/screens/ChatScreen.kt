@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.MoreVert
@@ -132,6 +133,18 @@ fun ChatScreen(
     var uploading by remember { mutableStateOf(false) }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            uploading = true
+            val loaded = withContext(Dispatchers.IO) { readAttachment(context, uri) }
+            loaded.onSuccess { attachments = (attachments + it).distinctBy { a -> a.name } }
+            uploading = false
+        }
+    }
+    // 图片入口只出 image/*（GetContent 限定 mime）：发出去的必然是图片，
+    // 读图模型才能直发——与「文件」按钮分开就是因为有些格式（可执行、压缩包）
+    // 根本没法直接给模型，只能进沙箱用工具读。
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
             uploading = true
@@ -316,6 +329,7 @@ fun ChatScreen(
                 },
                 running = ui.state == TurnState.RUNNING || ui.sending,
                 enterSends = repo.settings.enterSend,
+                onPickImage = { imagePicker.launch("image/*") },
                 onPickFile = { picker.launch(arrayOf("*/*")) },
                 onRemoveAttachment = { name -> attachments = attachments.filterNot { it.name == name } },
                 onModelClick = {
@@ -741,6 +755,7 @@ private fun Composer(
     uploading: Boolean,
     model: String,
     running: Boolean,
+    onPickImage: () -> Unit,
     onPickFile: () -> Unit,
     onRemoveAttachment: (String) -> Unit,
     onModelClick: () -> Unit,
@@ -844,10 +859,21 @@ private fun Composer(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
+                    // 两个入口分开（照 RikkaHub 的 photo / upload_file）：图片按钮
+                    // 只出 image/*（读图模型能直发），文件按钮出任意类型（进沙箱
+                    // 用工具读）。混在一个入口，用户没法知道选的东西模型到底能不能看。
+                    IconButton(onClick = onPickImage, modifier = Modifier.size(34.dp)) {
+                        Icon(
+                            Icons.Filled.Image,
+                            "添加图片",
+                            Modifier.size(19.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     IconButton(onClick = onPickFile, modifier = Modifier.size(34.dp)) {
                         Icon(
                             Icons.Filled.AttachFile,
-                            "添加附件",
+                            "添加文件",
                             Modifier.size(19.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )

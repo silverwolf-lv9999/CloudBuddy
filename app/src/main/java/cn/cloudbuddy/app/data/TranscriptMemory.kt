@@ -138,6 +138,17 @@ class TranscriptMemory(
         val existing = store.messages(conversationId)
         val last = existing.lastOrNull()
         if (last != null && last.role == role && last.text == turn.text) return
+        // 同一句话的两个版本：界面先写了干净的显示文本（没有 <attachments> 提示块），
+        // agent 发请求前又记了带提示块的全文。不能追加成第二条（重进会话会看到
+        // 两句一样的提问），就地升级：text 换成全文（模型回放用），display 与
+        // 附件元数据保留（界面用）。
+        if (last != null && last.role == role && turn.display.isNotBlank() && last.text == turn.display) {
+            store.replace(
+                conversationId,
+                existing.dropLast(1) + last.copy(text = turn.text, display = turn.display),
+            )
+            return
+        }
         val lastUserIndex = existing.indexOfLast { it.role == ChatRole.USER }
         if (lastUserIndex >= 0) {
             val sameInTurn = existing.subList(lastUserIndex + 1, existing.size)
@@ -153,6 +164,7 @@ class TranscriptMemory(
                 id = "m-" + System.nanoTime(),
                 role = role,
                 text = turn.text,
+                display = turn.display,
                 turn = turnNo,
                 failed = turn.error,
             )

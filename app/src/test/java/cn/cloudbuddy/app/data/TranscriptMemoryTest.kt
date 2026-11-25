@@ -24,6 +24,43 @@ class TranscriptMemoryTest {
     private fun msg(role: ChatRole, text: String, failed: Boolean = false) =
         StoredMessage(id = "m-" + text.hashCode(), role = role, text = text, failed = failed)
 
+
+    @Test
+    fun `同一句话的干净版与全文版就地升级不追加`() {
+        val st = store()
+        val mem = TranscriptMemory(st)
+        // 界面先写干净文本（pushLocal）
+        mem.append("c", AgentTurn(fromUser = true, text = "看看这张图", display = "看看这张图"))
+        // agent 发请求前记带提示块的全文（send）
+        mem.append(
+            "c",
+            AgentTurn(
+                fromUser = true,
+                text = "看看这张图\n\n<attached_images>不要用 read_file 读取</attached_images>",
+                display = "看看这张图",
+            ),
+        )
+        val messages = st.messages("c")
+        // 只有一条用户消息：追加成两条会让重进会话看到两句一样的提问
+        assertEquals(1, messages.count { it.role == ChatRole.USER })
+        val user = messages.last { it.role == ChatRole.USER }
+        // 存储里是全文（模型回放需要提示块），display 保留干净版（界面用）
+        assertTrue(user.text.contains("<attached_images>"))
+        assertEquals("看看这张图", user.display)
+        // 派生给模型的 turn 用全文
+        val turns = Transcript.turnsOf(messages)
+        assertTrue(turns.last().text.contains("<attached_images>"))
+    }
+
+    @Test
+    fun `消息派生保留 display 字段`() {
+        val st = store()
+        st.append("c", StoredMessage(id = "m1", role = ChatRole.USER, text = "全文", display = "干净"))
+        val back = st.messages("c").single()
+        assertEquals("干净", back.display)
+        assertEquals("干净", back.toChatMessage().shownText)
+    }
+
     @Test
     fun `思考不进上下文，回答与提问都在`() {
         val turns = Transcript.turnsOf(

@@ -26,6 +26,10 @@ data class StoredMessage(
     val at: Long = 0L,
     /** 失败 / 中断留下的记录：照常显示，但不回放给模型。 */
     val failed: Boolean = false,
+    /** 界面显示文本（空 = 用 [text]）：text 存发给模型的全文，提示块不进界面。 */
+    val display: String = "",
+    /** 附件元数据 JSON（MsgAttachment.listToJson），只有用户消息可能有。 */
+    val att: String = "",
 ) {
     fun toChatMessage(): ChatMessage = ChatMessage(
         id = id,
@@ -34,6 +38,8 @@ data class StoredMessage(
         toolState = toolState,
         turn = turn,
         failed = failed,
+        display = display,
+        attachments = MsgAttachment.listFromJson(att),
     )
 
     fun encode(): JSONObject = JSONObject()
@@ -44,6 +50,9 @@ data class StoredMessage(
         .put("turn", turn)
         .put("at", at)
         .put("f", failed)
+        // 只在非空时落盘：旧版本解析自然得到空默认
+        .putOpt("d", display.takeIf { it.isNotBlank() })
+        .putOpt("a", att.takeIf { it.isNotBlank() })
 
     companion object {
         fun of(message: ChatMessage, at: Long = System.currentTimeMillis()): StoredMessage =
@@ -55,6 +64,8 @@ data class StoredMessage(
                 turn = message.turn,
                 at = at,
                 failed = message.failed,
+                display = message.display,
+                att = MsgAttachment.listToJson(message.attachments),
             )
 
         fun decode(o: JSONObject): StoredMessage? {
@@ -72,6 +83,8 @@ data class StoredMessage(
                 turn = o.optInt("turn", 0),
                 at = o.optLong("at", 0L),
                 failed = o.optBoolean("f", false),
+                display = o.optString("d"),
+                att = o.optString("a"),
             )
         }
     }

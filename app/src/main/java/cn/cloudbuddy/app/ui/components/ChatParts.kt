@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material3.CircularProgressIndicator
@@ -50,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
@@ -125,14 +127,27 @@ private const val COPY_THRESHOLD = 240
 @Composable
 fun MessageRow(message: ChatMessage, showThoughts: Boolean) {
     val clipboard = LocalClipboardManager.current
-    val copy = { clipboard.setText(AnnotatedString(message.text)) }
-    val longText = message.text.length > COPY_THRESHOLD || message.text.count { it == '\n' } > 8
+    val copy = { clipboard.setText(AnnotatedString(message.shownText)) }
+    val longText = message.shownText.length > COPY_THRESHOLD || message.shownText.count { it == '\n' } > 8
 
     when (message.role) {
         ChatRole.USER -> Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.End
         ) {
+            // 附件先于文本（照 RikkaHub：图片缩略图在气泡上方、其他文件成片）。
+            val images = message.attachments.filter { it.path != null }
+            val files = message.attachments.filter { it.path == null }
+            if (images.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp), horizontalAlignment = Alignment.End) {
+                    images.forEach { att -> LocalImageThumb(att.path!!) }
+                }
+            }
+            if (files.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp), horizontalAlignment = Alignment.End) {
+                    files.forEach { att -> FileChip(att) }
+                }
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End
@@ -143,7 +158,7 @@ fun MessageRow(message: ChatMessage, showThoughts: Boolean) {
                     modifier = Modifier.widthIn(max = 320.dp)
                 ) {
                     Text(
-                        text = message.text,
+                        text = message.shownText,
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -523,4 +538,54 @@ fun TypingCursor() {
             .alpha(alpha)
             .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(2.dp))
     )
+}
+
+/** 用户消息里的图片缩略图（本机副本，filesDir/attachments/<会话>/）。 */
+@Composable
+fun LocalImageThumb(path: String, modifier: Modifier = Modifier) {
+    var bitmap by remember(path) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    LaunchedEffect(path) {
+        bitmap = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            android.graphics.BitmapFactory.decodeFile(path)
+        }
+    }
+    bitmap?.let { bmp ->
+        androidx.compose.foundation.Image(
+            bitmap = bmp.asImageBitmap(),
+            contentDescription = "消息图片",
+            contentScale = androidx.compose.ui.layout.ContentScale.FillWidth,
+            modifier = modifier
+                .widthIn(max = 240.dp)
+                .clip(RoundedCornerShape(14.dp))
+        )
+    }
+}
+
+/** 用户消息里的文件片：图标 + 文件名（内容在沙箱，模型按路径读）。 */
+@Composable
+fun FileChip(att: cn.cloudbuddy.app.data.MsgAttachment, modifier: Modifier = Modifier) {
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = modifier
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Icon(
+                Icons.Filled.InsertDriveFile,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                att.name,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
+            )
+        }
+    }
 }
