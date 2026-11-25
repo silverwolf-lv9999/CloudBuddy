@@ -10,7 +10,12 @@
 
 ---
 
-## 1.7.0（同步上游；一份代码出三个包）
+## 1.4.12（同步上游；一份代码出三个包）
+
+> 版本号说明：`origin/main` 停在 1.4.11 / 35，所以本版接着是 **1.4.12 / 36**。
+> 中途的 1.5.0–1.7.0 是本地测试线，从未对外发布，那些号不占位，内容全部并入本版。
+> 代价是 versionCode 从测试版的 49 回落到 36——**装过测试包的手机会拒绝降级安装**，
+> 需要先卸载（数据会丢，登录一次即可）。
 
 ### 一、同步上游最新提交
 
@@ -44,8 +49,10 @@
 
 - **`base` 与 `full` 必须同包名**，否则「覆盖安装」无从谈起。为此把 `defaultConfig.applicationId`
   从 `.plus` 改回上游的 `cn.cloudbuddy.app`——`.plus` 只留给共存版做后缀。
-- **三个包应用名都叫「云伴 Plus」**（用户明确要求）。代价是共存安装时桌面并排两个同名图标，
-  只能靠「应用信息」里的包名区分；文档里写清楚，比自造三个名字更符合用户的品牌意图。
+- **三个包应用名都叫「云伴 WorkBuddy」**，也就是云端仓库原本的名字（用户要求：基础版
+  必须沿用云端名字，三个包同名）。基础版与完整版同包名又同名，覆盖安装后桌面上完全看不出
+  差别，这正是"两个档位"该有的样子；代价是共存版与它们并排时也是同名图标，
+  只能靠「应用信息」里的包名区分，文档里写清楚。
 - **不加 `versionNameSuffix`**：三个包同一版本号就是同一份代码，`1.7.0` 全一样。
   `scripts/verify.sh` 会断言三个包的 versionName 完全相等。
 - `plus` 不复制代码：`sourceSets["plus"].java.srcDir("src/full/java")` 直接挂 full 的源集。
@@ -94,7 +101,7 @@ src/testFull  agent 三个测试类
 - `scripts/verify.sh --debug` 全绿：三个变体单测（base 221 / full 241 / plus 241），
   lint 三个变体各 **0 error / 3 既有 warning**。
 - `aapt2 dump badging` 确认：`base`/`full` = `cn.cloudbuddy.app`，`plus` = `cn.cloudbuddy.app.plus`，
-  三者 versionCode 49、versionName 1.7.0、应用名「云伴 Plus」。
+  三者 versionCode 36、versionName 1.4.12、应用名「云伴 WorkBuddy」。
 
 ---
 

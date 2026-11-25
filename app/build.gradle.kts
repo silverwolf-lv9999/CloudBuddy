@@ -35,8 +35,10 @@ android {
         applicationId = "cn.cloudbuddy.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 49
-        versionName = "1.7.0"
+        // 版本号接云端仓库（origin/main 是 1.4.11 / 35）：下一个就是 1.4.12 / 36。
+        // 之前 1.5.x–1.7.0 是本地测试线，未对外发布，那些号一律不占位。
+        versionCode = 36
+        versionName = "1.4.12"
         vectorDrawables { useSupportLibrary = true }
     }
 
