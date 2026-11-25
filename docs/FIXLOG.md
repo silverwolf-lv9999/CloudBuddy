@@ -2438,3 +2438,29 @@ lobehub icons（MIT，unpkg @lobehub/icons-static-svg）与 models.dev 公开 AP
 
 ## 测试
 full/base 编译、单测、lint 全绿；ModelRegistryTest 保留。
+
+# 1.6.0 追加 · 修复读图开关开了也用不了
+
+## 现象（用户反馈）
+读图能力无法使用，哪怕设置里开了也用不了；用户怀疑是工具限制与上传文件机制共同导致。
+
+## 根因
+不是端点或格式问题，是**提示词自相矛盾**：`sendCustom` 把图片（image/*）
+也 stage 进沙箱，然后 `AttachmentPrompt.hint` 在用户消息里写「已放在沙箱本地，
+请直接用 read_file / run_shell 处理」。同一句话里图片以 image_url（data URL）
+直发了，文本却命令模型用工具去读沙箱文件——模型听了文本的，把 base64 当
+文本读出乱码，于是回答「我看不到图片」。两个通道互斥，之前却同时给。
+
+## 改法
+1. `sendCustom` 附件分流提前到取配置之后：
+   - 读图开：`image/*` → data URL 直发（不进沙箱、不进 hint）；
+     非图片附件照旧 stage + hint。
+   - 读图关：全部走沙箱路径（旧行为）。
+2. `AttachmentPrompt.inlineImagesHint`：新增图片说明块，明确告诉模型
+   「图片已随消息以 image_url 直发、直接看图回答、不要用 read_file /
+   run_shell 读」——把「直发」这件事说破，模型不再去沙箱找文件。
+3. 顺手调整：`turnCfg` 的取值提前（原来在 stage 之后才取，分流需要它在前）。
+
+## 测试
+- AttachmentPromptTest +1：inlineImagesHint 空/内容/禁止工具读的口径；
+- full/base 编译、单测、lint 全绿。

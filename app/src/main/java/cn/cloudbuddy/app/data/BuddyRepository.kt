@@ -2085,14 +2085,7 @@ class BuddyRepository(val settings: AppSettings) {
 
                 // 拿该会话的沙箱接入点；工具执行全部落在这里面。
                 val (session, endpoint) = withSandbox(id) { s, ep -> s to ep }
-                // 附件写进沙箱，路径交给模型自己用工具读——自定义端点不一定支持多模态，
-                // 但沙箱里的文件它一定能读。
-                val staged = stageAttachments(session, attachments)
-                if (attachments.isNotEmpty() && staged.isEmpty()) {
-                    _events.tryEmit("附件上传到沙箱失败，本轮只处理文字")
-                }
-                val ask = if (staged.isEmpty()) prompt else prompt + AttachmentPrompt.hint(staged)
-                // 会话 id 到这一步才确定，重新取一次配置：模型 ID 是会话级的，
+                // 会话 id 到这一步才确定，先取配置：模型 ID 与能力开关都是会话级的，
                 // 沿用草稿态那份会让新会话永远用「上一个默认模型」。
                 val turnCfg = settings.customModel(id)
                 if (!turnCfg.usable) {
@@ -2104,6 +2097,24 @@ class BuddyRepository(val settings: AppSettings) {
                     )
                     applyIfActive(id) { copy(state = TurnState.FAILED) }
                     return@launch
+                }
+                // 附件分流（读图开关的语义在这里分岔）：
+                // - 模型开了读图：image/* 以 image_url（data URL）随消息直发，
+                //   **不进沙箱**——直发与「用工具读沙箱文件」是两条互斥的路，
+                //   同时给模型只会让它拿着 base64 当文本读，然后说「我看不到图」。
+                // - 没开读图 / 非图片附件：照旧写进沙箱，路径交给模型用工具读。
+                val (imageAtts, fileAtts) = if (turnCfg.enableVision) {
+                    attachments.partition { it.mimeType.startsWith("image/") }
+                } else {
+                    emptyList<PendingAttachment>() to attachments
+                }
+                val staged = stageAttachments(session, fileAtts)
+                if (fileAtts.isNotEmpty() && staged.isEmpty()) {
+                    _events.tryEmit("附件上传到沙箱失败，本轮只处理文字")
+                }
+                var ask = if (staged.isEmpty()) prompt else prompt + AttachmentPrompt.hint(staged)
+                if (imageAtts.isNotEmpty()) {
+                    ask += AttachmentPrompt.inlineImagesHint(imageAtts.map { it.name })
                 }
                 // 工具进度写进消息流：长任务里用户能看到 agent 正在干什么，
                 // 而不是盯着一个转圈图标等几十秒。
@@ -2146,16 +2157,11 @@ class BuddyRepository(val settings: AppSettings) {
                         }
                     },
                 )
-                // 该模型开了「读图」时，图片附件以多模态消息（image_url，data URL）
-                // 直发给模型——它看得见图本身；没开的话保持旧路径：图片只在沙箱里，
-                // 模型按路径用工具读（读图开关的语义就在这一行分岔）。
-                val directImages = if (turnCfg.enableVision) {
-                    attachments.filter { it.mimeType.startsWith("image/") }.map { a ->
-                        "data:" + a.mimeType + ";base64," +
-                            android.util.Base64.encodeToString(a.bytes, android.util.Base64.NO_WRAP)
-                    }
-                } else {
-                    emptyList()
+                // 读图开着时 image/* 附件在上面已分流为 [imageAtts]，data URL 直发；
+                // 没开的走沙箱路径（上面 staged），模型按路径用工具读。
+                val directImages = imageAtts.map { a ->
+                    "data:" + a.mimeType + ";base64," +
+                        android.util.Base64.encodeToString(a.bytes, android.util.Base64.NO_WRAP)
                 }
                 val reply = agent.send(ask, directImages)
                 flushThought(id)

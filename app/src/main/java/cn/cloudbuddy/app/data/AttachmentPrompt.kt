@@ -74,4 +74,22 @@ internal object AttachmentPrompt {
             append("</attachments>")
         }
     }
+
+    /**
+     * 读图模型的图片说明块。
+     *
+     * 与 [hint] 相反的指令：图片**不在**沙箱里，是以 image_url（data URL）
+     * 随本条消息直接附上的。没有这块，模型会看到「用工具读附件」之类的
+     * 旧规则，把 base64 当文本去读，然后回答「我看不到图片」。
+     */
+    fun inlineImagesHint(names: List<String>): String {
+        if (names.isEmpty()) return ""
+        return buildString {
+            append("\n\n<attached_images>\n")
+            append("以下图片已随本条消息以多模态 image_url 直接附上，请直接查看图片内容回答：\n")
+            names.forEach { append("- ").append(it).append("\n") }
+            append("不要用 read_file / run_shell 去读这些文件——它们不在沙箱里，读了只会得到 base64 文本。\n")
+            append("</attached_images>")
+        }
+    }
 }

@@ -77,4 +77,17 @@ class AttachmentPromptTest {
         assertTrue(hint.startsWith("\n\n<attachments>"))
         assertTrue(hint.endsWith("</attachments>"))
     }
+
+    @Test
+    fun `直发图片提示块明确禁止用工具读`() {
+        assertEquals("", AttachmentPrompt.inlineImagesHint(emptyList()))
+        val hint = AttachmentPrompt.inlineImagesHint(listOf("shot.png", "图2.jpg"))
+        assertTrue(hint.startsWith("\n\n<attached_images>"))
+        assertTrue(hint.contains("shot.png"))
+        assertTrue(hint.contains("图2.jpg"))
+        // 关键口径：告诉模型图片随消息直发、不要去沙箱读——否则模型会拿
+        // base64 当文本读然后回答「我看不到图片」
+        assertTrue(hint.contains("不要用 read_file / run_shell"))
+        assertTrue(hint.contains("image_url"))
+    }
 }
