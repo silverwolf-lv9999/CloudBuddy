@@ -10,6 +10,720 @@
 
 ---
 
+## 1.4.12（同步上游；一份代码出三个包）
+
+> 版本号说明：`origin/main` 停在 1.4.11 / 35，所以本版接着是 **1.4.12 / 36**。
+> 中途的 1.5.0–1.7.0 是本地测试线，从未对外发布，那些号不占位，内容全部并入本版。
+> 代价是 versionCode 从测试版的 49 回落到 36——**装过测试包的手机会拒绝降级安装**，
+> 需要先卸载（数据会丢，登录一次即可）。
+
+### 一、同步上游最新提交
+
+上游这次只动了两处：`BuddyRepository` 里「工具调用中重进」的判定，以及版本号。
+我改的部分（终端多标签、设置二级页、模型管理）跟它不冲突，`rebase` 之后只剩三处要手工合：
+
+| 文件 | 冲突 | 处理 |
+|---|---|---|
+| `app/build.gradle.kts` | 上游 1.4.11 / 本地 1.6.6 | 取本地，再升 1.7.0 |
+| `README.md` | 版本行 | 取本地，补三包说明 |
+| `BuddyRepository.kt` | `suspectEnd` 判定 | 保留上游新增的条件，同时保留本地「补历史」分支 |
+
+`BuddyRepository` 那处值得留一笔：两边的改动都在同一个 `if` 的头部，谁覆盖谁都会丢功能——
+上游加的是「`!activeLocal`」（本地请求在途时不采信远端终态），本地加的是「`suspectEnd`」
+（历史停在未完成工具上时不采信）。两个条件必须同时成立才算可采纳，所以是**合并**而不是二选一。
+
+### 二、三个包：基础版 / 完整版 / 共存版
+
+用户的要求分两步：先要「完整版和不带 agent 的版本各一个」，再追加「完整版要两种——
+一种与基础版同包名可互相覆盖，一种包名不同可共存」。
+
+**包名分配**（`edition` 维度，三个 flavor）：
+
+| flavor | applicationId | 内容 | 关系 |
+|---|---|---|---|
+| `base` | `cn.cloudbuddy.app` | 云端模型 | 与 `full` 互斥 |
+| `full` | `cn.cloudbuddy.app` | 云端 + 本机 agent + 第三方 API + 终端 | 覆盖 `base` 即升级，数据保留 |
+| `plus` | `cn.cloudbuddy.app.plus` | 同 `full` | 可与前两者并存 |
+
+关键取舍：
+
+- **`base` 与 `full` 必须同包名**，否则「覆盖安装」无从谈起。为此把 `defaultConfig.applicationId`
+  从 `.plus` 改回上游的 `cn.cloudbuddy.app`——`.plus` 只留给共存版做后缀。
+- **三个包应用名都叫「云伴 WorkBuddy」**，也就是云端仓库原本的名字（用户要求：基础版
+  必须沿用云端名字，三个包同名）。基础版与完整版同包名又同名，覆盖安装后桌面上完全看不出
+  差别，这正是"两个档位"该有的样子；代价是共存版与它们并排时也是同名图标，
+  只能靠「应用信息」里的包名区分，文档里写清楚。
+- **不加 `versionNameSuffix`**：三个包同一版本号就是同一份代码，`1.7.0` 全一样。
+  `scripts/verify.sh` 会断言三个包的 versionName 完全相等。
+- `plus` 不复制代码：`sourceSets["plus"].java.srcDir("src/full/java")` 直接挂 full 的源集。
+  复制一份的后果是改一个 bug 要改两处，第二次总会漏。
+
+### 三、能力隔离：不在依赖图里，也不在 dex 里
+
+之前只是「把入口藏起来」，`TerminalScreen` 的类仍然打在基础版里。这次彻底分开：
+
+```
+src/main      共用：网络、会话、设置、UI 骨架、AgentContracts（接口与数据类）
+src/base      AgentSupport 空实现 + TerminalScreen 占位页
+src/full      SessionAgent / CustomLlmClient / SandboxTools + TerminalScreen 完整实现
+src/testFull  agent 三个测试类
+```
+
+- `ai.koog:agents-core`、`prompt-executor-llms`、`ktor-client-okhttp` 改成 `fullImplementation`
+  与 `plusImplementation` 两条，基础版的依赖图里没有它们。
+- **`kotlinx-serialization-json` 必须显式声明**：它原先只是 Koog 的传递依赖，基础版不含 Koog 后
+  数据层直接编译失败（`Json` 找不到）。版本钉在 1.8.1，与 Koog 的约束一致。
+- `SessionAgent` 加 `: AgentSession`、`SessionAgentHub` 加 `: AgentRuntime`，接口全部落在 main 的
+  `AgentContracts.kt`；仓储层只认接口，`customAgents = AgentSupport.create(...)`。
+  `testConnection` 从仓储里搬到实现侧——基础版连这段代码都不该编译。
+- 基础版启动时把 `engineMode` 压回云端：偏好里可能残留 `custom`，而设置页不显示引擎选择，
+  否则用户会看到「自定义模型未配置完整」却找不到能改的地方。
+
+验证不靠人眼，直接数 dex 里的字符串：
+
+| 包 | `ai/koog` | `TabStrip` | 占位页文案 | 体积 |
+|---|---|---|---|---|
+| base | 0 | 0 | 有 | 18 MB |
+| full | 4089 | 38 | 无 | 22 MB |
+| plus | 4089 | 38 | 无 | 22 MB |
+
+### 四、脚本与 CI 跟着改三份
+
+- `scripts/verify.sh`：`EDITIONS=(base full plus)`，新增 `--base/--plus`；产物名
+  `CloudBuddy-<版本>-{base,plus}-<mode>.apk`（full 不带后缀，仍是最常下的那个）；
+  **新增包名断言**——包名错就没法覆盖安装，这件事不能靠人记得，必须脚本卡住。
+- `scripts/build.sh`：三个 assemble 任务与三行产物路径。
+- `.github/workflows/release.yml`：Release 说明改成三行表格，写清「基础版与完整版同包名、
+  装完整版即升级」与「共存版包名不同可并存」；三个包都作为资产上传。
+
+### 五、校验
+
+- `scripts/verify.sh --debug` 全绿：三个变体单测（base 221 / full 241 / plus 241），
+  lint 三个变体各 **0 error / 3 既有 warning**。
+- `aapt2 dump badging` 确认：`base`/`full` = `cn.cloudbuddy.app`，`plus` = `cn.cloudbuddy.app.plus`，
+  三者 versionCode 36、versionName 1.4.12、应用名「云伴 WorkBuddy」。
+
+---
+
+## 1.6.6（账号栏去重；设置页滑动优化）
+
+### 一、首页与「账号与额度」页互相重复
+
+**现象**：1.6.5 在首页补了整栏，但同一批信息二级页又写了一遍——积分余额、签到按钮、
+额度前三项两处都在；首页还多一行入口标题「管理账号与额度」，跟组标题「账号与额度」
+几乎同名，看两遍才知道是同一个地方。
+
+**判定标准**（写进 AGENTS）：同一句话在两页各出现一次 = 重复；同一件事的
+「摘要 / 明细」= 分层。摘要可以短，但不能是同一句。
+
+**改法**：
+
+- 首页只留「摘要 + 每天要点的签到」：账号行（整行点进二级页，尾部箭头）、
+  积分余额与等级、连续签到天数与签到按钮、签到失败原因。
+- 二级页只留「首页放不下的」：多账号列表与删除、添加账号、**完整**套餐额度
+  （含有效期，首页不再列前三项）、云端环境。
+- 删掉二级页的「刷新账号资料」行：首页账号行右侧的刷新已经一次刷昵称、积分、签到状态，
+  两个刷新入口只会让人猜哪个才是真的。
+- 删掉首页那条与组标题同名的入口行：账号行本身就是入口，箭头已经说明能点。
+
+### 二、设置页列表滑动掉帧
+
+三处确定的绘制/组合成本，逐条改：
+
+1. **每张卡都带 1dp 阴影**。`Card` 默认 elevation 1dp，阴影要按模糊半径扩大脏区重绘；
+   一屏十几张卡滚动时每帧都在画阴影。`SettingCard` 改用 `Surface`（0 阴影），
+   分层靠 `surface` 与 `background` 的色差，观感几乎无差。
+2. **分组标题与卡片共用一个 contentType**（默认都是 null）。LazyColumn 复用时会在
+   「标题槽位」和「卡片槽位」之间反复丢弃再重建组合树，滚动经过交界处就会顿一下。
+   新增 `LazyListScope.title()`：标题项单独 `key` + `contentType = "title"`，
+   与卡片槽位分开。
+3. **「我的模型」是设置页唯一"一次全画"的长列表**。模型攒到几十个时，单个 item
+   高度上千 dp，组合与测量一次做完。默认先组合前 8 个，需要时点「显示全部 N 个」。
+
+**没做、也不打算硬做的**：外层 `AnimatedContent` 的 tab 淡入（160ms，只在切页时），
+以及模型页里那些 `OutlinedTextField`——它们是内容本身，不是装饰，删不掉。
+真机如果还卡，下一步是把模型页的每个设置项拆成独立 item，让 LazyColumn 真正按行复用。
+
+## 1.6.5（设置首页补上「账号与额度」这一栏）
+
+**现象**：设置页从顶到底都没有「账号与额度」——不是被折叠进二级页，而是从来就没有过。
+
+**根因**：拆二级页时只做了「账号与额度」这个**二级页**，首页只留了一张能点的昵称卡：
+
+1. 没有分组标题，扫一眼列表只看到「推理 / 界面 / 扩展 / 其他」四组，账号仿佛不属于设置；
+2. 积分、等级、签到、套餐额度全在第二层，首页一个字都看不到；
+3. 上一轮把签到积分做成一张独立小卡挂在首页，仍然没有「账号与额度」这个名字，
+   用户还是认不出来——他找的是一个**栏目**，不是一张卡。
+
+**修法**：首页第一组改成完整的一栏。
+
+- `SectionTitle("账号与额度", AccountCircle)` + 一张卡，四段用细分隔线连起来：
+  1. 账号行：头像首字 + 昵称 + 脱敏手机号，右侧刷新（一次刷昵称、积分、签到状态）；
+  2. 积分行：余额与等级、连续签到天数 / 可得积分、签到按钮、`checkinError`；
+  3. 套餐额度：只列前三项（`剩 x / y`），完整清单留在二级页，避免把这栏撑成半屏；
+  4. 入口行「管理账号与额度 ›」：添加/切换账号、套餐明细、云端环境。
+- 头像从图标改成昵称首字：多账号时首字比通用头像更容易认人。
+- 刷新按钮从「刷新」小胶囊改回图标：一行里塞文字按钮会把昵称挤成省略号。
+
+**没动的**：二级页 `AccountSettingsPage` 原样保留（多账号列表、删除账号、服务站点、
+会话模型、执行位置都在那），首页这一栏只是把「用户每天要看的三行」提到第一层。
+
+## 1.6.4（终端跟随滚动；设置页去重、签到我回来了）
+
+### 一、有新输出时页面停在这段的开头
+
+**现象**：输出不断刷出来，但视图停在开头，看不到最新几行。
+
+**根因**：贴底判定用的是几何状态——`visibleItemsInfo.last.index >= total - 2`。
+实时输出是**同一个列表项在变高**，内容一变长 `canScrollForward` 立刻变 true，
+下一次重组时判定为"不贴底"，跟随就此断掉。而 LazyColumn 会保持
+`firstVisibleItemIndex`，于是画面钉在这一块的开头。
+
+**修法**：把"要不要跟随"从几何状态改成**手势事件**。
+
+- `follow` 只在**用户手指离开屏幕那一刻**重新判定：滚完还停在倒数两项之外，
+  才认定为"在看历史"。
+- 内容自己变长不再影响 `follow`——这正是关键，否则"一来新内容就停止跟随"。
+- 滚动目标从 `scrollToItem(Int.MAX_VALUE)` 改成先 `withFrameNanos {}` 等布局，
+  再滚到 `layoutInfo.totalItemsCount - 1`：条目数还没更新时，MAX_VALUE 会被
+  coerce 到 0（这也是"跳回开头"的另一个来源）。
+- 「最新」浮标的显隐改跟 `follow` 走：`atBottom` 在内容变长瞬间会闪。
+
+### 二、设置页：推理入口重复
+
+「推理引擎」和「自定义 API」是两个二级页，但推理页里又有「自定义 API 配置 →
+端点与模型」的入口，点进去还是那堆东西。首页也要点两次才到端点配置。
+
+合并成一页「**模型与推理**」：顶部引擎选择（云端 / 自定义，含两套会话不互转的说明），
+往下是端点、模型管理、参数、思考强度、系统提示词。首页只剩一个入口。
+`SettingsPage.Engine` 连同 `EngineSettingsPage` 一起删掉。
+
+### 三、设置页：签到和积分不见了
+
+拆二级页时把它们挪进了「账号与额度」，结果首页看不到——天天要点的东西不该藏在第二层。
+首页账号卡下方加一张卡：积分余额 + 连续签到天数 + 签到按钮 + 失败原因。
+`CheckinButton` / `checkinHint` 从 `private` 提为 `internal`，两处共用。
+
+---
+
+## 1.6.3（终端多标签）
+
+**需求**：终端要能开多个窗口，像 Termux 那样一个跑构建、一个看日志。
+
+### 数据层
+
+- 新增 `TerminalTab`：一个标签 = 一份命令记录 + 一个执行槽（`running` /
+  `runningCommand` / `liveOutput`）。
+- `TerminalState` 改成 `tabs + activeTabId`，但保留 `entries` / `running` /
+  `liveOutput` 这几个"当前标签"的便捷属性——绝大多数 UI 只关心眼前这个标签，
+  让它们到处写 `state.active?.entries` 只会更啰嗦。
+- `CommandLog` 的分区键从「会话 id」改成 `会话#标签`（`CommandLog.keyOf`）。
+  `forget()` 改成按前缀清，否则删会话时标签的日志会留在内存里。
+  分隔符用 `#`：`c1` 清不掉 `c10`（两个会话 id 有包含关系时前缀匹配会误伤）。
+
+### 运行态
+
+- `shellJob` 单槽 → `shellRuns: Map<tabId, ShellRun>`。**标签之间互不打断**：
+  标签 1 跑 `npm install`，标签 2 照样能敲命令；同一标签内仍是一次一条
+  （`sh -c` 没有作业控制，并发只会让输出串台）。
+- 后台标签的输出照收（进 `ShellRun.live`），但不刷 UI；切回来时
+  `selectTerminalTab` 从执行槽把已收的部分接上，进度不会断。
+- 停止/清屏/关标签都带 `tabId` 参数，不再假设"只有一条在跑"。
+- `stopAllShells()`：离开终端、切会话时把所有标签的命令收尾落盘。
+
+### UI
+
+- 标题栏下加标签条：`+` 新建（上限 5）、点切换、长按重命名、多于一个才显示 `×`。
+  运行中的标签带一个琥珀色圆点——切走之后那边还在跑，没有这个点完全看不出来。
+- 每个标签一份 `LazyListState`：切回来停在原来看的地方，不被动拽到底。
+- 新建标签编号取「现有最大 + 1」，关掉中间的标签后不会和历史重名。
+
+### 取舍
+
+- **agent 跑的命令固定写进第一个标签**（`ensureDefaultTab`）。它不指定标签，
+  但记录必须有归属；放第一个，用户进终端在最左边就能看到"模型到底执行了什么"。
+- **输入框是全标签共享的**：敲了一半切去看日志，回来内容还在。每个标签独立
+  草稿更像本机终端，但那要有独立 shell 才有意义，我们每条命令都是独立 `sh -c`。
+- **标签只在同一会话内存在**：切会话整套换掉（沙箱不同，混着看比看不到更误导），
+  切回来按 `tabMeta` 恢复原来的标签和编号。
+
+---
+
+## 1.6.2（终端：按停不再丢输出；输出按 ANSI 着色）
+
+### 一、按停 = 清屏（用户报的严重 bug）
+
+**现象**：`ping qq.com` 跑起来输出正常，点中断后**所有内容消失**。
+
+**根因**（`BuddyRepository.runShell/stopShell`）：
+
+1. 运行中的输出只存在 `TerminalState.liveOutput`——一个"正在跑"的临时字段，
+   不进 `CommandLog`。这是当初为了性能做的（每个 chunk 全量刷新条目列表会把
+   LazyColumn 拖垮）。
+2. `stopShell()` 直接 `cancel()` 协程 + 把 `liveOutput` 刷成空。
+3. 协程被取消时 `SandboxExec.execute` 会 `throw CancellationException`，
+   所以 `runCatching { withSandbox {...} }` 拿到的是 failure，落盘时
+   `result.stdout` 是空的。
+
+三条叠起来：输出既没进日志、又没留在屏幕上，用户看到的就是"全没了"。
+
+**修法**：给"正在跑的输出"一个独立的归属。
+
+- 新增 `shellLive: StringBuilder` + `shellCommand/shellStartedAt/shellConvId`，
+  onChunk 往里累积（不再只写 UI 状态）。
+- `stopShell()` 落盘：`stdout = 已收到的全部输出`，`aborted = true`，
+  `error = null`。中断不是失败，标红会让人以为命令出错。
+- 新增 `shellGen` 世代号：停止时自增，正在跑的协程回来后发现号变了就闭嘴，
+  否则它会把"取消"当成正常结束再记一条空记录（重复条目）。
+- `openTerminal()` 切会话前先 `stopShell(keepOutput = true)`，
+  否则旧会话的命令跑完会写进新会话的终端里。
+- `clearTerminal()` 走 `stopShell(keepOutput = false)`——用户点的是清屏。
+
+UI 侧配套：执行中的块改成和正式条目**同构**（左侧竖线 + 相同缩进），
+按停之后它原地变成一条记录，看起来是"停下来"而不是"换了一块"。
+
+### 二、输出带转义序列原样显示
+
+`ls --color`、`git status`、`npm` 的输出都带 `\e[32m`，之前直接画出来是一串
+`[32m` 方括号数字，看着像终端坏了。
+
+新增 `data/AnsiText.kt`（纯 Kotlin，不引依赖）：
+
+- 认 16 色（30-37 / 90-97）、粗体（1 / 22）、重置（0 / 39）。
+- 组合参数按累积语义处理：`1;32` 是"粗体+绿"，不是两条独立指令；
+  `22` 只关粗体、颜色留着。
+- 非 SGR 的 CSI（`\e[2K` 清行、`\e[1A` 上移）吃掉——静态输出里没有意义。
+- 被字符数上限截断在半路的序列整段丢弃，避免漏出半截方括号。
+- `\r` 按"回行首覆盖写"处理（逐段覆盖，不是只留最后一段），
+  进度条和 `ping` 这类重写同一行的输出不再叠成一长串。
+- 复制/喂模型走 `Ansi.plain()`，剥掉转义。
+
+### 三、长输出展开改分页
+
+原来「点此展开」一次性铺开全部，`cat` 一个几万行的日志会一次布局几万行 → 卡死。
+改成每点一次多给 400 行（`PAGE_LINES`），底部给「收起（回到尾部 18 行）」。
+
+### 四、已知限制（这次没修）
+
+中断只断开客户端的 HTTP 流，**沙箱里的进程会继续跑到 `SHELL_TIMEOUT`（300s）**。
+要真正发 SIGINT 需要远端 pid，而 `process.Process/Start` 的流式帧里没有 pid，
+拿不到就没法发信号。`ping` 这类死循环命令按停后仍会占用沙箱算力直到超时。
+
+---
+
+## 1.6.1（设置拆二级页；终端按手机终端的通行交互重做）
+
+### 一、设置页拆成二级页
+
+**起因**：设置所有内容排在一个 `LazyColumn` 里，九个分组、1244 行。改个主题要滚过
+模型参数、签到、系统提示词、MCP 列表。用户直接问「能分二级页面吗」。
+
+**做法**：包 `ui/screens/settings/`，首页只留入口与一行摘要：
+
+| 入口 | 二级页内容 | 来源 |
+|---|---|---|
+| 账号与额度 | 账号列表、添加/刷新、积分签到、云端环境 | 原「账号」「积分与签到」「云端环境」 |
+| 推理引擎 | 新会话默认引擎、进入自定义 API | 原「推理引擎」 |
+| 自定义 API | 地址/Key/模型管理/请求参数/思考/上下文/系统提示词/测试连接 | 原「自定义 API」整块 |
+| 外观与对话 | 主题、动态取色、折叠方式、思考展开、回车发送、渲染轮数、加载超时 | 原「外观」「对话」 |
+| 技能与扩展 | 技能、连接器、MCP 服务器 | 原「技能」「MCP 服务器」 |
+| 关于与更新 | 版本、检查更新、GitHub、反馈 | 原「关于」 |
+
+- 路由是 `private sealed interface SettingsPage` + 一个 `when`，没有引入 navigation 库
+  （只有一个 tab 内的层级，加依赖不划算）。
+- `BackHandler` 在二级页拦返回键回首页：用户的心智是「退一层」，不是「关掉设置」。
+- 每页的状态用 `remember { settings.xxx }` 自持。**前提是所有设置都即时写回**，
+  所以离开页面丢状态不影响任何值；被丢的只有「拉取中」「测试结果」这类瞬时状态，
+  重进重置反而是对的。
+- 首页账号卡整卡可点进「账号与额度」；原来卡上的「刷新」按钮移到账号页的一行，
+  功能没丢，也避免两处重复显示同一张卡。
+
+### 二、终端界面
+
+对照手机终端（Termux / ConnectBot）的通行交互重做，解决的都是实打实的摩擦：
+
+1. **输入框改用 `TextFieldValue`**，快捷符号键插到**光标处**（原来只能追加到末尾）。
+2. **快捷符号键条**：`/ - _ . | > & $ * " ' ~ # = :` 一排横向可滑，另加 `↑ ↓ ⌫`。
+   手机上敲一个 `|` 要切两次键盘，这是终端输入最大的摩擦点。
+3. **历史双向翻**：`↑` 取更早、`↓` 回更近，翻之前把已敲的内容存成草稿，
+   回到末尾时还回去；手动改字后自动脱离历史。原实现只有一个「上一条」按钮，
+   而且顺序是反的（先给最旧的一条）。
+4. **长输出默认折叠**：stdout 超过 18 行只显示尾部，点「上方还有 N 行」展开。
+   agent 一次 `cat` 能刷几百行，全铺开会把有用信息淹掉。
+5. **可选中复制**：每条命令块包 `SelectionContainer`，另给「复制这条」小按钮。
+6. **字号可调**：右上角 12/14/16/18 四档，存 `settings.terminalFontSp`（默认 14）。
+7. **「最新」浮标**：上翻看历史时不再被新输出拽回去，但右下角给出「↓ 最新」回到底部。
+8. **实时输出只渲染尾部 6000 字符**：`liveOutput` 每来一帧就变，排版全文会让整页掉帧。
+9. 命令块加左侧竖线（agent 青色 / 手动绿色），末尾补完成时间，一眼分清一条命令的边界。
+
+**测试**：221 项全绿；lint 0 error / 3 既有 warning。
+
+---
+
+## 1.6.0（模型管理：模型条目化 + 候选池）
+
+**起因**：用户建议「模型管理可以去抄开源项目，比如 RikkaHub」。对照之后发现差距不在
+界面好看与否，而在**数据形状**：
+
+| 我们（1.5.6） | RikkaHub |
+|---|---|
+| 模型是 `List<String>`，只有 ID | 模型是对象，挂在 provider 下，带显示名/能力/模态/上下文 |
+| 「拉取」直接覆盖这一个列表 | 拉取结果进选择器，勾选的才进「我的模型」 |
+| 参数（思考强度、系统提示词、历史轮数）全局唯一 | 每个模型可覆盖，空值回落全局 |
+
+后果很具体：`deepseek-reasoner` 会思考、`deepseek-chat` 不会，但两者只能共用一份
+思考强度；用户把 ID 改成别名没地方存；在设置里删掉几个用不上的模型，点一次「拉取」
+全回来了。
+
+**改动**
+
+1. `data/CustomModel.kt`（新）：模型条目 `id / name / reasoning / thinkingEffort /
+   systemPrompt / contextTurns`。所有覆盖项为空（或 0）= 跟随全局，不在保存时把全局值抄进来。
+   `guessReasoning()` 按 ID 猜初值（`reasoner` / `qwq` / `thinking` / `o3` …），只影响
+   新加入时的标签，猜错能改。
+2. `AppSettings`：`customModels` 从 `List<String>` 变 `List<CustomModel>`，同一 key 兼容旧
+   格式（`decode` 同时认字符串数组与对象数组）；新增 `addCustomModels / removeCustomModel /
+   updateCustomModel / customModelEntry`。`customModel()` 在组装配置时逐项回落：
+   `entry?.thinkingEffort ?: 全局`。
+3. `BuddyRepository`：`AppUiState` 拆成 `customModels`（我的模型）与
+   `customCandidates`（候选池，只在内存）。`fetchCustomModels()` 只写候选池，不再覆盖
+   我的模型、也不再自动改当前模型；新增 `addCustomModels / removeCustomModel /
+   updateCustomModel / publishCustomModels`。
+4. `ui/components/CustomModelManager.kt`（新）：我的模型列表（点行切换、编辑展开、删除）、
+   候选池选择器（搜索 + 勾选；已加入的置灰不可重复勾）。拉取成功后自动弹出选择器——
+   「拉取」的下一步必然是「挑几个」。
+5. `ModelDialog`：本机模型按 `title` + ID 小字 + 「思考」标签渲染；本机分支彻底不再发
+   `/models` 请求，入口统一指向设置页。空态文案改成「去设置里添加」。
+6. 设置页原「模型 ID + 拉取」并排的一行，改为「当前模型 ID」单字段（手填仍然保留，
+   自建端点常不提供 `/models`），拉取与添加归到「我的模型」标题行。
+
+**没抄的部分与理由**
+
+- **models.dev 目录 / 多 provider 分组 / 二维码导入导出**：我们只有一个用户自填端点，
+  没有「十几家 provider 各配一套」的场景，加了只是把设置页变长。
+- **模型级自定义请求头 / 请求体**：已有全局 `ThinkingInterceptor`，按模型再开一层会让
+  「字段到底发没发」更难排查。
+- **拖拽排序**：列表顺序按加入顺序，够用；拖拽要引入第三方 Compose 库，收益不抵依赖。
+
+**测试**：新增 `CustomModelTest` 8 项（旧格式兼容、混合格式、去重、脏数据、编码回读、
+思考模型猜测、关键词筛选、`customized` 判定），单测 221 项全绿；lint 0 error / 3 既有 warning。
+
+---
+
+## 1.5.6（自定义 API 的思考强度；弹窗不再自动拉模型列表）
+
+**起因**：用户反馈「自定义 API 默认不思考」。查下来是两层原因叠在一起：
+
+1. **从来没发过任何思考字段**。Koog 的 `LLMParams.additionalProperties` 在 0.6.0 里会被
+   序列化成嵌套的 `additional_properties: {...}`（抓包确认），而服务端只认平铺在顶层的
+   `thinking` / `enable_thinking` / `reasoning_effort`。
+2. **「思考强度」本来就不是一个标准字段**。DeepSeek / 智谱 / Kimi 的开关是
+   `thinking:{type:enabled}`，通义 / 硅基流动是 `enable_thinking: true`，
+   OpenAI / xAI 才是 `reasoning_effort`。只发 `reasoning_effort` 的话，前两类直接当没看见。
+
+### 做法
+
+| 层 | 落点 |
+|---|---|
+| 档位 | `ThinkingEffort`：关闭 / 低 / 中 / 高，默认「中」（开箱就会想一步） |
+| 写法 | `ThinkingStyle`：自动 / thinking / enable_thinking / reasoning_effort |
+| 自动判定 | `ThinkingParams.autoStyle()` 按 host 猜：dashscope/aliyuncs→enable_thinking，deepseek/moonshot/bigmodel/volces→thinking，其余→reasoning_effort |
+| 注入 | `ThinkingInterceptor` 挂在 OkHttp 引擎上，把字段并进 Chat Completions 请求体 |
+
+**为什么挂在 OkHttp 而不是 ktor 的 client 钩子**：Koog 拿到我们传进去的 `HttpClient` 之后
+会 `client.config { ... }` 派生一个新实例，`HttpSend` 的拦截器与 client 级 `onRequest`
+在派生时都会丢（实测：钩子压根不触发）；只有**引擎配置**是共享的。
+`LLMParams.additionalProperties` 也不能用——见上面第 1 条。
+
+**几个边界**：
+
+- `reasoning_effort` 这一套没有「关闭」的值，选关闭就**一个字都不发**：硬发 `none`
+  在 o 系列以外的模型上容易换回 400。
+- `thinking` 这一套**关闭必须显式发 disabled**：这家的思考默认是开的，不发等于「继续想」。
+- `gpt-4o` / `gpt-4.1` / `gpt-4-turbo` 这类只支持普通对话的 OpenAI 模型收到
+  `reasoning_effort` 是**报错**而不是忽略；默认强度是「中」，不挡一下的话第一次用就撞 400。
+  所以在 EFFORT 写法下按模型名短路（`ThinkingParams.looksClassic`）。
+- 思考模式开着时部分服务端会忽略 `temperature`（DeepSeek 明说），设置页已注明。
+
+### 模型弹窗不再自动拉列表
+
+打开自定义会话的模型弹窗时会顺手打一次用户的付费端点（`GET /models`），既慢又没必要——
+模型很少变，设置页手动拉一次足够。现在弹窗只列 `ui.customModels`，空的时候给一句
+「去设置里拉取」；云端会话的「重新加载」保持原样（那是免费的账号接口）。
+
+### 踩到的坑
+
+1. `HttpSend.intercept` 与 `createClientPlugin` 的钩子在 Koog 派生 client 后都不触发，
+   表现是「改 body 的代码看着跑了，请求里什么都没有」——必须抓包才能发现。
+2. `RequestBody.writeTo(buffer)` 会把原 body 消费掉，读完必须用读出来的内容重发，
+   否则发出一个空 body（比不生效更难查）。
+3. 单测必须真的抓一次请求体：字段名写错时服务端只会静默忽略，
+   表现是「模型还是不想」，纯函数单测抓不到。
+
+## 1.5.5（两套会话彻底分开；模型弹窗重做；自定义 API 补齐模型列表与系统提示词）
+
+**起因**：自定义引擎的会话和云端会话共用一个「引擎」状态，切来切去就出问题——
+一条会话可能前半段在云端跑、后半段在本机跑，两边的历史各有一半，谁也说不上完整。
+再加上模型弹窗里那个「本机 · 自定义 API」切换卡 + 手填模型 ID 的输入框，
+界面上一共有三种方式改变「这条会话到底谁来推理」，用户根本预期不了结果。
+
+### 会话彻底分离
+
+| 维度 | 云端会话 | 本机会话 |
+|---|---|---|
+| 推理在哪 | 云端 agent | 手机上的 Koog agent |
+| 模型从哪来 | 云端 `session/set_model`（与官方 App / 网页端共享） | 用户自己端点上的模型 ID |
+| 对话记录 | 云端，可跨端回放 | 只在本机 `AgentMemoryStore` |
+| 花不花积分 | 花 | 不花（工具仍在同一沙箱里执行） |
+| 列表标签 | 「云端」+ 星星图标 | 「本机」+ 终端图标 |
+
+- 类型在**新建时定下**，之后不再互转。`useCustomEngine()` 只对草稿生效，
+  对已有会话直接回一句「请新建一个会话」。1.5.4 留下的缝合会话仍按本地打开，
+  本地历史为空时自动从云端补搬一次（`seedCustomHistory`），不至于变成空白。
+- 归属判定收在 `AppSettings.kindOf()`：**没存过归属的一律算云端**。
+  若回落到全局 `engineMode`，用户把默认引擎改成自定义之后，几十条老会话会被
+  集体误判成本地——而它们的对话其实都在云端。
+- `send` / `sendCustom` 互相兜底重定向：界面分流漏了一条路（比如重载后重发）
+  就会把本机历史推进云端会话，这种错一次就够毁掉一条会话。
+
+### 模型弹窗
+
+- 删掉手填模型 ID 的输入框与「本机 · 自定义 API」切换卡；
+- 弹窗按会话类型只显示自己那套模型：云端会话列云端模型，本机会话列
+  `GET /models` 拉到的模型；
+- 只有**草稿**会话顶部保留「云端 / 本机 API」两个 chip——不保留的话，
+  默认引擎是云端时用户根本没有入口新建一条本机会话。
+
+### 自定义 API 配置
+
+- **拉取模型**：`GET {base}/models`，兼容 `{"data":[{"id"}]}` / `{"data":["id"]}` /
+  顶层数组三种形状，字段认 `id` / `name` / `model`。拉到后点选即用（横向滑动），
+  首次拉到且还没选过时自动选第一个。
+- **系统提示词**：留空用内置默认；填了之后替换掉默认的「角色 + 回答风格」，
+  沙箱环境与工具规则仍固定追加在末尾。用户自己贴了那一段就不重复追加。
+
+### 关键取舍
+
+| 点 | 做法 | 原因 |
+|---|---|---|
+| 会话类型能否改 | 建完就固定 | 换引擎等于换历史载体，缝在一起的会话删都不好删 |
+| 本机模型 ID 存哪 | 与会话级云端模型**同一个 key** | 类型已互斥，两条命名空间不会同时被读 |
+| 本机模型默认值 | 不回落到全局 `selectedModel` | 那是云端模型 ID，拿去请求第三方端点只会 404 |
+| 沙箱规则 | 强制追加，不让用户覆盖 | 覆盖了模型就开始猜路径、用不存在的工具名 |
+
+### 修掉「本机会话永远显示执行中」
+
+真机截图：会话列表里一条「本机」会话旁边挂着「云端执行中」，永不消失。
+两个原因叠在一起：
+
+1. **服务端那边真的在跑**。自定义会话是用空 prompt 建的，而在创建请求里带上
+   `prompt: ""` 会被服务端当成一次真实提问——这条会话没挂模型（自定义引擎只要沙箱），
+   于是那一轮永远跑不完。现在空 prompt 时**整个字段都不发**，建完再后台补一次
+   `session/cancel` 兜底（这一轮没人在等，cancel 是安全回收）。
+2. **客户端还在拿云端角标**。本机会话在云端只有一条空壳记录，状态位要么是 null、
+   要么是它当云会话时的残值。`refreshConversations` 与后台对账都改成：本机会话的
+   状态只按「本进程里有没有它的 job 在跑」算（`Conversation.asLocal()`），
+   后台对账对这类会话直接跳过（`StateReconciler` 无从下手，建临时连接重放空历史纯属浪费）。
+   已存在的僵尸会话给一次清理机会，之后记进 `cleanedLocal` 不再碰。
+
+顺带：列表里本机会话显示的模型改成它自己那套（云端记的是 null）。
+
+### 踩到的坑
+
+1. 模型弹窗里的列表来自 SharedPreferences 时不会触发重组——拉完列表弹窗还是空的。
+   所以 `customModels` 要放进 `AppUiState`，不能只留在 `settings` 里。
+2. `refreshModels()` 会用云端清单重新算 `selectedModel`，本机会话被扫到就会
+   显示一个自己没用过的云端模型。加了 `isLocal` 短路。
+3. 删会话只 `customAgents.drop()` 是不够的：本地历史躺在 prefs 里，
+   谁也读不到、谁也删不掉，必须 `agentMemory.clear(id)`。
+
+## 1.5.3（命令行窗口：能看见 agent 到底跑过什么）
+
+**起因**：自定义引擎下推理在本机、执行在云沙箱，中间隔着模型。模型说「我已经装好了」
+「文件已改」，用户没有任何独立渠道核实。这版把执行面直接摊开。
+
+### 做了什么
+
+- **终端页**（聊天页菜单 / 工作区顶栏进入）：命令提示 `$`、stdout 原样、stderr 橙色、
+  退出码与耗时一行带出。agent 跑的标 `agent $`，手敲的标 `$`，颜色也不同。
+- **手动执行**：输入框敲命令直接走 envd，**不经过模型、不消耗积分、不产生云端会话记录**。
+  这是排查用途——模型说装好了，你自己 `ls` 一眼就知道真假。
+- **实时输出**：`process.Process/Start` 本来是等命令跑完才返回全部内容，
+  `npm install` 会黑屏几十秒。改成按帧流式读取，边跑边吐。
+- **命令日志**：按会话存的环形缓冲，agent 的历史命令也在里面（切进终端就能看见）。
+  单条输出首尾各留一半+标记截断，会话内最多 200 条。
+
+### 关键取舍
+
+| 点 | 做法 | 原因 |
+|---|---|---|
+| 流式 vs 一次性 | 只在终端用手动命令时开流式 | 工具调用是高频路径，多一层增量解析没收益 |
+| 输出上限 | 首尾各半 + "省略 N 字符" | 只留尾丢报错开头，只留头丢最终结论 |
+| 配色 | 固定深色，不跟明暗主题 | 终端就该是深的；浅底白等宽字极刺眼 |
+| 入口 | 盖在主页之上的一层，不是 Tab | 云端会话也有沙箱，终端两种引擎都能用 |
+
+### 踩到的坑
+
+1. `source.request(5)` 返回 false 是 EOF，不是"没读满"，写成 `if (!request(5)) break`
+   是对的，但用 `readFully` 会在断流时直接抛异常、把已收到的输出一起丢掉。
+2. 帧头长度解错位后会连续读出垃圾（不报错，只是内容荒谬）。`len<=0 || len>8MB`
+   必须当终止条件。单测里用"帧头声称 500 字节实际只给 3 字节"复现。
+3. `CancellationException` 在 JVM 上是 `IllegalStateException` 的子类，
+   `catch (e: Exception)` 会把它一起吞掉——用户点了中断，界面却一直"执行中"。
+   容错 catch 必须先放行取消与 `InterruptedIOException`。
+
+## 1.5.2（模型跟着会话走；自定义模式补齐附件与跨引擎历史）
+
+**起因**：官方 App 里切换模型后网页端也会变，说明**模型是存在云端的会话属性**，
+不是客户端的本地偏好。而 1.5.x 之前客户端只有一个全局 `selectedModel`，
+导致两个连锁问题：
+
+- 打开 B 会话，界面仍显示 A 会话选的模型（与云端实际模型不符）；
+- 每轮发送前都按本地全局值 `set_model` 一次，**把用户在官方 App / 网页端刚设的模型改回去**。
+
+**模型：以云端为准**
+
+| 环节 | 改法 |
+| --- | --- |
+| 权威来源 | ACP `session/load` 响应的 `models.currentModelId`（`AcpModels.parse` 早已解析，只是被丢弃） |
+| 缓存 | `acpCurrentModels[conversationId]` + `settings.modelFor(id)`，只用于首屏，ACP 一到就覆盖 |
+| 切换 | `session/set_model`（服务端持久化）→ 成功才写缓存；失败回滚 UI 并提示 |
+| 发送 | 不再调用 `set_model`；本轮模型随 `prompt` 参数下发，不动会话级设置 |
+| 设置页 | `engineMode` / `selectedModel` 语义改为「**新会话**默认值」 |
+
+**引擎：本地按会话存**
+
+云端没有"本机推理"这个概念，所以引擎只能本地记（`conv_engine:<id>`，带账号前缀）。
+`ui.engine` 取代原来的 `settings.engineMode` 参与发送分流：同一台手机上
+A 会话走云端、B 会话走本机，互不影响。
+
+**跨引擎历史（回答"WB 会话切到自定义会怎样"）**：
+
+- 会话 history 在云端是 ACP 的，本地 agent 只认 `AgentMemory`。直接切过去模型会失忆，
+  而且界面会突然变空白（`restoreCustomConversation` 读到空列表）。
+- 现在切到自定义时先 `seedCustomHistory()`：ACP 回放一次，把 USER/ASSISTANT 消息
+  （跳过思考与工具过程）写入本地 memory，再打 `markCustomConversation` 标记。
+  本地已有历史时不覆盖（避免抹掉自定义阶段的消息）。
+- 切回云端时明确提示：自定义那几轮只在本机，云端对话里看不到——这是机制决定的，
+  不提示用户会以为消息丢了。
+
+**附件终于进了沙箱**
+
+原来自定义模式收到附件直接丢弃并提示。现在复用 `SandboxFs.write` 写到
+`<cwd>/uploads/cb-<ts>/`（与云端链路同一落点），把路径清单拼进 prompt。
+文本类附件额外给前 1500 字预览（`AttachmentPrompt`，纯函数 + 单测）：
+模型不必先 `read_file` 就能判断"这是不是我要的文件"，小文件甚至不用再读一次。
+二进制与图片只给路径——自定义端点不一定支持多模态，但沙箱里的文件它一定能读。
+
+**验证**：170 项单测全绿（1.5.1 的 162 + 新增 8：`AttachmentPromptTest`），
+`lint` 0 error / 3 warning。
+
+---
+
+## 1.5.1（真账号实测：把自定义链路从"能编译"推到"能用"）
+
+**背景**：1.5.0 只是编译通过 + MockWebServer 单测。这一轮用真账号在**真实沙箱**上把
+「建会话 → 拿沙箱 → envd 跑命令」整条链跑了一遍。按用户要求，测试专门新建了一个会话
+（= 新沙箱），测完删除，账号原有 18 个会话/沙箱未动。
+
+**实测结论（都写进了 AGENTS.md 的坑 22–25）**：
+
+| 事项 | 结论 |
+| --- | --- |
+| 空 prompt 建会话 | `POST /console/as/conversations/` 只带 `prompt:""` → `code:0` |
+| 不传 `model` | 同样成功，回包 `model: null`，沙箱照常分配 |
+| 沙箱凭据 | 创建响应内联 `link / token / sandboxId / cwd / e2bDataEndpoint`，无需再查 |
+| 沙箱环境 | Ubuntu 24.04.3 / Node 22.13.1 / Python 3.11.1 / git 2.43，root 身份 |
+| 寻址 | `link` 用 conversationId（`65225-{id}` = ACP，`49983-{id}` = envd 数据面） |
+| token 有效期 | `exp - iat = 259200`（**72 小时**），过期后 401/403 |
+| 会话 = 沙箱 | 确认 1:1，测试时新建会话即新建沙箱，删除会话即释放 |
+
+**据此修正的五处**：
+
+1. **token 过期自动续期**。`SandboxExec.run` 新增 `onUnauthorized` 回调，401/403 时换新
+   token 重试一次；`SandboxTools.token` 改成 `@Volatile var`，续期后就地更新。
+   在此之前，隔天回来的旧会话会表现成「agent 突然不会用工具」，模型只看到一句
+   `[error] HTTP 401`——因为 envd 的错误不抛异常，`withSandbox` 的 try/catch 兜不住。
+2. **区分「命令非零退出」与「协议错误」**。实测 `exit 7` 会把 `error` 字段填成
+   `"exit status 7"`，原实现把它当错误，和 `[exit 7]` 重复且误导模型去重试。
+   `ProcessOutput.merge` 现在把 `exit status N` / `status N` / `signal:` 排除在 `error` 之外。
+3. **自定义模式建会话不绑模型**。`createConversation(prompt, model: String?)`，传 null
+   就不写 `model` 字段。会话只当沙箱载体，不在云端挂一个用不到的模型；
+   同时直接用创建响应里内联的 session，省掉一次 `GET /session`。
+4. **设置页可调参数 + 测试连接**。新增采样温度滑块、最大迭代、历史轮数，
+   以及「测试连接」按钮：发一个 `max_tokens=1` 的最小请求，把 `401/403`（Key 错）、
+   `404`（地址或模型 ID 错）、`402/429`（额度/限流）分别翻译成人话。
+   地址输入框下方直接显示归一化后的真实请求地址（`EndpointResolver.previewPath`），
+   填了 `/v1` 也不会拼成 `/v1/v1/chat/completions`。
+5. **自定义会话标题兜底**。建完会话立刻 `rename` 成本地标题（取首句话前 24 字），
+   否则会话列表里会堆一串空标题——自定义模式的会话在云端本来就是空的。
+
+**验证**：155 项单测全绿（1.5.0 的 149 + 新增 6）。
+- `SandboxExecTest`（新）：401 换 token 重试一次、续期失败只请求一次、
+  无回调时 401 不重复请求；
+- `ConnectFrameTest` 补：`exit status` 不进 `error`、`signal:`/裸 `status N` 形态、
+  真实 end 错误仍保留。
+
+**仍然未覆盖**：流式输出、附件入沙箱、release 混淆。
+
+---
+
+## 1.5.0（推理引擎二选一：云端模型 / 自定义 API）
+
+**动机**：让用户能用自己的 OpenAI 兼容接口（DeepSeek 等）驱动任务，而不消耗账号积分。
+定位没有变：任务仍然在官方云沙箱（`/workspace`）里执行，只是"谁在思考、谁在调工具"
+这一层多了一个选项。
+
+**两条路径并列，不是替换**。默认仍是 `ENGINE_WB`，行为与 1.4.10 完全一致；只有用户
+在「设置 → 推理引擎」切到「自定义 API」后，发送才走本机 agent。没切的人感知不到任何变化。
+
+| | 云端模型（默认） | 自定义 API |
+| --- | --- | --- |
+| 推理位置 | 云端 agent | 本机 Koog `AIAgent` |
+| 模型 | 账号可选模型 | 用户填的任意 OpenAI 兼容端点 |
+| 积分 | 扣 | 不扣 |
+| 云端对话记录 | 有 | 无（只有会话本身） |
+| 工具执行 | 云端 agent 内部 | envd `process.Process/Start`，仍在同一沙箱 |
+
+**实现分层**（都遵守"纯函数解析 + 单测"的约定）：
+
+- `data/ConnectFrame.kt`：Connect 帧编解码（`flags(1B)+len(4B 大端)+payload`），纯字节处理；
+- `data/SandboxExec.kt`：`process.Process/Start` 调用与响应合并，`ProcessOutput` 是纯函数
+  （base64 解 stdout/stderr、读 exitCode、容错截断帧与错误帧）；
+- `data/SandboxTools.kt`：`run_shell` / `read_file` / `write_file` / `list_dir` 四个工具，
+  统一走 `sh -c`；路径用 `ShellQuote` 做 POSIX 单引号转义（含单测）；
+- `data/SessionAgent.kt`：每会话一个 agent + 独立历史 + 独立沙箱凭据，`SessionAgentHub`
+  按 `conversationId` 缓存，端点变了就重建；
+- `BuddyRepository.sendCustom()`：与 `send()` 并列，复用 `withSandbox()` 拿会话沙箱，
+  但不调用 `session/prompt`。
+
+**依赖变更**（这是本次最大的工程取舍）：
+
+- Kotlin `2.0.21 → 2.2.10`，新增 `kotlin.plugin.serialization`（工具参数需要 `KSerializer`）；
+- `ai.koog:agents-core:0.6.0` + `prompt-executor-llms:0.6.0`——**不引 `koog-agents` 全家桶**，
+  那个还会带上 RAG / embeddings / MCP / tokenizer；也**不引 KSP**，工具用手写 `Tool` 子类注册；
+- `io.ktor:ktor-client-okhttp:3.2.2` 作为 ktor 引擎，它依赖的正是项目已有的 okhttp 4.12.0。
+- 版本选择依据：Koog 0.7.0+ 要求 Kotlin ≥2.3.10，会强制连带升级 Compose BOM 与 AGP，
+  属于大改，故停在 0.6.0 / Kotlin 2.2.10 这条兼容线上。
+
+**体积**：debug APK `17.0 → 21.4 MB`（+4.4 MB）。注意 release 也没开 `isMinifyEnabled`
+（历史如此），所以正式包同样会带上这部分。要压回去需要给 ktor/serialization 写 keep 规则
+再开混淆，那是独立改动，本次没做——没有真机验证的混淆规则比多 4 MB 危险得多。
+
+**验证**：149 项单测全绿（原 135 + 新增 14）。其中 `SessionAgentLoopTest` 用 MockWebServer
+起一个假的 OpenAI 端点，跑通「请求 → 解析 tool_call → 执行工具 → 回喂结果 → 收敛」整条链，
+并断言第二次请求体里确实带上了工具返回。
+
+**明确未覆盖**（装包前请知悉）：
+
+- 附件在自定义模式下被忽略并提示，未做入沙箱；
+- 没有流式输出，一轮结束后整段返回（Koog 的 `executeStreaming` 已具备，只是没接 UI）；
+- `createConversation(prompt, model)` 是否会把 prompt 当成一轮发给云端，未在真机确认——
+  若会，则新会话的第一条消息可能仍消耗一次性云端推理，需实测后决定是否改成建空会话；
+- 混淆规则、release 包、真机全链路都需要在你的环境复核。
+
+---
+
 ## 1.2.0（多账号 / 技能 / MCP / 折叠方式）
 
 **多账号**：`accounts_v2` 存账号表，每样跟账号绑定的值带 `a:<id>:` 前缀，cookie 按

@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- 基础版与完整版沿用云端仓库的名字：两者包名也都是 cn.cloudbuddy.app，
+         覆盖安装后桌面上看不出差别，这才叫"同一个应用的两个档位"。
+         共存版（.plus）也用同一个名字——用户要求三个包同名，靠包名区分。 -->
     <string name="app_name">云伴 WorkBuddy</string>
 </resources>

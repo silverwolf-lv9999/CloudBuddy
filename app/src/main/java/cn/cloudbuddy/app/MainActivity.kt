@@ -57,6 +57,7 @@ import cn.cloudbuddy.app.ui.screens.FilePreviewScreen
 import cn.cloudbuddy.app.ui.screens.LoginScreen
 import cn.cloudbuddy.app.ui.screens.SessionsScreen
 import cn.cloudbuddy.app.ui.screens.SettingsScreen
+import cn.cloudbuddy.app.ui.screens.TerminalScreen
 import cn.cloudbuddy.app.ui.screens.WorkspaceScreen
 import cn.cloudbuddy.app.ui.theme.CloudBuddyTheme
 import kotlinx.coroutines.launch
@@ -109,11 +110,15 @@ private data class PreviewTarget(val conversationId: String, val path: String, v
 private fun AppRoot(repo: BuddyRepository) {
     val ui by repo.ui.collectAsStateWithLifecycle()
     val workspace by repo.workspace.collectAsStateWithLifecycle()
+    val terminal by repo.terminal.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
     var tab by remember { mutableStateOf(Tab.SESSIONS) }
     var preview by remember { mutableStateOf<PreviewTarget?>(null) }
+    // 命令行窗口是盖在上面的一层：它在两种引擎下都能用（沙箱是同一个），
+    // 所以不做成 Tab，免得用户以为"只有自定义模式才有终端"。
+    var showTerminal by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         repo.events.collect { message -> snackbar.showSnackbar(message) }
@@ -148,6 +153,29 @@ private fun AppRoot(repo: BuddyRepository) {
                         onBack = { preview = null }
                     )
                     BackHandler { preview = null }
+                } else if (showTerminal) {
+                    TerminalScreen(
+                        state = terminal,
+                        title = ui.activeTitle,
+                        available = terminal.conversationId != null,
+                        fontSize = repo.settings.terminalFontSp,
+                        onFontSize = { repo.settings.terminalFontSp = it },
+                        onRun = { repo.runShell(it) },
+                        onStop = { repo.stopShell() },
+                        onClear = { repo.clearTerminal() },
+                        onNewTab = { repo.newTerminalTab() },
+                        onSelectTab = { repo.selectTerminalTab(it) },
+                        onCloseTab = { repo.closeTerminalTab(it) },
+                        onRenameTab = { id, name -> repo.renameTerminalTab(id, name) },
+                        onBack = {
+                            repo.stopAllShells()
+                            showTerminal = false
+                        }
+                    )
+                    BackHandler {
+                        repo.stopAllShells()
+                        showTerminal = false
+                    }
                 } else {
                     AnimatedContent(
                         targetState = Triple(tab, ui.activeId, ui.draft),
@@ -164,7 +192,12 @@ private fun AppRoot(repo: BuddyRepository) {
                                     repo.closeConversation()
                                     scope.launch { repo.refreshConversations() }
                                 },
-                                onOpenWorkspace = { tab = Tab.WORKSPACE }
+                                onOpenWorkspace = { tab = Tab.WORKSPACE },
+                                onOpenTerminal = {
+                                    repo.openTerminal(ui.activeId)
+                                    showTerminal = true
+                                },
+                                onOpenSettings = { tab = Tab.SETTINGS }
                             )
                         } else {
                             Scaffold(
@@ -198,7 +231,15 @@ private fun AppRoot(repo: BuddyRepository) {
                                             onRename = { id, title -> repo.renameConversation(id, title) },
                                             onResetRun = { repo.forceResetConversation(it) },
                                             balanceLabel = ui.growth?.let { "${it.balance} 积分" }.orEmpty(),
-                                            offline = ui.offline
+                                            offline = ui.offline,
+                                            // 归属存在本机偏好里（云端没有这个概念），按会话 id 逐个判。
+                                            // 键在 conversations 上：列表一刷新就重算，不额外收一次状态。
+                                            localIds = remember(ui.conversations) {
+                                                ui.conversations
+                                                    .filter { repo.settings.isLocal(it.id) }
+                                                    .map { it.id }
+                                                    .toSet()
+                                            }
                                         )
 
                                         Tab.WORKSPACE -> WorkspaceScreen(
@@ -211,6 +252,10 @@ private fun AppRoot(repo: BuddyRepository) {
                                             onOpenSession = {
                                                 tab = Tab.SESSIONS
                                                 scope.launch { snackbar.showSnackbar("先进入一个会话，再回到工作区") }
+                                            },
+                                            onOpenTerminal = {
+                                                repo.openTerminal(workspace.conversationId)
+                                                showTerminal = true
                                             }
                                         )
 

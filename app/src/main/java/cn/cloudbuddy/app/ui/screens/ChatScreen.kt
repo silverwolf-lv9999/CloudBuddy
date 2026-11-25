@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.UnfoldLess
 import androidx.compose.material.icons.filled.UnfoldMore
@@ -114,7 +115,9 @@ fun ChatScreen(
     ui: AppUiState,
     repo: BuddyRepository,
     onBack: () -> Unit,
-    onOpenWorkspace: () -> Unit
+    onOpenWorkspace: () -> Unit,
+    onOpenTerminal: () -> Unit = {},
+    onOpenSettings: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -267,6 +270,11 @@ fun ChatScreen(
                                         text = { Text("沙箱工作区") },
                                         leadingIcon = { Icon(Icons.Filled.Folder, null, Modifier.size(18.dp)) },
                                         onClick = { menu = false; onOpenWorkspace() }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("终端") },
+                                        leadingIcon = { Icon(Icons.Filled.Terminal, null, Modifier.size(18.dp)) },
+                                        onClick = { menu = false; onOpenTerminal() }
                                     )
                                     DropdownMenuItem(
                                         text = { Text("选择模型") },
