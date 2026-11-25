@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -33,6 +34,7 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Copy
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material3.ContainedLoadingIndicator
@@ -211,8 +213,8 @@ private fun UserMessageBubble(
 }
 
 /**
- * AI 消息：平铺正文（无气泡背景），参考 ChatGPT / RikkaHub 的呈现。
- * 头像 + 正文一行，正文占满剩余宽度。
+ * AI 消息：平铺正文（无气泡、无头像），正文占满全宽。
+ * 支持长按选中部分复制。
  */
 @Composable
 private fun AssistantMessageBubble(
@@ -221,40 +223,17 @@ private fun AssistantMessageBubble(
     longText: Boolean
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Start,
-            verticalAlignment = Alignment.Top
-        ) {
-            // Expressive 头像：流式/加载中旋转 Cookie6Sided，平时 CircleShape
-            val avatarShape = rememberAvatarShape(loading = message.streaming)
-            Box(
-                modifier = Modifier
-                    .size(28.dp)
-                    .clip(avatarShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    Icons.Filled.Cloud,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(14.dp)
-                )
-            }
-            Spacer(Modifier.width(10.dp))
-            // 平铺正文，无气泡背景
-            Column(modifier = Modifier.weight(1f)) {
-                MarkdownText(
-                    markdown = message.text,
-                    baseSize = 15f,
-                    textColor = MaterialTheme.colorScheme.onSurface
-                )
-                if (message.streaming) TypingCursor()
-            }
+        // 无头像，平铺正文，长按可选中
+        SelectionContainer(modifier = Modifier.fillMaxWidth()) {
+            MarkdownText(
+                markdown = message.text,
+                baseSize = 15f,
+                textColor = MaterialTheme.colorScheme.onSurface
+            )
         }
+        if (message.streaming) TypingCursor()
         if (longText && !message.streaming) {
-            ActionText("复制", copy)
+            ActionCopyIcon(copy)
         }
     }
 }
@@ -389,6 +368,22 @@ fun StepsGroup(
 }
 
 // ── 复制按钮 ──────────────────────────────────────────────────────────────────
+
+@Composable
+private fun ActionCopyIcon(onClick: () -> Unit) {
+    TextButton(
+        onClick = onClick,
+        contentPadding = PaddingValues(4.dp),
+        modifier = Modifier.size(28.dp)
+    ) {
+        Icon(
+            Icons.Filled.Copy,
+            contentDescription = "复制",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(14.dp)
+        )
+    }
+}
 
 @Composable
 private fun ActionText(label: String, onClick: () -> Unit) {
@@ -591,7 +586,7 @@ private fun ToolRow(message: ChatMessage) {
     }
     val hasInput = !message.toolInput.isNullOrBlank()
     val hasOutput = !message.toolOutput.isNullOrBlank()
-    var expanded by remember(message.id) { mutableStateOf(message.toolState == ToolState.RUNNING) }
+    var expanded by remember(message.id) { mutableStateOf(false) }
 
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerLow,

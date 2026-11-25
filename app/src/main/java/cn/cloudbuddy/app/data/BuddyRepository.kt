@@ -1206,13 +1206,15 @@ class BuddyRepository(val settings: AppSettings) {
     }
 
     suspend fun openConversation(id: String) {
+        // 先读本地缓存，立即显示内容，避免白屏等云端全量拉取。
+        val cached = settings.loadMessageCache(id)
         _ui.value = _ui.value.copy(
             activeId = id,
             draft = false,
             loadingConversation = true,
             historyProgress = 0,
             historyNotice = null,
-            messages = emptyList(),
+            messages = cached,
             artifacts = emptyList(),
             error = null,
             ask = null,
@@ -1242,6 +1244,8 @@ class BuddyRepository(val settings: AppSettings) {
                 error = snap.error,
                 activeTitle = _ui.value.conversations.firstOrNull { it.id == id }?.title ?: _ui.value.activeTitle
             )
+            // 云端数据落地后更新缓存，下次打开直接显示。
+            settings.saveMessageCache(id, snap.messages)
             // 重放收尾一律把「执行中」压成 IDLE，但云端可能正被别的设备驱动着。
             // 这一次对账决定输入栏是发送还是暂停，也决定要不要补后续输出。
             reconcileAfterOpen(id)
@@ -1657,6 +1661,11 @@ class BuddyRepository(val settings: AppSettings) {
             loadingConversation = false,
             historyProgress = 0
         )
+
+        // 实时消息也落缓存，下次打开直接显示。
+        if (snapshot.messages.isNotEmpty()) {
+            settings.saveMessageCache(id, snapshot.messages)
+        }
 
         if (listDirty) {
             next = next.copy(
