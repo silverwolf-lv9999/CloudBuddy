@@ -26,6 +26,18 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # Gradle 依赖与构建缓存：第二次起不再重新下 AGP/Kotlin/Compose 全套。
+      - name: 缓存 Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.gradle/build-cache
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/**', 'gradle.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
       - name: 准备 Android SDK
         run: |
           sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
@@ -42,7 +54,8 @@ jobs:
       - name: 编译 + 单测 + lint
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleFullDebug :app:testFullDebugUnitTest :app:lintFullDebug 2>&1 | tail -80
+          ./gradlew :app:assembleFullDebug :app:testFullDebugUnitTest :app:lintFullDebug \
+            --build-cache --configuration-cache 2>&1 | tail -80
           status=${PIPESTATUS[0]}
           if [ $status -ne 0 ]; then
             echo "::error::构建失败（exit $status）"

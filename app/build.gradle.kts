@@ -56,9 +56,16 @@ android {
             isMinifyEnabled = false
         }
         release {
-            isMinifyEnabled = false
+            // R8 全量优化：压缩、混淆、瘦身。合并上游引入 Koog agent 后包体从 11MB 涨到 16MB，
+            // 不开 minify 就是原样打包。full mode 能进一步去掉未使用的 Kotlin 元数据与反射表。
+            isMinifyEnabled = true
+            isShrinkResources = true
+            isDebuggable = false
             signingConfig = if (hasReleaseKey) signingConfigs.getByName("release") else null
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 
