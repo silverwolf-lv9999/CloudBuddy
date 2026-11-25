@@ -6,9 +6,12 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -16,10 +19,17 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -49,7 +59,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.cloudbuddy.app.data.AppSettings
@@ -196,62 +211,94 @@ private fun AppRoot(repo: BuddyRepository) {
                                 onOpenSettings = { tab = Tab.SETTINGS }
                             )
                         } else {
-                            // 全屏内容 + 底部悬浮胶囊导航
-                            Box(Modifier.fillMaxSize()) {
-                                when (currentTab) {
-                                    Tab.SESSIONS -> SessionsScreen(
-                                        conversations = ui.conversations,
-                                        nickname = ui.account.nickname.ifBlank { repo.settings.nickname },
-                                        onOpen = { id -> scope.launch { repo.openConversation(id) } },
-                                        onNew = {
-                                            preview = null
-                                            tab = Tab.SESSIONS
-                                            repo.startNew()
-                                        },
-                                        onRefresh = { repo.refreshConversations() },
-                                        onDelete = { repo.deleteConversation(it) },
-                                        onRename = { id, title -> repo.renameConversation(id, title) },
-                                        onResetRun = { repo.forceResetConversation(it) },
-                                        balanceLabel = ui.growth?.let { "${it.balance} 积分" }.orEmpty(),
-                                        offline = ui.offline,
-                                        localIds = remember(ui.conversations) {
-                                            ui.conversations
-                                                .filter { repo.settings.isLocal(it.id) }
-                                                .map { it.id }
-                                                .toSet()
+                            // 结构照搬 KernelSU（manager/.../ui/MainActivity.kt）：
+                            // 悬浮栏放进 Scaffold 的 bottomBar，内容通过 innerPadding 自动避让，
+                            // 不再用 Box 叠一层——叠层会挡住内容底部的按钮（新建会话 FAB 就是被它压住的）。
+                            // 另外补一条 KernelSU 没有的：列表下滑时收起悬浮栏，上滑或触顶时再浮出。
+                            var barVisible by remember { mutableStateOf(true) }
+                            val connection = remember {
+                                object : NestedScrollConnection {
+                                    override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                                        if (source == NestedScrollSource.UserInput) {
+                                            if (available.y < -2f) barVisible = false
+                                            else if (available.y > 2f) barVisible = true
                                         }
-                                    )
-
-                                    Tab.WORKSPACE -> WorkspaceScreen(
-                                        ui = ui,
-                                        workspace = workspace,
-                                        repo = repo,
-                                        onPreview = { conversation, path, name ->
-                                            preview = PreviewTarget(conversation, path, name)
-                                        },
-                                        onOpenSession = {
-                                            tab = Tab.SESSIONS
-                                            scope.launch { snackbar.showSnackbar("先进入一个会话，再回到工作区") }
-                                        },
-                                        onOpenTerminal = {
-                                            repo.openTerminal(workspace.conversationId)
-                                            showTerminal = true
-                                        }
-                                    )
-
-                                    Tab.SETTINGS -> SettingsScreen(
-                                        ui = ui,
-                                        repo = repo,
-                                        onSignOut = { tab = Tab.SESSIONS }
-                                    )
+                                        return Offset.Zero
+                                    }
                                 }
+                            }
+                            Scaffold(
+                                containerColor = MaterialTheme.colorScheme.background,
+                                bottomBar = {
+                                    Box(Modifier.fillMaxWidth()) {
+                                        AnimatedVisibility(
+                                            visible = barVisible,
+                                            enter = slideInVertically { it } + fadeIn(),
+                                            exit = slideOutVertically { it } + fadeOut(),
+                                            modifier = Modifier.align(Alignment.BottomCenter)
+                                        ) {
+                                            FloatingTabBar(
+                                                currentTab = currentTab,
+                                                onTabSelected = { tab = it }
+                                            )
+                                        }
+                                    }
+                                }
+                            ) { innerPadding ->
+                                Box(
+                                    Modifier
+                                        .fillMaxSize()
+                                        .nestedScroll(connection)
+                                        .padding(bottom = innerPadding.calculateBottomPadding())
+                                ) {
+                                    when (currentTab) {
+                                        Tab.SESSIONS -> SessionsScreen(
+                                            conversations = ui.conversations,
+                                            nickname = ui.account.nickname.ifBlank { repo.settings.nickname },
+                                            onOpen = { id -> scope.launch { repo.openConversation(id) } },
+                                            onNew = {
+                                                preview = null
+                                                tab = Tab.SESSIONS
+                                                repo.startNew()
+                                            },
+                                            onRefresh = { repo.refreshConversations() },
+                                            onDelete = { repo.deleteConversation(it) },
+                                            onRename = { id, title -> repo.renameConversation(id, title) },
+                                            onResetRun = { repo.forceResetConversation(it) },
+                                            balanceLabel = ui.growth?.let { "${it.balance} 积分" }.orEmpty(),
+                                            offline = ui.offline,
+                                            localIds = remember(ui.conversations) {
+                                                ui.conversations
+                                                    .filter { repo.settings.isLocal(it.id) }
+                                                    .map { it.id }
+                                                    .toSet()
+                                            }
+                                        )
 
-                                // 苹果风格悬浮胶囊导航栏
-                                FloatingTabBar(
-                                    currentTab = currentTab,
-                                    onTabSelected = { tab = it },
-                                    modifier = Modifier.align(Alignment.BottomCenter)
-                                )
+                                        Tab.WORKSPACE -> WorkspaceScreen(
+                                            ui = ui,
+                                            workspace = workspace,
+                                            repo = repo,
+                                            onPreview = { conversation, path, name ->
+                                                preview = PreviewTarget(conversation, path, name)
+                                            },
+                                            onOpenSession = {
+                                                tab = Tab.SESSIONS
+                                                scope.launch { snackbar.showSnackbar("先进入一个会话，再回到工作区") }
+                                            },
+                                            onOpenTerminal = {
+                                                repo.openTerminal(workspace.conversationId)
+                                                showTerminal = true
+                                            }
+                                        )
+
+                                        Tab.SETTINGS -> SettingsScreen(
+                                            ui = ui,
+                                            repo = repo,
+                                            onSignOut = { tab = Tab.SESSIONS }
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -280,9 +327,11 @@ private fun AppRoot(repo: BuddyRepository) {
 }
 
 /**
- * 苹果风格悬浮胶囊导航栏。
- *
- * 特征：悬浮在内容上方，胶囊形半透明背景，图标+文字横排，选中项高亮。
+ * 悬浮胶囊导航栏。尺寸与间距照搬 KernelSU
+ * （manager/.../ui/component/bottombar/BottomBarMiuix.kt 的 FloatingBottomBar 分支）：
+ * - 胶囊总高 64dp，内部 padding 4dp（内容 56dp）
+ * - 左右各留 28dp，底部按导航栏 inset 决定（有 inset 时 8dp + inset，否则 28dp）
+ * - 宽度按内容 intrinsic 收缩，不铺满整行
  */
 @Composable
 private fun FloatingTabBar(
@@ -290,46 +339,60 @@ private fun FloatingTabBar(
     onTabSelected: (Tab) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Surface(
-        modifier = modifier
-            .padding(bottom = 32.dp)
-            .navigationBarsPadding(),
-        shape = CircleShape,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.92f),
-        tonalElevation = 3.dp,
-        shadowElevation = 8.dp
+    // 与 KernelSU 一致：有手势/三键导航栏 inset 时贴紧凑，没有才留大间距。
+    val navInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val bottomPadding = if (navInset != 0.dp) 8.dp + navInset else 28.dp
+
+    Box(
+        modifier = modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Surface(
+            modifier = Modifier
+                .padding(start = 28.dp, end = 28.dp, bottom = bottomPadding),
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.92f),
+            tonalElevation = 3.dp,
+            shadowElevation = 8.dp
         ) {
-            Tab.entries.forEach { item ->
-                val selected = currentTab == item
-                Surface(
-                    onClick = { onTabSelected(item) },
-                    shape = CircleShape,
-                    color = if (selected) MaterialTheme.colorScheme.primaryContainer
-                    else MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0f),
-                    modifier = Modifier.clip(CircleShape)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+            Row(
+                modifier = Modifier
+                    .height(64.dp)
+                    .padding(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Tab.entries.forEach { item ->
+                    val selected = currentTab == item
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .defaultMinSize(minWidth = 76.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (selected) MaterialTheme.colorScheme.primaryContainer
+                                else Color.Transparent
+                            )
+                            .clickable { onTabSelected(item) },
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            item.icon,
-                            contentDescription = item.label,
-                            tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        if (selected) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(1.dp, Alignment.CenterVertically),
+                            modifier = Modifier.padding(horizontal = 12.dp)
+                        ) {
+                            Icon(
+                                item.icon,
+                                contentDescription = item.label,
+                                tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(22.dp)
+                            )
                             Text(
                                 item.label,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
                             )
                         }
                     }
