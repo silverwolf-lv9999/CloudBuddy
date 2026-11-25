@@ -101,23 +101,27 @@ class SessionAgentPersistenceTest {
 
     @Test
     fun `思考会通过回调冒出来，不只有最终答案`() = runBlocking {
-        // 这条锁的是「思考强度调成中却什么都看不到」：`reasoning_content` 确实回来了，
-        // 但 `AIAgent.run()` 只给最终答案，思考必须在 executor 那一层抄出来。
+        // 这条锁的是「思考强度调成中却什么都看不到」：`reasoning_content` 以流式
+        // 增量下发（DeepSeek 及大量中转站的写法），自研引擎要边收边回调。
         server.enqueue(
-            MockResponse()
-                .setHeader("Content-Type", "application/json")
-                .setBody(
-                    """{"id":"x","object":"chat.completion","created":0,"model":"m",
-                       "choices":[{"index":0,"message":{"role":"assistant","content":"120 行",
-                       "reasoning_content":"先看目录，再数 README 的行数"},"finish_reason":"stop"}]}"""
-                )
+            sse(
+                """{"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning_content":"先看目录，"}}]}""",
+                """{"choices":[{"index":0,"delta":{"content":"","reasoning_content":"再数 README 的行数"}}]}""",
+                """{"choices":[{"index":0,"delta":{"content":"120 行"}}]}""",
+                """{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}""",
+            )
         )
         val thoughts = mutableListOf<String>()
+        val deltas = mutableListOf<Pair<ChatRole, String>>()
         val memory = FakeMemory()
 
-        val reply = agent(memory, onThought = { thoughts += it }).send("README 多少行")
+        val reply = agent(memory, onThought = { thoughts += it }, onDelta = { r, d -> deltas += r to d })
+            .send("README 多少行")
 
-        assertEquals(listOf("先看目录，再数 README 的行数"), thoughts)
+        // 思考先逐段增量、收尾定稿一次；回答同样逐段增量。
+        assertEquals("先看目录，再数 README 的行数", thoughts.single())
+        assertTrue(deltas.contains(ChatRole.THOUGHT to "先看目录，"))
+        assertTrue(deltas.contains(ChatRole.ASSISTANT to "120 行"))
         assertEquals("120 行", reply.answer)
         // 思考不该混进落盘的回答里：它是过程，展开折叠条时才看。
         assertEquals(2, memory.saved.size)
@@ -127,17 +131,23 @@ class SessionAgentPersistenceTest {
     private fun countOf(body: String, word: String): Int =
         Regex(Regex.escape(word)).findAll(body).count()
 
-    private fun answer(text: String): MockResponse = MockResponse()
-        .setHeader("Content-Type", "application/json")
-        .setBody(
-            """{"id":"x","object":"chat.completion","created":0,"model":"m",
-               "choices":[{"index":0,"message":{"role":"assistant","content":"$text"},
-               "finish_reason":"stop"}]}"""
-        )
+    /** OpenAI 兼容的 SSE 响应体。 */
+    private fun sse(vararg frames: String): MockResponse {
+        val body = frames.joinToString("\n\n") { "data: $it" } + "\n\ndata: [DONE]\n\n"
+        return MockResponse()
+            .setHeader("Content-Type", "text/event-stream")
+            .setBody(body)
+    }
+
+    private fun answer(text: String): MockResponse = sse(
+        """{"choices":[{"index":0,"delta":{"role":"assistant","content":"$text"}}]}""",
+        """{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}""",
+    )
 
     private fun agent(
         memory: AgentMemory,
         onThought: (String) -> Unit = {},
+        onDelta: (ChatRole, String) -> Unit = { _, _ -> },
     ): SessionAgent {
         val base = server.url("/").toString().trimEnd('/')
         return SessionAgent(
@@ -152,6 +162,7 @@ class SessionAgentPersistenceTest {
             ),
             memory = memory,
             onThought = onThought,
+            onDelta = onDelta,
         )
     }
 

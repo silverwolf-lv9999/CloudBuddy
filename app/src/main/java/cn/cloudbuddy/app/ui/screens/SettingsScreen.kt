@@ -195,7 +195,7 @@ private fun SettingsHome(
             }
 
             if (Edition.full) {
-                title("本机模型", Icons.Filled.Psychology, hint = "走你自己的 API，不扣积分，工具仍在沙箱里执行")
+                title("本机模型", Icons.Filled.Psychology, hint = "多提供商 + 模型管理，走你自己的 API，不扣积分")
                 item {
                     SettingCard {
                         SettingsEntryRow(

@@ -54,53 +54,23 @@ class SessionAgentLoopTest {
         server.shutdown()
     }
 
-    private fun toolCallResponse(): MockResponse {
-        val body = """
-            {
-              "id": "chatcmpl-1",
-              "object": "chat.completion",
-              "created": 1700000000,
-              "model": "deepseek-chat",
-              "choices": [{
-                "index": 0,
-                "message": {
-                  "role": "assistant",
-                  "content": null,
-                  "tool_calls": [{
-                    "id": "call_1",
-                    "type": "function",
-                    "function": { "name": "run_shell", "arguments": "{\"command\":\"echo hi\"}" }
-                  }]
-                },
-                "finish_reason": "tool_calls"
-              }],
-              "usage": { "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15 }
-            }
-        """.trimIndent()
-        return MockResponse()
-            .setResponseCode(200)
-            .setHeader("Content-Type", "application/json")
-            .setBody(body)
-    }
+    private fun toolCallResponse(): MockResponse = sse(
+        """{"choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}""",
+        """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"run_shell","arguments":"{\"command\":\"echo hi\"}"}}]}}]}""",
+        """{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}""",
+    )
 
-    private fun finalAnswerResponse(): MockResponse {
-        val body = """
-            {
-              "id": "chatcmpl-2",
-              "object": "chat.completion",
-              "created": 1700000001,
-              "model": "deepseek-chat",
-              "choices": [{
-                "index": 0,
-                "message": { "role": "assistant", "content": "命令执行环境不可用，请检查沙箱连接。" },
-                "finish_reason": "stop"
-              }],
-              "usage": { "prompt_tokens": 20, "completion_tokens": 8, "total_tokens": 28 }
-            }
-        """.trimIndent()
+    private fun finalAnswerResponse(): MockResponse = sse(
+        """{"choices":[{"index":0,"delta":{"role":"assistant","content":"命令执行环境不可用，请检查沙箱连接。"}}]}""",
+        """{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}""",
+    )
+
+    /** OpenAI 兼容的 SSE 响应体（自研引擎只走流式）。 */
+    private fun sse(vararg frames: String): MockResponse {
+        val body = frames.joinToString("\n\n") { "data: $it" } + "\n\ndata: [DONE]\n\n"
         return MockResponse()
             .setResponseCode(200)
-            .setHeader("Content-Type", "application/json")
+            .setHeader("Content-Type", "text/event-stream")
             .setBody(body)
     }
 

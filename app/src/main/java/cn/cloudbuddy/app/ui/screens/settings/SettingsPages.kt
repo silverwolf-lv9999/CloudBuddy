@@ -73,6 +73,7 @@ import cn.cloudbuddy.app.data.UpdateChecker
 import cn.cloudbuddy.app.ui.components.ConnectorCard
 import cn.cloudbuddy.app.ui.components.CustomModelManager
 import cn.cloudbuddy.app.ui.components.McpCard
+import cn.cloudbuddy.app.ui.components.ProviderManager
 import cn.cloudbuddy.app.ui.components.SkillsCard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -309,13 +310,6 @@ internal fun checkinHint(ui: AppUiState): String? {
 
 // ============================ 自定义 API ============================
 
-/** 「测试连接」的三种状态。 */
-private sealed interface ProbeState {
-    data object Idle : ProbeState
-    data object Running : ProbeState
-    data class Done(val ok: Boolean, val text: String) : ProbeState
-}
-
 @Composable
 internal fun CustomApiSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack: () -> Unit) {
     // 精简版没有这一页的能力。入口已经在首页隐藏，这里再拦一道：
@@ -339,8 +333,7 @@ internal fun CustomApiSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack
     }
 
     val scope = rememberCoroutineScope()
-    var customBaseUrl by remember { mutableStateOf(repo.settings.customBaseUrl) }
-    var customApiKey by remember { mutableStateOf(repo.settings.customApiKey) }
+    // 当前模型的选择键（providerId/modelId 或旧数据的裸 ID），会话默认值。
     var customModelId by remember { mutableStateOf(repo.settings.customModelId) }
     var customTemperature by remember { mutableStateOf(repo.settings.customTemperature) }
     var customMaxIter by remember { mutableStateOf(repo.settings.customMaxIterations.toString()) }
@@ -348,7 +341,9 @@ internal fun CustomApiSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack
     var customPrompt by remember { mutableStateOf(repo.settings.customSystemPrompt) }
     var thinkingEffort by remember { mutableStateOf(repo.settings.customThinkingEffort) }
     var thinkingStyle by remember { mutableStateOf(repo.settings.customThinkingStyle) }
-    var probeState by remember { mutableStateOf<ProbeState>(ProbeState.Idle) }
+    // 提供商测试：正在测哪个 + 结果（<providerId, 文本>）。
+    var testingId by remember { mutableStateOf<String?>(null) }
+    var providerTestResult by remember { mutableStateOf<Pair<String, String>?>(null) }
     var fetching by remember { mutableStateOf(false) }
     var fetchError by remember { mutableStateOf<String?>(null) }
 
@@ -356,81 +351,52 @@ internal fun CustomApiSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack
     // 它决定的是「这个 App 走哪套后端」，不是某一套后端的配置，放在首页单独一栏。
     SettingsPageScaffold("本机模型", onBack) { padding ->
         SettingsList(padding) {
-            title("端点", Icons.Filled.Extension)
+            title("提供商", Icons.Filled.Extension)
             item {
                 SettingCard {
                     Column(
                         modifier = Modifier.padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        OutlinedTextField(
-                            value = customBaseUrl,
-                            onValueChange = { customBaseUrl = it; repo.settings.customBaseUrl = it },
-                            label = { Text("接口地址") },
-                            placeholder = { Text(CustomModelConfig.DEEPSEEK_BASE_URL) },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        OutlinedTextField(
-                            value = customApiKey,
-                            onValueChange = { customApiKey = it; repo.settings.customApiKey = it },
-                            label = { Text("API Key") },
-                            placeholder = { Text("sk-…") },
-                            singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        // 当前模型仍可直接手填：端点不提供 /models（不少自建 vLLM 就是这样）
-                        // 时这是唯一入口，拉取只是「省得手抄」的便利，不能成为前提。
-                        OutlinedTextField(
-                            value = customModelId,
-                            onValueChange = { customModelId = it; repo.settings.customModelId = it },
-                            label = { Text("当前模型 ID") },
-                            placeholder = { Text(CustomModelConfig.DEEPSEEK_MODEL) },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            supportingText = {
-                                Text(
-                                    "这就是新本机会话默认用的模型，每条会话还能在聊天页单独改。",
-                                    style = MaterialTheme.typography.labelSmall
-                                )
+                        // 一个提供商一个端点：名称 + 地址 + Key + 开关。
+                        // 模型挂在提供商下面（见下方「模型」卡），会话按「提供商 + 模型」选。
+                        ProviderManager(
+                            providers = ui.llmProviders,
+                            testingId = testingId,
+                            testResult = providerTestResult,
+                            onAdd = { p ->
+                                repo.upsertProvider(p)
+                                providerTestResult = null
+                            },
+                            onUpdate = { p ->
+                                repo.upsertProvider(p)
+                                // 配置变了，旧的测试结果不再成立。
+                                providerTestResult = null
+                            },
+                            onRemove = { id ->
+                                repo.removeProvider(id)
+                                customModelId = repo.settings.customModelId
+                                providerTestResult = null
+                            },
+                            onTest = { p ->
+                                if (testingId != null) return@ProviderManager
+                                testingId = p.id
+                                scope.launch {
+                                    val r = repo.testProvider(p)
+                                    testingId = null
+                                    providerTestResult = p.id to if (r.ok) {
+                                        "连接成功 · 端点上有 ${r.models.size} 个模型"
+                                    } else {
+                                        r.error ?: "连接失败"
+                                    }
+                                }
                             }
                         )
-                    }
-                    Divider()
-                    // 「测试连接」紧跟在端点后面：填完地址、key、模型就想知道通不通，
-                    // 以前它在页尾，得滚过六组参数才找得到。
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = {
-                                if (probeState is ProbeState.Running) return@OutlinedButton
-                                probeState = ProbeState.Running
-                                scope.launch {
-                                    val r = repo.testCustomEndpoint()
-                                    probeState = ProbeState.Done(r.ok, r.detail)
-                                }
-                            },
-                            enabled = probeState !is ProbeState.Running,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                when (probeState) {
-                                    is ProbeState.Running -> "测试中…"
-                                    else -> "测试连接"
-                                }
-                            )
-                        }
-                        (probeState as? ProbeState.Done)?.let { done ->
-                            Text(
-                                done.text,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (done.ok) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.error
-                            )
-                        }
+                        Text(
+                            "Key 只存在本机，不上传、不写日志、不进沙箱工作区。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
@@ -446,24 +412,31 @@ internal fun CustomApiSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack
                         // 每条可以单独改显示名 / 思考强度 / 系统提示词（见 CustomModelManager）。
                         CustomModelManager(
                             models = ui.customModels,
+                            providers = ui.llmProviders,
                             selectedId = customModelId,
                             candidates = ui.customCandidates,
                             globalEffort = thinkingEffort,
                             globalTurns = customCtxTurns.toIntOrNull() ?: repo.settings.customContextTurns,
                             fetching = fetching,
                             error = fetchError,
-                            onFetch = {
-                                if (fetching) return@CustomModelManager
+                            onFetch = { providerId ->
+                                if (fetching || providerId.isBlank()) return@CustomModelManager
                                 fetching = true
                                 fetchError = null
                                 scope.launch {
-                                    val r = repo.fetchCustomModels()
+                                    val p = ui.llmProviders.firstOrNull { it.id == providerId }
+                                    val r = if (p == null) {
+                                        cn.cloudbuddy.app.data.CustomModelCatalog.Result(emptyList(), "提供商不存在")
+                                    } else {
+                                        repo.fetchProviderModels(p)
+                                    }
                                     fetching = false
                                     fetchError = if (r.ok) null else r.error
                                 }
                             },
-                            onAdd = { ids ->
-                                repo.addCustomModels(ids)
+                            onClearCandidates = { repo.clearCustomCandidates() },
+                            onAdd = { ids, providerId ->
+                                repo.addCustomModels(ids, providerId)
                                 customModelId = repo.settings.customModelId
                             },
                             onRemove = { id ->
@@ -492,8 +465,14 @@ internal fun CustomApiSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack
                     ) {
                         // 把归一化后的真实请求地址摊开给用户看：填了 /v1 也不会拼成
                         // /v1/v1/chat/completions，这里显示的就是最终会打的那一条。
+                        // 按当前选中模型实际用的端点展示：多提供商后没有统一端点了。
+                        val previewBase = remember(ui.customModels, ui.llmProviders, customModelId) {
+                            ui.customModels.firstOrNull { it.selKey == customModelId }?.let { m ->
+                                ui.llmProviders.firstOrNull { it.id == m.providerId }?.baseUrl
+                            } ?: repo.settings.customBaseUrl
+                        }
                         Text(
-                            "请求将发往：" + EndpointResolver.previewPath(customBaseUrl),
+                            "请求将发往：" + EndpointResolver.previewPath(previewBase),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -623,7 +602,11 @@ internal fun CustomApiSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack
                             ?.takeIf { it.isNotBlank() } ?: thinkingEffort
                         val overridden = effectiveEffort != thinkingEffort
                         Text(
-                            ThinkingParams.describe(customBaseUrl, thinkingStyle, effectiveEffort, customModelId) +
+                            ThinkingParams.describe(
+                                repo.settings.customModel()?.baseUrl ?: "",
+                                thinkingStyle, effectiveEffort,
+                                repo.settings.customModel()?.modelId ?: ""
+                            ) +
                                 if (overridden) {
                                     "\n（该模型单独设了强度：${ThinkingEffort.of(effectiveEffort).label}）"
                                 } else {

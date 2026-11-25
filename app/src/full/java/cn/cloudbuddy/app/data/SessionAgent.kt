@@ -1,22 +1,13 @@
 package cn.cloudbuddy.app.data
 
-import ai.koog.agents.core.agent.AIAgent
-import ai.koog.agents.core.agent.ToolCalls
-import ai.koog.agents.core.agent.config.AIAgentConfig
-import ai.koog.agents.core.agent.singleRunStrategy
 import ai.koog.agents.core.tools.ToolRegistry
-import ai.koog.prompt.dsl.prompt
-import ai.koog.prompt.executor.clients.openai.OpenAIClientSettings
-import ai.koog.prompt.executor.clients.openai.OpenAILLMClient
-import ai.koog.prompt.executor.llms.SingleLLMPromptExecutor
-import ai.koog.prompt.llm.LLMCapability
-import ai.koog.prompt.llm.LLModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import java.util.concurrent.ConcurrentHashMap
-
 
 /**
  * 一个会话的 agent 运行时。
@@ -24,6 +15,10 @@ import java.util.concurrent.ConcurrentHashMap
  * **会话隔离是这个类的核心职责**：沙箱是按会话分配的，所以 endpoint/token、
  * 工具集、对话历史都必须绑定 conversationId。切会话时拿到的必须是另一份实例，
  * 否则命令会跑到别的沙箱里去（对应项目里"坑 17"的同类问题）。
+ *
+ * 对话引擎是自研的 [OpenAiStreamClient]（2026-11 起，不再借道 Koog 的 agent 框架）：
+ * Koog 不解析 `reasoning_content`、思考参数塞不进请求体，还把最终文本之外的一切
+ * 都关在框架里。自研循环把思考、工具调用、最终回答全部拿到手，逐段回调给上层。
  */
 class SessionAgent(
     val conversationId: String,
@@ -35,11 +30,16 @@ class SessionAgent(
     /** token 过期时向云端换新（72 小时有效期），由上层注入以免这里认识 Repository。 */
     private val tokenRefresher: suspend () -> String? = { null },
     private val memory: AgentMemory = AgentMemory.None,
-    /** 模型每想完一段就回调一次（见 [ReasoningTee]）；不思考的模型不会触发。 */
+    /**
+     * 一段思考想完时的回调（一次流式请求一段；工具循环里可能有多段）。
+     * 上层用它把思考消息定稿。不思考的模型不会触发。
+     */
     private val onThought: (String) -> Unit = {},
     private val onToolEvent: (SandboxToolEvent) -> Unit = {},
     /** 每条命令执行完的完整回执，交给上层写命令日志（终端窗口）。 */
     private val onExecuted: (String, Long, SandboxExec.Result) -> Unit = { _, _, _ -> },
+    /** 流式增量：THOUGHT / ASSISTANT 逐字回调，上层做实时显示。 */
+    private val onDelta: (ChatRole, String) -> Unit = { _, _ -> },
     /** 本机技能库；为空表示这条 agent 不带技能（旧构造点、单测）。 */
     private val skills: LocalSkillStore? = null,
     /** 本机直连的 MCP 服务器；连接在第一次发消息时建立。 */
@@ -49,7 +49,7 @@ class SessionAgent(
     /** 本轮执行过的工具摘要，供 [onToolEvent] 之外的持久化使用。 */
     private val toolNotes = ArrayList<String>()
 
-    /** 懒建的 LLM 客户端（思考参数钩子挂在它的 ktor 客户端上）。 */
+    /** 懒建的流式客户端（ktor HttpClient 连接池跨轮复用）。 */
     private val llm = LazyClient()
 
     /** 本轮是否已经动过沙箱。动过就不能自动重试，否则副作用会执行两次。 */
@@ -73,11 +73,10 @@ class SessionAgent(
     }, onExecuted)
 
     /**
-     * 跑一轮对话。
+     * 跑一轮对话：流式请求 → 有工具调用就执行 → 带着结果再问 → 直到出最终回答。
      *
-     * 每轮都新建 Koog agent（框架的 `run` 只有单次语义，没有多轮会话对象），
-     * 把历史重新灌进 prompt。代价是每轮重建一次 agent 对象，收益是不用操心
-     * 框架内部会话状态的生命周期，也不会因为切会话残留上下文。
+     * 与旧 Koog 版的语义对齐：重试、中断留痕、失败落盘都在 [send]；
+     * 这里只负责单次（可能多步的）执行。
      */
     override suspend fun send(userText: String): AgentReply {
         if (!config.usable) {
@@ -128,49 +127,68 @@ class SessionAgent(
 
     /** 真正跑一轮；异常交由 [send] 决定是否重试。 */
     private suspend fun runOnce(userText: String): AgentReply {
-        val p = buildPrompt(userText)
-        val model = CustomLlmClient.model(config)
+        val client = llm.getOrCreate { OpenAiStreamClient() }
 
-        // 每个会话一个客户端，跨轮复用：ktor 的 HttpClient 自带连接池与协程调度器，
-        // 每轮新建一个不关会把它们一起攒下来。
-        val client = llm.getOrCreate { CustomLlmClient.build(config) }
-        // OpenAILLMClient 只是 LLMClient，agent 需要 PromptExecutor；
-        // SingleLLMPromptExecutor 是框架提供的官方适配层。
-        // 外面再套 [ReasoningTee]：agent 只吐最终答案，思考过程得在 executor 这一层抄出来。
-        val executor = ReasoningTee(SingleLLMPromptExecutor(client), onThought)
-        val agentConfig = AIAgentConfig(
-            prompt = p,
-            model = model,
-            maxAgentIterations = config.maxIterations.coerceIn(1, 200),
-        )
-
-        // 工具表 = 沙箱工具 + 技能读取 + MCP 远端工具。
+        // 工具表 = 沙箱工具 + 技能读取 + MCP 远端工具，全部适配成自研 ChatTool。
         // MCP 是外部依赖，连不上只是少一批工具，不能让整轮对话失败（见 [ensureMcp]）。
-        val skillRegistry = if (activeSkills.isEmpty() || skills == null) {
-            ToolRegistry.EMPTY
+        val registry = tools.registry() +
+            (if (activeSkills.isEmpty() || skills == null) ToolRegistry.EMPTY else LocalSkillTools(skills).registry()) +
+            ensureMcp()
+        val chatTools = registry.tools.map { it.asChatTool() }
+        val toolMap = chatTools.associateBy { it.name }
+
+        // 消息表：系统提示 + 历史（回放窗口）+ 本轮输入。
+        val messages = ArrayList<ChatMsg>()
+        messages.add(ChatMsg.System(systemPrompt()))
+        val history = memory.load(conversationId).filterNot { it.error }
+        val replay = if (history.lastOrNull()?.let { it.fromUser && it.text == userText } == true) {
+            history.dropLast(1)
         } else {
-            LocalSkillTools(skills).registry()
+            history
         }
-        val registry = tools.registry() + skillRegistry + ensureMcp()
-
-        val agent = AIAgent(
-            promptExecutor = executor,
-            agentConfig = agentConfig,
-            strategy = singleRunStrategy(ToolCalls.SEQUENTIAL),
-            toolRegistry = registry,
-            id = "cb-" + conversationId,
-        )
-
+        for (t in replayWindow(replay)) {
+            if (t.fromUser) {
+                messages.add(ChatMsg.User(t.text))
+            } else {
+                // 工具摘要附在回答前，让模型接着上一轮的进度做事。
+                val text = if (t.note.isNullOrBlank()) t.text else "（上轮调用：${t.note}）\n${t.text}"
+                messages.add(ChatMsg.Assistant(text))
+            }
+        }
         // 「每条消息之前」的片段贴在这里：它本来就该紧挨着用户这句话。
         // 塞进系统提示词的话，隔着整段历史，模型很容易当耳旁风。
         val input = config.userPrefix.takeIf { it.isNotBlank() }
             ?.let { "$it\n\n$userText" }
             ?: userText
+        messages.add(ChatMsg.User(input))
 
-        val answer = try {
-            agent.run(input)
-        } finally {
-            runCatching { agent.close() }
+        val maxIterations = config.maxIterations.coerceIn(1, 200)
+        var iterations = 0
+        var answer = ""
+        while (true) {
+            val result = client.stream(
+                config, messages, chatTools,
+                onReasoningDelta = { seg -> runCatching { onDelta(ChatRole.THOUGHT, seg) } },
+                onContentDelta = { seg -> runCatching { onDelta(ChatRole.ASSISTANT, seg) } },
+            )
+            // 这段思考想完了：定稿上层正在流式显示的思考消息（旧 onThought 契约）。
+            if (result.reasoning.isNotBlank()) runCatching { onThought(result.reasoning) }
+
+            if (result.toolCalls.isEmpty()) {
+                answer = result.content
+                break
+            }
+
+            // 协议要求：带工具调用的 assistant 消息要和工具结果一起回传。
+            messages.add(ChatMsg.Assistant(result.content, result.toolCalls))
+            for (call in result.toolCalls) {
+                val out = executeTool(toolMap, call)
+                messages.add(ChatMsg.ToolResult(call.id, out))
+            }
+            if (++iterations >= maxIterations) {
+                answer = result.content + "\n（已达最大工具调用次数 $maxIterations，停止执行）"
+                break
+            }
         }
 
         // 只写回答：提问已经在 [send] 开头写过了。这一轮真正跑完，才算有了「回复」。
@@ -185,44 +203,33 @@ class SessionAgent(
         return AgentReply(answer, toolNotes.distinct())
     }
 
+    /** 执行一次工具调用。任何失败都变成一段错误文本回给模型，让它自己调整。 */
+    private suspend fun executeTool(toolMap: Map<String, ChatTool>, call: ChatToolCall): String {
+        val tool = toolMap[call.name]
+            ?: return "[error] 未注册的工具 ${call.name}。可用工具：${toolMap.keys.joinToString("、")}"
+        val args = runCatching {
+            Json.parseToJsonElement(call.arguments.ifBlank { "{}" }).jsonObject
+        }.getOrElse {
+            return "[error] 参数不是合法 JSON 对象：${call.arguments.take(200)}"
+        }
+        return try {
+            tool.execute(args)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            "[error] ${e.message ?: e::class.simpleName}"
+        }
+    }
+
     /**
      * 往消息流里追加一条。
      *
      * 只追加、不重写整段：落盘的是完整消息流（思考与工具过程都在里面），
      * 整体覆盖会让那些过程消息在每次写历史时被抹掉——重进会话就只剩问答两行，
-     * 正是「会话像是被人删过一半」的来源。上下文长度由 [buildPrompt] 截取。
+     * 正是「会话像是被人删过一半」的来源。上下文长度由回放窗口截取。
      */
     private fun remember(turn: AgentTurn) {
         memory.append(conversationId, turn)
-    }
-
-    /**
-     * 把持久化的历史灌进 prompt。
-     *
-     * **本轮提问不在这里追加**：`agent.run(userText)` 会把它作为新一轮输入接到
-     * prompt 后面，这里再写一遍就会让同一句话出现两次（模型于是反复确认需求，
-     * 还白烧一份 token）。send() 开头已经把提问写进 memory 了，所以要摘掉。
-     */
-    private fun buildPrompt(userText: String): ai.koog.prompt.dsl.Prompt {
-        val history = memory.load(conversationId).filterNot { it.error }
-        val replay = if (history.lastOrNull()?.let { it.fromUser && it.text == userText } == true) {
-            history.dropLast(1)
-        } else {
-            history
-        }
-        val base = prompt("cb-" + conversationId) {
-            system(systemPrompt())
-            for (t in replayWindow(replay)) {
-                if (t.fromUser) {
-                    user(t.text)
-                } else {
-                    // 工具摘要附在回答前，让模型接着上一轮的进度做事。
-                    val text = if (t.note.isNullOrBlank()) t.text else "（上轮调用：${t.note}）\n${t.text}"
-                    assistant(text)
-                }
-            }
-        }
-        return base.withParams(CustomLlmClient.params(config))
     }
 
     /**
@@ -332,22 +339,16 @@ class SessionAgent(
 }
 
 /**
- * 会话 → agent 的映射表。
- *
- * 沙箱跟随会话，所以这里也按会话缓存；会话结束时用 [drop] 释放，
- * 而不是让它无限增长。
- */
-/**
- * 懒建的 LLM 客户端。
+ * 懒建的流式客户端。
  *
  * 不用 `by lazy` 是为了能在 [SessionAgent.close] 里主动关掉：`by lazy` 分不清
  * 「还没建」和「已经关了」，强行取值反而会白建一个连接池出来。
  */
 private class LazyClient {
     @Volatile
-    private var client: OpenAILLMClient? = null
+    private var client: OpenAiStreamClient? = null
 
-    fun getOrCreate(factory: () -> OpenAILLMClient): OpenAILLMClient =
+    fun getOrCreate(factory: () -> OpenAiStreamClient): OpenAiStreamClient =
         client ?: synchronized(this) { client ?: factory().also { client = it } }
 
     fun close() {
@@ -372,6 +373,7 @@ class SessionAgentHub(
         onThought: (String) -> Unit,
         onToolEvent: (SandboxToolEvent) -> Unit,
         onExecuted: (String, Long, SandboxExec.Result) -> Unit,
+        onDelta: (ChatRole, String) -> Unit,
     ): SessionAgent {
         val existing = agents[conversationId]
         // 换会话（endpoint 变了）或改了模型配置，都必须重建：
@@ -383,7 +385,7 @@ class SessionAgentHub(
         }
         val created = SessionAgent(
             conversationId, exec, endpoint, token, config,
-            tokenRefresher, settings.agentMemory, onThought, onToolEvent, onExecuted,
+            tokenRefresher, settings.agentMemory, onThought, onToolEvent, onExecuted, onDelta,
             // 技能与 MCP 都在「本机模型」那一栏配置，只喂本机会话。
             // 传 getter 而不是当时的快照：用户在设置里改了配置，下一条消息就该按新的来。
             skills = settings.localSkills,
@@ -402,37 +404,22 @@ class SessionAgentHub(
     /**
      * 用最小请求验证自定义模型配置是否可用。
      *
-     * 放在实现侧而不是仓储里：core 版没有 Koog，这段代码连编译都不该发生。
+     * 放在实现侧而不是仓储里：core 版没有本机引擎，这段代码连编译都不该发生。
      */
     override suspend fun testConnection(cfg: CustomModelConfig): Result<String> =
         withContext(Dispatchers.IO) {
             runCatching {
                 if (!cfg.usable) throw CloudException("地址、API Key、模型 ID 需要全部填写")
-                val resolved = cfg.endpoint
-                val client = OpenAILLMClient(
-                    cfg.apiKey,
-                    OpenAIClientSettings(
-                        baseUrl = resolved.baseUrl,
-                        chatCompletionsPath = resolved.chatCompletionsPath,
-                    ),
-                )
-                val model = LLModel(
-                    provider = CustomLLMProvider,
-                    id = cfg.modelId,
-                    capabilities = listOf(
-                        LLMCapability.Completion,
-                        LLMCapability.OpenAIEndpoint.Completions,
-                    ),
-                    contextLength = 128_000L,
-                )
-                val executor = SingleLLMPromptExecutor(client)
-                val probe = prompt("cb-connect-test") {
-                    user("只回复两个字：可用")
+                val client = OpenAiStreamClient()
+                try {
+                    val started = System.currentTimeMillis()
+                    val result = client.stream(cfg, listOf(ChatMsg.User("只回复两个字：可用")))
+                    val cost = System.currentTimeMillis() - started
+                    val reply = result.content.trim().ifEmpty { "（模型未返回文本，但请求成功）" }
+                    "连接成功（${cost}ms）· 回复：${reply.take(60)}"
+                } finally {
+                    client.close()
                 }
-                val started = System.currentTimeMillis()
-                val reply = executor.execute(probe, model).firstOrNull()?.content.orEmpty()
-                val cost = System.currentTimeMillis() - started
-                "连接成功（${cost}ms）· 回复：${reply.take(60)}"
             }
         }
 }

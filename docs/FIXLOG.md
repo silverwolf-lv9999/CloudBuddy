@@ -2237,3 +2237,45 @@ IDLE（`turnActive` 时降级返回），**没挡 DONE**——所以即使这轮
 
 ## 测试
 - 951 项全绿（base/full/plus），lint 0 error。
+
+# 1.6.0 开发中 · 思考显示自研引擎重做 + 多提供商模型管理
+
+## 现象（用户反馈）
+1. 自定义 API 会话依旧不显示思考；要求照搬 RikkaHub 的会话框架，不要再局限于云端会话那套。
+2. 模型管理没有照搬：只能配一个模型提供商。
+3. 设置页排版也要抄 RikkaHub。
+
+## 根因
+1. **Koog 0.6.0 根本不解析 `reasoning_content`**——在它的 OpenAI 客户端 jar 里搜不到这个
+   字符串（实测）。DeepSeek 及大量中转站的思考内容正是用这个字段流式下发的，
+   所以上一轮的 ReasoningTee 建立在错误前提上：Koog 上游就没收到过思考。
+2. 单一提供商：`customBaseUrl/customApiKey` 是全局一对，所有模型挤在同一个端点下。
+
+## 改法
+1. **自研流式引擎**（照 RikkaHub 协议层做法，彻底脱离 Koog agent 框架）：
+   - `OpenAiStreamClient`：ktor + SSE 手工解析，`reasoning_content ?: reasoning`
+     双字段兜底（DeepSeek / OpenRouter 写法都接住），content / tool_calls 分片
+     （按 index 拼装）/ finish_reason 全拿到；请求体自己拼，思考参数直接平铺，
+     拆掉 OkHttp 拦截器补丁。
+   - 工具循环自实现：assistant tool_calls → 执行 → tool 结果回传 → 再问，
+     直到最终回答或达最大迭代；工具失败转错误文本回给模型。
+   - Koog 工具表通过 `asChatTool()` 适配（descriptor→JSON Schema，decodeArgs 执行），
+     沙箱 / 技能 / MCP 工具实现零改动。
+   - **流式显示**：仓储新增 pushStreamLocal / appendStreamLocal / endStreamLocal，
+     思考与回答逐字进界面（打字机效果），定稿才落盘；中断/失败路径把半截内容
+     收口落盘，不悬在「打字中」。
+   - 修一个真 bug：agent 收尾 remember 的回答与流式落盘的回答重复（中间隔着思考
+     消息，连续去重拦不住）→ TranscriptMemory 增加本轮内去重，跨轮不误杀。
+   - ReasoningTee / CustomLlmClient（Koog 客户端 + 拦截器）整体删除。
+2. **多提供商**（照 RikkaHub ProviderSetting 结构）：
+   - `LlmProvider(id/name/baseUrl/apiKey/enabled)` 实体；模型挂提供商下，
+     选择键 `providerId/modelId` 全局唯一，不同端点同名模型不串台。
+   - 旧数据迁移：全局端点自动搬成第一个提供商（幂等），旧字段保留兜底。
+   - 设置页新增「提供商」卡：增改删、启用开关、逐提供商测试连接；
+     模型拉取按提供商进行；候选池切提供商即清空。
+   - 聊天页模型弹窗按提供商分组（RikkaHub ModelListSheet 做法），顶栏显示模型名。
+   - 手填模型 ID 入口移进候选框（不提供 /models 的自建 vLLM 仍可用）。
+
+## 测试
+- 新增 ChatStreamTest（SSE 解析 6 形状）、流式回答去重回归等；963 项全绿（+12），
+  三变体 lint 0 error。

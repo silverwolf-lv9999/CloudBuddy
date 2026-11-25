@@ -307,7 +307,9 @@ fun ChatScreen(
                 attachments = attachments,
                 uploading = uploading,
                 model = if (ui.engine == AppSettings.ENGINE_CUSTOM) {
-                    "本机 · " + ui.selectedModel.ifBlank { "未配置" }
+                    // 选择键是 providerId/modelId，顶栏只显示模型名（提供商在弹窗里看）。
+                    val sel = ui.customModels.firstOrNull { it.selKey == ui.selectedModel }
+                    "本机 · " + (sel?.title ?: ui.selectedModel.substringAfterLast('/').ifBlank { "未配置" })
                 } else {
                     ui.models.firstOrNull { it.id == ui.selectedModel }?.name
                         ?: ui.selectedModel.ifBlank { "云端默认" }
@@ -499,10 +501,13 @@ fun ChatScreen(
             kind = ui.engine,
             models = ui.models,
             customModels = ui.customModels,
+            providers = ui.llmProviders,
             selected = ui.selectedModel,
             loading = ui.modelsLoading,
             error = ui.modelError,
-            endpointHint = repo.settings.customBaseUrl,
+            endpointHint = ui.customModels.firstOrNull { it.selKey == ui.selectedModel }?.let { m ->
+                ui.llmProviders.firstOrNull { it.id == m.providerId }?.baseUrl
+            } ?: repo.settings.customBaseUrl,
             // 草稿态才有「这条会话还没定型」这回事；已有会话的类型是历史事实。
             canSwitchKind = ui.activeId == null,
             onSwitchKind = { kind ->
@@ -905,6 +910,8 @@ fun ModelDialog(
     kind: String,
     models: List<cn.cloudbuddy.app.data.ModelChoice>,
     customModels: List<cn.cloudbuddy.app.data.CustomModel>,
+    /** 本机模型的提供商清单：列表按提供商分组、条目显示提供商名。 */
+    providers: List<cn.cloudbuddy.app.data.LlmProvider> = emptyList(),
     selected: String,
     loading: Boolean,
     error: String?,
@@ -993,47 +1000,23 @@ fun ModelDialog(
                             modifier = Modifier.heightIn(max = 260.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            items(customModels, key = { it.id }) { m ->
-                                val active = m.id == selected
-                                Surface(
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = if (active) MaterialTheme.colorScheme.primaryContainer
-                                    else MaterialTheme.colorScheme.surfaceVariant,
-                                    modifier = Modifier.fillMaxWidth().clickable { onSelect(m.id) }
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(10.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            // 显示名是用户自己起的（「DeepSeek 便宜那个」），
-                                            // 比裸 ID 好认；ID 保留成小字，出问题时对得上日志。
-                                            Text(m.title, style = MaterialTheme.typography.titleMedium)
-                                            if (m.title != m.id) {
-                                                Text(
-                                                    m.id,
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    maxLines = 1
-                                                )
-                                            }
-                                        }
-                                        if (m.reasoning) {
-                                            Text(
-                                                "思考",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.tertiary
-                                            )
-                                            Spacer(Modifier.width(8.dp))
-                                        }
-                                        if (active) {
-                                            Text(
-                                                "使用中",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                        }
+                            // 按提供商分组（照 RikkaHub 的 ModelListSheet）：多端点时
+                            // 用户要一眼看出某个模型挂在哪个端点下。
+                            val grouped = customModels.groupBy { it.providerId }
+                            grouped.forEach { (pid, group) ->
+                                val providerName = providers.firstOrNull { it.id == pid }?.label
+                                if (providers.size > 1 && providerName != null) {
+                                    item(key = "header-$pid") {
+                                        Text(
+                                            providerName,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.padding(top = 4.dp)
+                                        )
                                     }
+                                }
+                                items(group, key = { it.selKey }) { m ->
+                                    ModelOption(m, providers, selected, onSelect)
                                 }
                             }
                         }
@@ -1139,4 +1122,59 @@ private fun readAttachment(context: android.content.Context, uri: Uri): Result<P
         ?: throw IllegalStateException("无法读取该文件")
     require(bytes.size <= 24 * 1024 * 1024) { "文件超过 24MB，请改用工作区上传" }
     PendingAttachment(name, mime, bytes)
+}
+
+/**
+ * 本机模型弹窗里的一个条目。
+ *
+ * 选中值与回调都用选择键（providerId/modelId）：不同提供商下的同名模型
+ * 是两条不同配置，用裸 ID 会互相顶掉。
+ */
+@Composable
+private fun ModelOption(
+    m: cn.cloudbuddy.app.data.CustomModel,
+    providers: List<cn.cloudbuddy.app.data.LlmProvider>,
+    selected: String,
+    onSelect: (String) -> Unit,
+) {
+    val active = m.selKey == selected
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = if (active) MaterialTheme.colorScheme.primaryContainer
+        else MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier.fillMaxWidth().clickable { onSelect(m.selKey) }
+    ) {
+        Row(
+            modifier = Modifier.padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                // 显示名是用户自己起的（「DeepSeek 便宜那个」），
+                // 比裸 ID 好认；ID 与提供商保留成小字，出问题时对得上日志。
+                Text(m.title, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    buildString {
+                        if (m.title != m.id) append(m.id)
+                        if (m.title == m.id && providers.size > 1) {
+                            providers.firstOrNull { it.id == m.providerId }?.let { append(it.label) }
+                        }
+                        if (m.reasoning) {
+                            if (isNotEmpty()) append(" · ")
+                            append("思考")
+                        }
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
+                )
+            }
+            if (active) {
+                Text(
+                    "使用中",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+    }
 }

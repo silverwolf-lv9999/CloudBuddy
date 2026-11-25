@@ -145,6 +145,37 @@ class TranscriptMemoryTest {
     }
 
     @Test
+    fun `流式回答已落盘时收尾的重复回答不再追加`() {
+        // 流式显示：仓储边收边写（提问 → 思考 → 回答），agent 收尾时又 remember
+        // 一次「完整回答」。中间隔着思考消息，连续去重拦不住——不查本轮内重复，
+        // 重开会话就会看到两条一模一样的回答。
+        val store = store()
+        val memory = TranscriptMemory(store)
+
+        memory.append("c1", AgentTurn(true, "看下 README"))
+        store.append("c1", msg(ChatRole.THOUGHT, "先列目录"))
+        store.append("c1", msg(ChatRole.ASSISTANT, "一共三个文件")) // 流式消息定稿后的形态
+        memory.append("c1", AgentTurn(false, "一共三个文件"))
+
+        val answers = store.messages("c1").filter { it.role == ChatRole.ASSISTANT }
+        assertEquals(1, answers.size)
+    }
+
+    @Test
+    fun `跨轮的相同回答不去重`() {
+        // 两轮问了同一件事、模型两轮都答了同一句话：都是真实对话，各留一条。
+        val store = store()
+        val memory = TranscriptMemory(store)
+
+        memory.append("c1", AgentTurn(true, "几点了"))
+        memory.append("c1", AgentTurn(false, "十二点"))
+        memory.append("c1", AgentTurn(true, "几点了"))
+        memory.append("c1", AgentTurn(false, "十二点"))
+
+        assertEquals(4, store.messages("c1").size)
+    }
+
+    @Test
     fun `重放时同一轮的思考与工具归到同一个轮次`() {
         val stored = listOf(
             StoredMessage("1", ChatRole.USER, "第一问", turn = 0),

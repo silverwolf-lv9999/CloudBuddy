@@ -1,13 +1,9 @@
 package cn.cloudbuddy.app.data
 
-import ai.koog.prompt.dsl.prompt
-import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import okhttp3.mockwebserver.MockResponse
-import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -23,19 +19,6 @@ import org.junit.Test
  * 把真正发出去的 JSON 抓下来核对。
  */
 class ThinkingParamsTest {
-
-    private lateinit var server: MockWebServer
-
-    @Before
-    fun setUp() {
-        server = MockWebServer()
-        server.start()
-    }
-
-    @After
-    fun tearDown() {
-        server.shutdown()
-    }
 
     // ---- 写法判定 ----
 
@@ -143,13 +126,13 @@ class ThinkingParamsTest {
         assertEquals("not-json", ThinkingParams.apply("not-json", mapOf("a" to JsonPrimitive(1))))
     }
 
-    // ---- 真发一次，抓包看字段 ----
+    // ---- 请求体组装：思考字段直接平铺进 JSON ----
 
     @Test
-    fun `thinking 写法真的进了请求体`() = runBlocking {
+    fun `thinking 写法真的进了请求体`() {
         val body = capture(
             config(
-                baseUrl = server.url("/").toString().trimEnd('/'),
+                baseUrl = "https://api.deepseek.com",
                 style = ThinkingStyle.THINKING.key,
                 effort = ThinkingEffort.HIGH.key,
             )
@@ -161,11 +144,11 @@ class ThinkingParamsTest {
     }
 
     @Test
-    fun `落不出写法的端点只发 reasoning_effort`() = runBlocking {
-        // 自建端点（这里是 MockWebServer 的 localhost）会被判成 EFFORT 写法。
+    fun `落不出写法的端点只发 reasoning_effort`() {
+        // 自建端点会被判成 EFFORT 写法。
         val body = capture(
             config(
-                baseUrl = server.url("/").toString().trimEnd('/'),
+                baseUrl = "http://127.0.0.1:8000",
                 style = ThinkingStyle.AUTO.key,
                 effort = ThinkingEffort.MEDIUM.key,
             )
@@ -176,10 +159,10 @@ class ThinkingParamsTest {
     }
 
     @Test
-    fun `关掉思考后不发强度`() = runBlocking {
+    fun `关掉思考后不发强度`() {
         val body = capture(
             config(
-                baseUrl = server.url("/").toString().trimEnd('/'),
+                baseUrl = "https://api.openai.com/v1",
                 style = ThinkingStyle.EFFORT.key,
                 effort = ThinkingEffort.OFF.key,
             )
@@ -189,27 +172,9 @@ class ThinkingParamsTest {
         assertFalse(obj.containsKey("thinking"))
     }
 
-    /** 发一轮请求，返回被服务端收到的请求体。 */
-    private suspend fun capture(cfg: CustomModelConfig): String {
-        server.enqueue(
-            MockResponse().setBody(
-                """{"id":"x","object":"chat.completion","created":0,"model":"m",
-                   "choices":[{"index":0,"message":{"role":"assistant","content":"ok"},
-                   "finish_reason":"stop"}]}"""
-            )
-        )
-        val client = CustomLlmClient.build(cfg)
-        try {
-            val p = prompt("t") {
-                system("sys")
-                user("hi")
-            }.withParams(CustomLlmClient.params(cfg))
-            client.execute(p, CustomLlmClient.model(cfg), emptyList())
-        } finally {
-            runCatching { client.close() }
-        }
-        return server.takeRequest().body.readUtf8()
-    }
+    /** 组一次最小请求的请求体（自研引擎后组装是纯函数，直接核对）。 */
+    private fun capture(cfg: CustomModelConfig): String =
+        ChatRequest.build(cfg, listOf(ChatMsg.System("sys"), ChatMsg.User("hi")), emptyList())
 
     private fun config(baseUrl: String, style: String, effort: String) = CustomModelConfig(
         baseUrl = baseUrl,

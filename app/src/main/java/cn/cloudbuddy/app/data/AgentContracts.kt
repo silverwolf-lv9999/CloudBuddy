@@ -201,9 +201,11 @@ interface AgentSession {
  */
 interface AgentRuntime {
     /**
-     * [onThought] 是模型的思考文本（OpenAI 兼容端点的 `reasoning_content`）。
+     * [onThought] 是模型的思考文本（OpenAI 兼容端点的 `reasoning_content`），
+     * 一段思考想完时回调一次（一次流式请求一段）。
      *
-     * 单独一个回调而不是塞进 [AgentReply]：一轮里模型可能想好几次（每次工具调用前
+     * [onDelta] 是逐字流式增量（THOUGHT / ASSISTANT），上层实时显示用。
+     * 单独回调而不是塞进 [AgentReply]：一轮里模型可能想好几次（每次工具调用前
      * 各想一段），只有回调才能按真实时间顺序和工具调用交错显示。不思考的模型
      * （或思考强度为「关闭」）永远不触发，上层不必判断。
      */
@@ -216,6 +218,7 @@ interface AgentRuntime {
         onThought: (String) -> Unit = {},
         onToolEvent: (SandboxToolEvent) -> Unit = {},
         onExecuted: (String, Long, SandboxExec.Result) -> Unit = { _, _, _ -> },
+        onDelta: (ChatRole, String) -> Unit = { _, _ -> },
     ): AgentSession
 
     fun drop(conversationId: String)

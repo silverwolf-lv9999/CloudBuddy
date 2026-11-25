@@ -124,9 +124,13 @@ class TranscriptMemory(
     /**
      * 追加一条。
      *
-     * 重复检测放在 [SessionStore.append] 里：提问有两个写入入口
-     * （仓储拿到沙箱前先记一笔、agent 真正发请求前再记一笔），漏一处就是一轮消息消失，
-     * 两边都写再统一去重，比规定"只能谁写"稳。
+     * 去重有两条规则：
+     * 1. 连续重复（上一条就是同角色同文本）：提问有两个写入入口（仓储拿到沙箱前
+     *    先记一笔、agent 真正发请求前再记一笔），漏一处就是一轮消息消失；
+     * 2. **本轮内已有同文本消息**：流式回答是仓储边收边写进消息流的，agent 收尾
+     *    时还会再 remember 一次「完整回答」——中间隔着思考消息，规则 1 拦不住，
+     *    重开会话就会看到两条一模一样的回答。只看本轮（最后一条提问之后），
+     *    跨轮的重复回答是正常对话，不能误杀。
      */
     override fun append(conversationId: String, turn: AgentTurn) {
         migrate(conversationId)
@@ -134,6 +138,12 @@ class TranscriptMemory(
         val existing = store.messages(conversationId)
         val last = existing.lastOrNull()
         if (last != null && last.role == role && last.text == turn.text) return
+        val lastUserIndex = existing.indexOfLast { it.role == ChatRole.USER }
+        if (lastUserIndex >= 0) {
+            val sameInTurn = existing.subList(lastUserIndex + 1, existing.size)
+                .any { it.role == role && it.text == turn.text && !it.failed }
+            if (sameInTurn) return
+        }
         val users = existing.count { it.role == ChatRole.USER }
         // 轮次编号跟着界面走：提问开启新的一轮，其余消息归到当前轮（第一条提问是 0）。
         val turnNo = if (turn.fromUser) users else (users - 1).coerceAtLeast(0)

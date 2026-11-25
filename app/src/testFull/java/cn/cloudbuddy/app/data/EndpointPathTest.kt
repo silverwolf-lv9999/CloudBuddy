@@ -61,10 +61,9 @@ class EndpointPathTest {
             apiKey = "sk-test",
             modelId = "m",
         )
-        val client = CustomLlmClient.build(cfg)
+        val client = OpenAiStreamClient()
         try {
-            val p = prompt("t") { user("hi") }.withParams(CustomLlmClient.params(cfg))
-            client.execute(p, CustomLlmClient.model(cfg), emptyList())
+            client.stream(cfg, listOf(ChatMsg.User("hi")))
         } finally {
             runCatching { client.close() }
         }

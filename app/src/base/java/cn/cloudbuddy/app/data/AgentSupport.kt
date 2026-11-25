@@ -42,6 +42,7 @@ private object CoreAgentRuntime : AgentRuntime {
         onThought: (String) -> Unit,
         onToolEvent: (SandboxToolEvent) -> Unit,
         onExecuted: (String, Long, SandboxExec.Result) -> Unit,
+        onDelta: (ChatRole, String) -> Unit,
     ): AgentSession = unavailable
 
     override fun drop(conversationId: String) = Unit

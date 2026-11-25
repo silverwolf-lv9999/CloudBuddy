@@ -69,6 +69,11 @@ data class AppUiState(
      */
     val customModels: List<CustomModel> = emptyList(),
     /**
+     * 模型提供商列表（多端点）：设置页的提供商管理与模型弹窗的分组标题都按它渲染。
+     * SharedPreferences 的改动不会触发重组，与 [customModels] 一样走这里。
+     */
+    val llmProviders: List<LlmProvider> = emptyList(),
+    /**
      * 最近一次从端点拉到的候选池（`GET /models` 的原始结果，只在内存）。
      *
      * 与 [customModels] 分开：候选池是「端点上有哪些」，我的模型是「我要用哪些」。
@@ -348,7 +353,8 @@ class BuddyRepository(val settings: AppSettings) {
             mcpServers = settings.mcp.list(),
             promptPresets = settings.prompts.ordered(),
             localSkills = settings.localSkills.list(),
-            customModels = settings.customModels
+            customModels = settings.customModels,
+            llmProviders = settings.llmProviders
         )
     )
     val ui: StateFlow<AppUiState> = _ui.asStateFlow()
@@ -421,6 +427,13 @@ class BuddyRepository(val settings: AppSettings) {
         // 否则设置页不显示引擎选择、会话却还在按本机模式发问，用户只会看到
         // 一条「自定义模型未配置完整」，找不到能改的地方。
         if (!Edition.full) settings.engineMode = AppSettings.ENGINE_WB
+        // 旧数据迁移：全局端点搬成第一个提供商（幂等，见 ensureProvidersMigrated）。
+        settings.ensureProvidersMigrated()
+        if (_ui.value.llmProviders != settings.llmProviders ||
+            _ui.value.customModels != settings.customModels
+        ) {
+            publishCustomModels()
+        }
         scope.launch { stateSyncLoop() }
     }
 
@@ -943,7 +956,8 @@ class BuddyRepository(val settings: AppSettings) {
             mcpServers = settings.mcp.list(),
             promptPresets = settings.prompts.ordered(),
             localSkills = settings.localSkills.list(),
-            customModels = settings.customModels
+            customModels = settings.customModels,
+            llmProviders = settings.llmProviders
         )
         _workspace.value = WorkspaceState()
     }
@@ -1265,7 +1279,8 @@ class BuddyRepository(val settings: AppSettings) {
             mcpServers = settings.mcp.list(),
             promptPresets = settings.prompts.ordered(),
             localSkills = settings.localSkills.list(),
-            customModels = settings.customModels
+            customModels = settings.customModels,
+            llmProviders = settings.llmProviders
         )
     }
 
@@ -1368,10 +1383,18 @@ class BuddyRepository(val settings: AppSettings) {
      * **只更新候选池，不动「我的模型」**：拉取是「看看端点上有啥」，
      * 不是「把配置重置成端点说的那套」。用户改过的显示名、思考强度、
      * 系统提示词都在「我的模型」里，被一次刷新冲掉就没法用了。
+     *
+     * 多提供商后候选池按提供商拉：传 [providerId] 时用该提供商的地址与 Key，
+     * 不传走旧的全局字段（兼容保留，页面入口已改为按提供商拉取）。
      */
-    suspend fun fetchCustomModels(): CustomModelCatalog.Result {
+    suspend fun fetchCustomModels(providerId: String = ""): CustomModelCatalog.Result {
         _ui.value = _ui.value.copy(modelsLoading = true, modelError = null)
-        val r = catalog.fetch(settings.customBaseUrl, settings.customApiKey)
+        val provider = providerId.takeIf { it.isNotBlank() }?.let { settings.providerOf(it) }
+        val r = if (provider != null) {
+            catalog.fetch(provider.baseUrl, provider.apiKey)
+        } else {
+            catalog.fetch(settings.customBaseUrl, settings.customApiKey)
+        }
         if (r.ok) {
             _ui.value = _ui.value.copy(
                 customCandidates = r.models,
@@ -1385,37 +1408,76 @@ class BuddyRepository(val settings: AppSettings) {
         return r
     }
 
+    /** 清空候选池。切换提供商时调用：候选清单是上一个端点的，留着只会误导。 */
+    fun clearCustomCandidates() {
+        _ui.value = _ui.value.copy(customCandidates = emptyList())
+    }
+
     /**
      * 把候选池里的模型加进「我的模型」。
      *
      * 能力标签按 ID 猜一个初值（[CustomModel.guessReasoning]），猜错用户能改；
      * 猜的作用只是让思考强度这一栏「一加进来就对着」。
+     *
+     * [providerId] 指明挂到哪个提供商下；空 = 旧入口（默认端点，兼容保留）。
      */
-    fun addCustomModels(ids: List<String>) {
+    fun addCustomModels(ids: List<String>, providerId: String = "") {
         val fresh = ids.filter { it.isNotBlank() }
-            .map { CustomModel(id = it, reasoning = CustomModel.guessReasoning(it)) }
+            .map { CustomModel(id = it, providerId = providerId, reasoning = CustomModel.guessReasoning(it)) }
         if (settings.addCustomModels(fresh) == 0) return
         // 之前一个模型都没有：顺手把第一个设成当前，省得用户再点一次。
-        if (settings.customModelId.isBlank()) settings.customModelId = fresh.first().id
+        if (settings.customModelId.isBlank()) settings.customModelId = fresh.first().selKey
         publishCustomModels()
         _events.tryEmit("已加入 ${fresh.size} 个模型")
     }
 
-    fun removeCustomModel(id: String) {
-        settings.removeCustomModel(id)
+    fun removeCustomModel(key: String) {
+        settings.removeCustomModel(key)
         publishCustomModels()
     }
 
     /** 保存某条模型的显示名 / 能力 / 参数覆盖。 */
-    fun updateCustomModel(originalId: String, model: CustomModel) {
-        settings.updateCustomModel(originalId, model)
+    fun updateCustomModel(originalKey: String, model: CustomModel) {
+        settings.updateCustomModel(originalKey, model)
         publishCustomModels()
     }
+
+    // ---------- 提供商管理 ----------
+
+    /** 新增或保存一个提供商，并同步到界面。返回提供商 id。 */
+    fun upsertProvider(provider: LlmProvider): String {
+        settings.upsertProvider(provider)
+        publishCustomModels()
+        return provider.id
+    }
+
+    /** 删提供商（名下模型一起删），并同步到界面。 */
+    fun removeProvider(id: String) {
+        settings.removeProvider(id)
+        publishCustomModels()
+    }
+
+    /**
+     * 拉取指定提供商的候选模型列表。
+     *
+     * 不写进全局候选池：每个提供商的拉取在各自的编辑界面里发生，
+     * 候选清单是该界面的本地状态，加入时才落到「我的模型」。
+     */
+    suspend fun fetchProviderModels(provider: LlmProvider): CustomModelCatalog.Result =
+        catalog.fetch(provider.baseUrl, provider.apiKey)
+
+    /**
+     * 测试一个提供商的连通性：拉一次 /models，拿真实 HTTP 状态与错误详情。
+     * 与模型拉取同一通道，报错口径一致，用户不用学两套。
+     */
+    suspend fun testProvider(provider: LlmProvider): CustomModelCatalog.Result =
+        catalog.fetch(provider.baseUrl, provider.apiKey)
 
     /** 把「我的模型」与当前选中值同步到界面。改完必须调，否则要等下次重启才看见。 */
     fun publishCustomModels() {
         _ui.value = _ui.value.copy(
             customModels = settings.customModels,
+            llmProviders = settings.llmProviders,
             selectedModel = if (_ui.value.engine == AppSettings.ENGINE_CUSTOM) {
                 settings.customModelFor(_ui.value.activeId)
             } else {
@@ -1935,6 +1997,25 @@ class BuddyRepository(val settings: AppSettings) {
 
         val job = scope.launch {
             var convId: String? = targetId
+            // 流式显示的状态机：思考与回答各至多一条「正在打字」的消息。
+            // 缓冲由这里持有而不是靠界面状态：用户切走再切回来，落盘的仍是全文。
+            // 放在 try 外面：中断/失败路径也要能收口，半截内容不能悬在「打字中」。
+            var thoughtMsg: String? = null
+            var answerMsg: String? = null
+            val thoughtBuf = StringBuilder()
+            val answerBuf = StringBuilder()
+            fun flushThought(cid: String?) {
+                if (cid == null) return
+                thoughtMsg?.let { endStreamLocal(cid, it, thoughtBuf.toString()) }
+                thoughtMsg = null
+                thoughtBuf.clear()
+            }
+            fun flushAnswer(cid: String?, finalText: String? = null) {
+                if (cid == null) return
+                answerMsg?.let { endStreamLocal(cid, it, finalText ?: answerBuf.toString()) }
+                answerMsg = null
+                answerBuf.clear()
+            }
             try {
                 val id = targetId ?: createCustomConversation(prompt)
                 convId = id
@@ -1984,27 +2065,61 @@ class BuddyRepository(val settings: AppSettings) {
                     token = session.token,
                     config = turnCfg,
                     tokenRefresher = { refreshSandboxToken(id) },
-                    // 思考内容进消息流：不写进去的话，「思考强度」这个设置就成了
-                    // 用户唯一看不见效果的开关——模型想没想，屏幕上完全没差别。
-                    onThought = { thought -> pushLocal(id, ChatRole.THOUGHT, thought) },
+                    // 一段思考想完 → 定稿思考消息（下一次思考会另开一条，
+                    // 这样多段思考与工具调用在时间轴上交错排列）。
+                    onThought = { _ -> flushThought(id) },
                     onToolEvent = { ev -> onToolProgress(id, ev) },
                     // agent 跑的每条命令都进命令日志：用户点开终端能看到
                     // 它到底执行了什么、输出了什么，而不是只有一句"已完成"。
                     onExecuted = { cmd, at, result ->
                         recordCommand(id, ensureDefaultTab(id), cmd, at, result, CmdSource.AGENT)
                     },
+                    // 逐字流式：思考与回答的增量实时进界面（打字机效果）。
+                    onDelta = { role, delta ->
+                        when (role) {
+                            ChatRole.THOUGHT -> {
+                                if (thoughtMsg == null) {
+                                    thoughtMsg = pushStreamLocal(id, ChatRole.THOUGHT, delta)
+                                    thoughtBuf.clear()
+                                }
+                                thoughtBuf.append(delta)
+                                thoughtMsg?.let { appendStreamLocal(id, it, delta) }
+                            }
+                            ChatRole.ASSISTANT -> {
+                                flushThought(id)
+                                if (answerMsg == null) {
+                                    answerMsg = pushStreamLocal(id, ChatRole.ASSISTANT, delta)
+                                    answerBuf.clear()
+                                }
+                                answerBuf.append(delta)
+                                answerMsg?.let { appendStreamLocal(id, it, delta) }
+                            }
+                            else -> Unit
+                        }
+                    },
                 )
                 val reply = agent.send(ask)
+                flushThought(id)
                 finishToolPlaceholder(id)
-                pushLocal(id, ChatRole.ASSISTANT, reply.answer)
+                if (answerMsg != null) {
+                    // 回答已经流式显示过了：定稿即可，别再 push 一条重复的。
+                    flushAnswer(id, reply.answer)
+                } else {
+                    pushLocal(id, ChatRole.ASSISTANT, reply.answer)
+                }
                 applyIfActive(id) { copy(state = TurnState.IDLE) }
             } catch (e: CancellationException) {
                 // 用户点了停止：不是错误，安静收尾。工具占位标成失败，
                 // 否则重进会话会看到一条永远转圈的调用。
+                // 半截的思考/回答也要定格落盘：用户重进来能看到中断前收到了什么。
+                flushThought(convId)
+                flushAnswer(convId)
                 finishToolPlaceholder(convId, ToolState.FAILED)
                 applyIfActive(convId) { copy(state = TurnState.STOPPED) }
                 throw e
             } catch (e: Exception) {
+                flushThought(convId)
+                flushAnswer(convId)
                 finishToolPlaceholder(convId, ToolState.FAILED)
                 val reason = readable(e)
                 // 失败原因同样落盘：重进会话时能看到这轮为什么没成，
@@ -2145,6 +2260,46 @@ class BuddyRepository(val settings: AppSettings) {
         applyIfActive(id) { copy(messages = messages + msg) }
         runCatching { settings.sessionStore.append(id, StoredMessage.of(msg)) }
         return msgId
+    }
+
+    /**
+     * 开一条流式消息（打字机效果）。首段增量直接进去，别留空消息——
+     * 空文本的气泡在回放时会被丢掉，落盘等于白写。
+     */
+    private fun pushStreamLocal(id: String, role: ChatRole, firstDelta: String): String {
+        val msgId = "local-" + System.nanoTime() + "-" + localMsgSeq.incrementAndGet()
+        val msg = ChatMessage(
+            id = msgId,
+            role = role,
+            text = firstDelta,
+            streaming = true,
+            turn = turnOf(id, role),
+        )
+        applyIfActive(id) { copy(messages = messages + msg) }
+        runCatching { settings.sessionStore.append(id, StoredMessage.of(msg)) }
+        return msgId
+    }
+
+    /**
+     * 流式增量追加。只改界面状态，不落盘：SSE 的增量一秒几十条，
+     * 每条都整份重写 JSON 文件会把磁盘队列打爆，定稿时一次写够。
+     */
+    private fun appendStreamLocal(id: String, msgId: String, delta: String) {
+        applyIfActive(id) {
+            copy(messages = messages.map { m ->
+                if (m.id == msgId) m.copy(text = m.text + delta) else m
+            })
+        }
+    }
+
+    /** 流式定稿：正文定格、去掉打字光标、整条落盘。 */
+    private fun endStreamLocal(id: String, msgId: String, finalText: String) {
+        applyIfActive(id) {
+            copy(messages = messages.map { m ->
+                if (m.id == msgId) m.copy(text = finalText, streaming = false) else m
+            })
+        }
+        runCatching { settings.sessionStore.update(id, msgId) { it.copy(text = finalText) } }
     }
 
     /**
