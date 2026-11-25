@@ -1,9 +1,10 @@
 package cn.cloudbuddy.app.ui.components
 
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -15,10 +16,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -31,12 +34,15 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Psychology
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ContainedLoadingIndicator
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
@@ -64,43 +70,59 @@ import cn.cloudbuddy.app.data.ChatMessage
 import cn.cloudbuddy.app.data.ChatRole
 import cn.cloudbuddy.app.data.ToolState
 import cn.cloudbuddy.app.data.TurnState
+import cn.cloudbuddy.app.ui.theme.extendColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.isActive
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CloudBuddy 聊天零件：Material 3 Expressive 风格
+// 气泡 / 思考链 / 工具行 / 状态 Pill / 输入光标
+// ─────────────────────────────────────────────────────────────────────────────
+
+private val BubbleCorner = 24.dp
+private val BubbleTailCorner = 6.dp
+private val BubbleHorizontalPadding = 16.dp
+private val BubbleVerticalPadding = 12.dp
+
+// ── 状态 Pill ─────────────────────────────────────────────────────────────────
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun StatePill(state: TurnState, modifier: Modifier = Modifier) {
-    val (label, color) = when (state) {
-        TurnState.RUNNING -> "云端执行中" to MaterialTheme.colorScheme.primary
-        TurnState.WAITING -> "等待你的回复" to Color(0xFFA9761A)
-        TurnState.DONE -> "已完成" to Color(0xFF17805F)
-        TurnState.FAILED -> "执行失败" to MaterialTheme.colorScheme.error
-        TurnState.STOPPED -> "已停止" to MaterialTheme.colorScheme.onSurfaceVariant
-        TurnState.IDLE -> "空闲" to MaterialTheme.colorScheme.onSurfaceVariant
+    val ext = MaterialTheme.extendColors
+    val (label, containerColor, contentColor) = when (state) {
+        TurnState.RUNNING -> Triple("云端执行中", MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer)
+        TurnState.WAITING -> Triple("等待你的回复", ext.warningContainer, ext.onWarningContainer)
+        TurnState.DONE -> Triple("已完成", ext.successContainer, ext.onSuccessContainer)
+        TurnState.FAILED -> Triple("执行失败", MaterialTheme.colorScheme.errorContainer, MaterialTheme.colorScheme.onErrorContainer)
+        TurnState.STOPPED -> Triple("已停止", MaterialTheme.colorScheme.surfaceContainerHighest, MaterialTheme.colorScheme.onSurfaceVariant)
+        TurnState.IDLE -> Triple("空闲", MaterialTheme.colorScheme.surfaceContainerHighest, MaterialTheme.colorScheme.onSurfaceVariant)
     }
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(50),
-        color = color.copy(alpha = 0.12f)
+        shape = CircleShape,
+        color = containerColor,
+        contentColor = contentColor
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             if (state == TurnState.RUNNING) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(10.dp),
-                    strokeWidth = 1.6.dp,
-                    color = color
+                ContainedLoadingIndicator(
+                    modifier = Modifier.size(12.dp)
                 )
             } else {
-                Box(Modifier.size(6.dp).background(color, CircleShape))
+                Box(Modifier.size(6.dp).background(contentColor, CircleShape))
             }
-            Text(label, style = MaterialTheme.typography.labelSmall, color = color)
+            Text(label, style = MaterialTheme.typography.labelSmall, color = contentColor)
         }
     }
 }
+
+// ── 云徽标 ────────────────────────────────────────────────────────────────────
 
 @Composable
 fun CloudBadge(text: String, modifier: Modifier = Modifier) {
@@ -119,6 +141,8 @@ fun CloudBadge(text: String, modifier: Modifier = Modifier) {
     }
 }
 
+// ── 消息行 ────────────────────────────────────────────────────────────────────
+
 /** 超过这个长度才值得提供「复制」，短消息不显示操作区。 */
 private const val COPY_THRESHOLD = 240
 
@@ -129,35 +153,9 @@ fun MessageRow(message: ChatMessage, showThoughts: Boolean) {
     val longText = message.text.length > COPY_THRESHOLD || message.text.count { it == '\n' } > 8
 
     when (message.role) {
-        ChatRole.USER -> Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.End
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
-            ) {
-                Surface(
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    shape = RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp),
-                    modifier = Modifier.widthIn(max = 320.dp)
-                ) {
-                    Text(
-                        text = message.text,
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                }
-            }
-            if (longText) ActionText("复制", copy)
-        }
+        ChatRole.USER -> UserMessageBubble(message = message, copy = copy, longText = longText)
 
-        ChatRole.ASSISTANT -> Column(modifier = Modifier.fillMaxWidth()) {
-            MarkdownText(markdown = message.text, baseSize = 15f)
-            if (message.streaming) TypingCursor()
-            if (longText && !message.streaming) ActionText("复制", copy)
-        }
+        ChatRole.ASSISTANT -> AssistantMessageBubble(message = message, copy = copy, longText = longText)
 
         ChatRole.THOUGHT -> ThoughtRow(message.text, showThoughts, message.streaming)
 
@@ -166,18 +164,145 @@ fun MessageRow(message: ChatMessage, showThoughts: Boolean) {
 }
 
 /**
- * 一轮对话的「中间步骤」组：思考、工具调用、过程叙述都收在这里。
- *
- * 折叠时只占一行摘要（参考 AgentsAnywhere 的 `ToolRunGroup`），展开后按原顺序铺明细。
- * 默认折叠由调用方决定，正在执行的那一轮通常展开，方便看到进度。
+ * 用户消息气泡：24dp 主圆角 + 6dp 尾巴角，primaryContainer，左侧留 40dp 边距。
+ * 流式/加载中头像用 Cookie6Sided 旋转，平常 CircleShape。
  */
+@Composable
+private fun UserMessageBubble(
+    message: ChatMessage,
+    copy: () -> Unit,
+    longText: Boolean
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.End
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.Top
+        ) {
+            // 左侧留白，让气泡不与屏幕边缘齐平
+            Spacer(Modifier.width(40.dp))
+            Surface(
+                color = MaterialTheme.colorScheme.primaryContainer,
+                shape = RoundedCornerShape(
+                    topStart = BubbleCorner,
+                    topEnd = BubbleTailCorner,
+                    bottomEnd = BubbleCorner,
+                    bottomStart = BubbleCorner
+                ),
+                modifier = Modifier.widthIn(max = 320.dp)
+            ) {
+                Text(
+                    text = message.text,
+                    modifier = Modifier.padding(
+                        horizontal = BubbleHorizontalPadding,
+                        vertical = BubbleVerticalPadding
+                    ),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+        }
+        if (longText) ActionText("复制", copy)
+    }
+}
+
+/**
+ * AI 消息气泡：镜像圆角（topStart=6, topEnd=24），surfaceContainerHigh。
+ * 流式时头像 Cookie6Sided 旋转，完成后 CircleShape。
+ */
+@Composable
+private fun AssistantMessageBubble(
+    message: ChatMessage,
+    copy: () -> Unit,
+    longText: Boolean
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Start,
+            verticalAlignment = Alignment.Top
+        ) {
+            // Expressive 头像：流式/加载中旋转 Cookie6Sided，平时 CircleShape
+            val avatarShape = rememberAvatarShape(loading = message.streaming)
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(avatarShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Filled.Cloud,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                shape = RoundedCornerShape(
+                    topStart = BubbleTailCorner,
+                    topEnd = BubbleCorner,
+                    bottomEnd = BubbleCorner,
+                    bottomStart = BubbleCorner
+                ),
+                modifier = Modifier.widthIn(max = 320.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(
+                        horizontal = BubbleHorizontalPadding,
+                        vertical = BubbleVerticalPadding
+                    )
+                ) {
+                    MarkdownText(
+                        markdown = message.text,
+                        baseSize = 15f,
+                        textColor = MaterialTheme.colorScheme.onSurface
+                    )
+                    if (message.streaming) TypingCursor()
+                }
+            }
+        }
+        if (longText && !message.streaming) ActionText("复制", copy)
+    }
+}
+
+/**
+ * 流式/加载中时的 Expressive 头像形状：Cookie6Sided 旋转动画。
+ * 这是 RikkaHub 的标志性 Expressive 元素。
+ */
+@Composable
+private fun rememberAvatarShape(loading: Boolean): androidx.compose.ui.graphics.Shape {
+    val infiniteTransition = rememberInfiniteTransition(label = "avatar-rotation")
+    val rotateAngle by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 3000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "avatar-angle"
+    )
+    return if (loading) {
+        MaterialShapes.Cookie6Sided.toShape(rotateAngle.toInt())
+    } else {
+        CircleShape
+    }
+}
+
+// ── 中间步骤折叠组 ─────────────────────────────────────────────────────────────
+
 /**
  * 一轮对话的「中间步骤」组：思考、工具调用、过程叙述都收在这里。
  *
- * 抄 rikkahub 的 ChainOfThought：整行可点击展开/收回，箭头翻转，卡片高度
- * `animateContentSize` 平滑过渡——和思考卡片是同一套交互，不再是硬切换。
- * 展开状态由外部（会话级）控制，手动点过只影响当前会话的这一条。
+ * 折叠时只占一行摘要，展开后按原顺序铺明细。
+ * 默认折叠由调用方决定，正在执行的那一轮通常展开，方便看到进度。
  */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun StepsGroup(
     steps: List<ChatMessage>,
@@ -199,12 +324,12 @@ fun StepsGroup(
         else -> stepsSummary(steps)
     }
     val hasThought = steps.any { it.role == ChatRole.THOUGHT }
-    // 箭头旋转 + 卡片高度动画：抄 rikkahub 的 Details / ChainOfThought 过渡，展开收回都有动画。
+    // 箭头旋转 + 卡片高度动画：展开收回都有动画。
     val rotation by animateFloatAsState(targetValue = if (expanded) 180f else 0f, label = "steps-arrow")
 
     Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = MaterialTheme.shapes.largeIncreased,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
@@ -237,15 +362,15 @@ fun StepsGroup(
                 )
                 Text(
                     text = label,
-                    style = MaterialTheme.typography.titleSmall,
+                    style = MaterialTheme.typography.titleSmallEmphasized,
                     color = accent,
                     modifier = Modifier.weight(1f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 if (running) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(11.dp), strokeWidth = 1.5.dp, color = accent
+                    ContainedLoadingIndicator(
+                        modifier = Modifier.size(12.dp)
                     )
                 }
             }
@@ -275,6 +400,8 @@ fun StepsGroup(
     }
 }
 
+// ── 复制按钮 ──────────────────────────────────────────────────────────────────
+
 @Composable
 private fun ActionText(label: String, onClick: () -> Unit) {
     TextButton(
@@ -289,7 +416,9 @@ private fun ActionText(label: String, onClick: () -> Unit) {
     }
 }
 
-/** 抄自 rikkahub：思考卡片三态。生成中 Collapsed→Preview（渐隐预览+自动滚底），完成后可收回。 */
+// ── 思考链 ────────────────────────────────────────────────────────────────────
+
+/** 思考卡片三态。生成中 Collapsed→Preview（渐隐预览+自动滚底），完成后可收回。 */
 private enum class ReasoningCardState(val expanded: Boolean) {
     Collapsed(false), Preview(true), Expanded(true)
 }
@@ -308,7 +437,7 @@ private class ReasoningState(val scroll: ScrollState) {
 }
 
 /**
- * 思考过程行——整行可点击展开/收回（抄 rikkahub 的 ChainOfThought 交互）。
+ * 思考过程行——整行可点击展开/收回。
  * - 生成中：默认 Preview，内容渐隐、限高 100dp 并自动滚到底部，点标题切成完全展开/预览；
  * - 生成完成：按设置决定默认展开还是收回（showThoughts），点标题随时切换；
  * - 内容走 MarkdownText，思考里的列表/代码/表格也能正常渲染。
@@ -326,7 +455,7 @@ private fun ThoughtRow(
     // 展开态的切换只依赖 streaming/showThoughts，不再把高频变化的 text 当 key——
     // 原来每来一个分片就取消重启这个协程，是流式期的主要卡顿源之一。
     //
-    // 1.4.5：两种状态都要跟着设置走。以前 else 分支只处理 Preview，历史/已完成的
+    // 两种状态都要跟着设置走。以前 else 分支只处理 Preview，历史/已完成的
     // 思考卡初始就是 Collapsed，设置里的「展开思考过程」对它们毫无效果。
     LaunchedEffect(streaming, showThoughts) {
         if (streaming) {
@@ -375,9 +504,8 @@ private fun ThoughtRow(
                         color = MaterialTheme.colorScheme.secondary
                     )
                     if (streaming) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(11.dp), strokeWidth = 1.4.dp,
-                            color = MaterialTheme.colorScheme.secondary
+                        ContainedLoadingIndicator(
+                            modifier = Modifier.size(11.dp)
                         )
                     }
                 }
@@ -457,11 +585,14 @@ private fun ThinkingSeconds(streaming: Boolean) {
     }
 }
 
+// ── 工具调用行 ────────────────────────────────────────────────────────────────
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun ToolRow(message: ChatMessage) {
     val tint = when (message.toolState) {
         ToolState.RUNNING -> MaterialTheme.colorScheme.primary
-        ToolState.DONE -> Color(0xFF17805F)
+        ToolState.DONE -> MaterialTheme.extendColors.success
         ToolState.FAILED -> MaterialTheme.colorScheme.error
         ToolState.NONE -> MaterialTheme.colorScheme.onSurfaceVariant
     }
@@ -478,10 +609,8 @@ private fun ToolRow(message: ChatMessage) {
             modifier = Modifier.weight(1f)
         )
         when (message.toolState) {
-            ToolState.RUNNING -> CircularProgressIndicator(
-                modifier = Modifier.size(10.dp),
-                strokeWidth = 1.4.dp,
-                color = tint
+            ToolState.RUNNING -> ContainedLoadingIndicator(
+                modifier = Modifier.size(10.dp)
             )
             ToolState.DONE -> Icon(Icons.Filled.Check, null, Modifier.size(12.dp), tint = tint)
             ToolState.FAILED -> Icon(Icons.Filled.Close, null, Modifier.size(12.dp), tint = tint)
@@ -489,6 +618,8 @@ private fun ToolRow(message: ChatMessage) {
         }
     }
 }
+
+// ── 输入光标 ──────────────────────────────────────────────────────────────────
 
 @Composable
 fun TypingCursor() {

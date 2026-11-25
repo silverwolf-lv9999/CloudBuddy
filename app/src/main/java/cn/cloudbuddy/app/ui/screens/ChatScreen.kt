@@ -37,9 +37,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Close
@@ -47,7 +45,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
@@ -59,6 +57,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -84,6 +84,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
@@ -107,7 +108,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun ChatScreen(
     ui: AppUiState,
@@ -188,97 +189,118 @@ fun ChatScreen(
         topBar = {
             TopAppBar(
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, "返回") }
+                    FilledTonalIconButton(
+                        onClick = onBack,
+                        modifier = Modifier.padding(start = 8.dp)
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
+                    }
                 },
                 title = {
-                    Column {
-                        Text(
-                            ui.activeTitle.ifBlank { if (ui.draft) "新会话" else "云端会话" },
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    Surface(
+                        onClick = { renameDialog = true },
+                        shape = RoundedCornerShape(50),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                         ) {
-                            Icon(
-                                Icons.Filled.Cloud,
-                                contentDescription = null,
-                                modifier = Modifier.size(12.dp),
-                                tint = MaterialTheme.colorScheme.primary
+                            Text(
+                                ui.activeTitle.ifBlank { if (ui.draft) "新会话" else "云端会话" },
+                                style = MaterialTheme.typography.titleSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                "云端沙箱 · /workspace",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                ui.models.firstOrNull { it.id == ui.selectedModel }?.name
+                                    ?: ui.selectedModel.ifBlank { "云端沙箱" },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
                 },
                 actions = {
-                    StatePill(ui.state, Modifier.padding(end = 4.dp))
-                    Box {
-                        IconButton(onClick = { menu = true }) {
-                            Icon(Icons.Filled.MoreVert, "更多")
-                        }
-                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                            DropdownMenuItem(
-                                text = { Text("折叠中间步骤") },
-                                leadingIcon = {
-                                    Icon(
-                                        if (ui.stepsCollapsed) Icons.Filled.UnfoldLess else Icons.Filled.UnfoldMore,
-                                        null,
-                                        Modifier.size(18.dp)
-                                    )
-                                },
-                                trailingIcon = {
-                                    Switch(
-                                        checked = ui.stepsCollapsed,
-                                        // 点击交给整行处理，避免 Switch 与菜单项各触发一次。
-                                        onCheckedChange = null,
-                                        modifier = Modifier.scale(0.8f)
-                                    )
-                                },
-                                // 菜单不关：用户要能立刻看到开关的变化，而不是点完就消失。
-                                onClick = { repo.setCollapseSteps(!ui.stepsCollapsed) }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("沙箱工作区") },
-                                leadingIcon = { Icon(Icons.Filled.Folder, null, Modifier.size(18.dp)) },
-                                onClick = { menu = false; onOpenWorkspace() }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("选择模型") },
-                                leadingIcon = { Icon(Icons.Filled.Cloud, null, Modifier.size(18.dp)) },
-                                onClick = {
-                                    menu = false
-                                    showModels = true
-                                    scope.launch { repo.refreshModels() }
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        modifier = Modifier.padding(end = 4.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                        ) {
+                            StatePill(ui.state, Modifier.padding(end = 2.dp))
+                            Box {
+                                IconButton(onClick = { menu = true }, modifier = Modifier.size(36.dp)) {
+                                    Icon(Icons.Filled.MoreVert, "更多", modifier = Modifier.size(20.dp))
                                 }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("重命名") },
-                                leadingIcon = { Icon(Icons.Filled.Edit, null, Modifier.size(18.dp)) },
-                                onClick = { menu = false; renameDialog = true }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("重新加载对话") },
-                                leadingIcon = { Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp)) },
-                                onClick = {
-                                    menu = false
-                                    ui.activeId?.let { id -> scope.launch { repo.reloadConversation(id) } }
+                                DropdownMenu(
+                                    expanded = menu,
+                                    onDismissRequest = { menu = false },
+                                    shape = MaterialTheme.shapes.largeIncreased
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("折叠中间步骤") },
+                                        leadingIcon = {
+                                            Icon(
+                                                if (ui.stepsCollapsed) Icons.Filled.UnfoldLess else Icons.Filled.UnfoldMore,
+                                                null,
+                                                Modifier.size(18.dp)
+                                            )
+                                        },
+                                        trailingIcon = {
+                                            Switch(
+                                                checked = ui.stepsCollapsed,
+                                                // 点击交给整行处理，避免 Switch 与菜单项各触发一次。
+                                                onCheckedChange = null,
+                                                modifier = Modifier.scale(0.8f)
+                                            )
+                                        },
+                                        // 菜单不关：用户要能立刻看到开关的变化，而不是点完就消失。
+                                        onClick = { repo.setCollapseSteps(!ui.stepsCollapsed) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("沙箱工作区") },
+                                        leadingIcon = { Icon(Icons.Filled.Folder, null, Modifier.size(18.dp)) },
+                                        onClick = { menu = false; onOpenWorkspace() }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("选择模型") },
+                                        leadingIcon = { Icon(Icons.Filled.Cloud, null, Modifier.size(18.dp)) },
+                                        onClick = {
+                                            menu = false
+                                            showModels = true
+                                            scope.launch { repo.refreshModels() }
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("重命名") },
+                                        leadingIcon = { Icon(Icons.Filled.Edit, null, Modifier.size(18.dp)) },
+                                        onClick = { menu = false; renameDialog = true }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("重新加载对话") },
+                                        leadingIcon = { Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp)) },
+                                        onClick = {
+                                            menu = false
+                                            ui.activeId?.let { id -> scope.launch { repo.reloadConversation(id) } }
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("删除会话") },
+                                        leadingIcon = { Icon(Icons.Filled.Delete, null, Modifier.size(18.dp)) },
+                                        onClick = { menu = false; deleteDialog = true }
+                                    )
                                 }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("删除会话") },
-                                leadingIcon = { Icon(Icons.Filled.Delete, null, Modifier.size(18.dp)) },
-                                onClick = { menu = false; deleteDialog = true }
-                            )
+                            }
                         }
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
             )
         },
         bottomBar = {
@@ -330,7 +352,7 @@ fun ChatScreen(
                             } else {
                                 "对话越长回放越慢，先到的内容不会逐条冒出来"
                             },
-                            style = MaterialTheme.typography.labelSmall,
+                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                         )
                     }
@@ -340,12 +362,21 @@ fun ChatScreen(
                         verticalArrangement = Arrangement.Center,
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
-                            Box(Modifier.size(58.dp), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Filled.Cloud, null, tint = MaterialTheme.colorScheme.primary)
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.size(72.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                Icon(
+                                    Icons.Filled.Cloud,
+                                    null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(36.dp)
+                                )
                             }
                         }
-                        Spacer(Modifier.height(14.dp))
+                        Spacer(Modifier.height(16.dp))
                         Text("在云端沙箱里开始任务", style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(6.dp))
                         Text(
@@ -360,7 +391,7 @@ fun ChatScreen(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         if (window.hasMore) {
                             item(key = "earlier") {
@@ -402,6 +433,19 @@ fun ChatScreen(
                                 AskCard(ask = ask, onSubmit = { repo.answerQuestion(it) })
                             }
                         }
+                        if (ui.sending || ui.state == TurnState.RUNNING) {
+                            item("sending") {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.Center
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                }
+                            }
+                        }
                         item("tail") { Spacer(Modifier.height(8.dp)) }
                     }
                 }
@@ -409,8 +453,8 @@ fun ChatScreen(
 
             ui.historyNotice?.let { notice ->
                 Surface(
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    shape = MaterialTheme.shapes.large,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
                 ) {
                     Row(
@@ -420,7 +464,7 @@ fun ChatScreen(
                         Text(
                             notice,
                             modifier = Modifier.weight(1f).padding(vertical = 8.dp),
-                            style = MaterialTheme.typography.labelSmall,
+                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         TextButton(onClick = {
@@ -433,7 +477,7 @@ fun ChatScreen(
             ui.error?.let { error ->
                 Surface(
                     color = MaterialTheme.colorScheme.errorContainer,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = MaterialTheme.shapes.large,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
                 ) {
                     Text(
@@ -468,7 +512,7 @@ fun ChatScreen(
             onDismissRequest = { renameDialog = false },
             title = { Text("重命名会话") },
             text = {
-                androidx.compose.material3.OutlinedTextField(
+                OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
                     singleLine = true
@@ -504,8 +548,8 @@ fun ChatScreen(
 @Composable
 private fun EarlierRow(hiddenTurns: Int, hiddenMessages: Int, onLoad: () -> Unit) {
     Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
         modifier = Modifier.fillMaxWidth().clickable(onClick = onLoad)
     ) {
         Row(
@@ -520,10 +564,10 @@ private fun EarlierRow(hiddenTurns: Int, hiddenMessages: Int, onLoad: () -> Unit
             )
             Spacer(Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text("显示更早的 ${hiddenTurns} 轮对话", style = MaterialTheme.typography.labelMedium)
+                Text("显示更早的 ${hiddenTurns} 轮对话", style = MaterialTheme.typography.titleSmall)
                 Text(
                     "还有 $hiddenMessages 条消息未渲染，展开可继续往上翻",
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -556,19 +600,19 @@ private fun AskCard(ask: AskQuestion, onSubmit: (AskAnswer) -> Unit) {
 
     Surface(
         color = MaterialTheme.colorScheme.tertiaryContainer,
-        shape = RoundedCornerShape(16.dp),
+        shape = MaterialTheme.shapes.extraLarge,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(
                 ask.header?.takeIf { it.isNotBlank() } ?: "云端需要你确认",
-                style = MaterialTheme.typography.labelLarge,
+                style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onTertiaryContainer
             )
             items.forEachIndexed { index, item ->
                 Text(
                     if (items.size > 1) "${index + 1}. ${item.question}" else item.question,
-                    style = MaterialTheme.typography.bodyMedium
+                    style = MaterialTheme.typography.bodyLarge
                 )
                 item.options.forEachIndexed { optionIndex, option ->
                     val selected = picks.getOrNull(index)?.contains(optionIndex) == true
@@ -596,9 +640,9 @@ private fun AskCard(ask: AskQuestion, onSubmit: (AskAnswer) -> Unit) {
                     placeholder = {
                         Text("其他（自行输入）", style = MaterialTheme.typography.bodySmall)
                     },
-                    textStyle = MaterialTheme.typography.bodyMedium,
+                    textStyle = MaterialTheme.typography.bodyLarge,
                     maxLines = 3,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = MaterialTheme.shapes.large,
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -631,7 +675,7 @@ private fun AskCard(ask: AskQuestion, onSubmit: (AskAnswer) -> Unit) {
 @Composable
 private fun AskOptionRow(option: AskOption, selected: Boolean, control: Boolean?, onClick: () -> Unit) {
     Surface(
-        shape = RoundedCornerShape(12.dp),
+        shape = MaterialTheme.shapes.large,
         color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
     ) {
@@ -646,11 +690,11 @@ private fun AskOptionRow(option: AskOption, selected: Boolean, control: Boolean?
             }
             if (control != null) Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(option.label, style = MaterialTheme.typography.bodyMedium)
+                Text(option.label, style = MaterialTheme.typography.bodyLarge)
                 option.description?.let {
                     Text(
                         it,
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -675,7 +719,7 @@ private fun Composer(
     enterSends: Boolean = true
 ) {
     val enabled = value.isNotBlank() || attachments.isNotEmpty()
-    val containerShape = RoundedCornerShape(20.dp)
+    val containerShape = RoundedCornerShape(24.dp)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -690,8 +734,8 @@ private fun Composer(
             ) {
                 items(attachments) { attachment ->
                     Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant
+                        shape = MaterialTheme.shapes.medium,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh
                     ) {
                         Row(
                             modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
@@ -699,7 +743,7 @@ private fun Composer(
                         ) {
                             Text(
                                 attachment.name,
-                                style = MaterialTheme.typography.labelSmall,
+                                style = MaterialTheme.typography.bodySmall,
                                 maxLines = 1,
                                 modifier = Modifier.width(120.dp),
                                 overflow = TextOverflow.Ellipsis
@@ -716,7 +760,7 @@ private fun Composer(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 1.6.dp)
                             Spacer(Modifier.width(6.dp))
-                            Text("读取文件…", style = MaterialTheme.typography.labelSmall)
+                            Text("读取文件…", style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
@@ -780,12 +824,12 @@ private fun Composer(
                     }
                     Surface(
                         shape = RoundedCornerShape(50),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
                         modifier = Modifier.clickable(onClick = onModelClick)
                     ) {
                         Text(
                             model.ifBlank { "默认模型" },
-                            style = MaterialTheme.typography.labelSmall,
+                            style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -801,7 +845,7 @@ private fun Composer(
                         val bg = when {
                             stop -> MaterialTheme.colorScheme.errorContainer
                             enabled -> MaterialTheme.colorScheme.primary
-                            else -> MaterialTheme.colorScheme.surfaceVariant
+                            else -> MaterialTheme.colorScheme.surfaceContainerHigh
                         }
                         val fg = when {
                             stop -> MaterialTheme.colorScheme.onErrorContainer
@@ -856,7 +900,7 @@ fun ModelDialog(
                 Text(
                     "当前：" + (models.firstOrNull { it.id == selected }?.name
                         ?: selected.ifBlank { "云端默认" }),
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.primary
                 )
                 when {
@@ -881,9 +925,9 @@ fun ModelDialog(
                         items(models, key = { it.id }) { model ->
                             val active = model.id == selected
                             Surface(
-                                shape = RoundedCornerShape(12.dp),
+                                shape = MaterialTheme.shapes.large,
                                 color = if (active) MaterialTheme.colorScheme.primaryContainer
-                                else MaterialTheme.colorScheme.surfaceVariant,
+                                else MaterialTheme.colorScheme.surfaceContainerHigh,
                                 modifier = Modifier.fillMaxWidth().clickable { onSelect(model.id) }
                             ) {
                                 Column(modifier = Modifier.padding(10.dp)) {
@@ -896,14 +940,14 @@ fun ModelDialog(
                                         model.credits?.let {
                                             Text(
                                                 "x$it",
-                                                style = MaterialTheme.typography.labelSmall,
+                                                style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
                                     }
                                     Text(
                                         model.id,
-                                        style = MaterialTheme.typography.labelSmall,
+                                        style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                     model.description?.let {
@@ -923,20 +967,20 @@ fun ModelDialog(
                 error?.let {
                     Surface(
                         color = MaterialTheme.colorScheme.errorContainer,
-                        shape = RoundedCornerShape(10.dp),
+                        shape = MaterialTheme.shapes.medium,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
                             it,
                             modifier = Modifier.padding(10.dp),
-                            style = MaterialTheme.typography.labelSmall,
+                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onErrorContainer
                         )
                     }
                 }
                 Text(
                     "云端未列出模型时，可手动填写模型 ID（切换结果会即时提示）",
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {

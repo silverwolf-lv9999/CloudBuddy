@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,35 +18,25 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountCircle
-import androidx.compose.material.icons.filled.Cloud
-import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExitToApp
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Extension
-import androidx.compose.material.icons.filled.Hub
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.SwapHoriz
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -62,25 +51,26 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cn.cloudbuddy.app.BuildConfig
+import cn.cloudbuddy.app.data.Account
 import cn.cloudbuddy.app.data.AppSettings
 import cn.cloudbuddy.app.data.AppUiState
-import cn.cloudbuddy.app.data.Account
-import cn.cloudbuddy.app.ui.components.ConnectorCard
-import cn.cloudbuddy.app.ui.components.McpCard
-import cn.cloudbuddy.app.ui.components.SkillsCard
 import cn.cloudbuddy.app.data.BuddyRepository
 import cn.cloudbuddy.app.data.FoldMode
 import cn.cloudbuddy.app.data.ReleaseInfo
 import cn.cloudbuddy.app.data.UpdateChecker
+import cn.cloudbuddy.app.ui.components.ConnectorCard
+import cn.cloudbuddy.app.ui.components.McpCard
+import cn.cloudbuddy.app.ui.components.SkillsCard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun SettingsScreen(
     ui: AppUiState,
@@ -128,32 +118,46 @@ fun SettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("设置", style = MaterialTheme.typography.titleLarge) },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
+                title = {
+                    Text(
+                        "设置",
+                        style = MaterialTheme.typography.titleLargeEmphasized
+                    )
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
             )
         },
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
         LazyColumn(
             modifier = Modifier.padding(padding).fillMaxSize(),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // ── 顶部账号卡 ────────────────────────────────────────────────
             item {
-                Card(
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                Surface(
+                    shape = MaterialTheme.shapes.extraLargeIncreased,
+                    color = MaterialTheme.colorScheme.primaryContainer
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        modifier = Modifier.fillMaxWidth().padding(20.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surface) {
-                            Box(Modifier.size(46.dp), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Filled.AccountCircle, null, tint = MaterialTheme.colorScheme.primary)
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surface,
+                            modifier = Modifier.size(44.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    Icons.Filled.Person,
+                                    null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
                             }
                         }
-                        Spacer(Modifier.width(12.dp))
+                        Spacer(Modifier.width(14.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 ui.account.nickname.ifBlank { repo.settings.nickname.ifBlank { "WorkBuddy 账号" } },
@@ -168,63 +172,138 @@ fun SettingsScreen(
                             )
                         }
                         Surface(
-                            shape = RoundedCornerShape(50),
+                            shape = MaterialTheme.shapes.largeIncreased,
                             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
                             modifier = Modifier.clickable {
                                 scope.launch { repo.refreshAccount(); repo.refreshUsage() }
                             }
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Filled.Refresh, null, Modifier.size(13.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("刷新", style = MaterialTheme.typography.labelSmall)
+                                Icon(Icons.Filled.Refresh, null, Modifier.size(14.dp))
+                                Spacer(Modifier.width(5.dp))
+                                Text("刷新", style = MaterialTheme.typography.labelMedium)
                             }
                         }
                     }
                 }
             }
 
-            item { SectionTitle("账号", Icons.Filled.Person) }
+            // ── 账号 ──────────────────────────────────────────────────────
             item {
-                SettingCard {
-                    ui.accounts.forEach { account ->
-                        AccountRow(
-                            account = account,
-                            active = account.id == ui.activeAccountId,
-                            onSwitch = { repo.switchAccount(account.id) },
-                            onDelete = { pendingDelete = account }
-                        )
-                        Divider()
+                SettingsGroup(title = "账号") {
+                    ui.accounts.forEachIndexed { index, account ->
+                        GroupRow(
+                            onClick = if (account.id != ui.activeAccountId) {
+                                { repo.switchAccount(account.id) }
+                            } else null
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    modifier = Modifier.size(40.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        val initial = account.title.take(1)
+                                        if (initial.isNotBlank()) {
+                                            Text(
+                                                initial,
+                                                style = MaterialTheme.typography.titleMedium,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                            )
+                                        } else {
+                                            Icon(
+                                                Icons.Filled.Person,
+                                                null,
+                                                tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                            )
+                                        }
+                                    }
+                                }
+                                Spacer(Modifier.width(14.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(account.title, style = MaterialTheme.typography.titleSmall)
+                                    if (account.subtitle.isNotBlank()) {
+                                        Text(
+                                            account.subtitle,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                if (account.id == ui.activeAccountId) {
+                                    Surface(
+                                        shape = MaterialTheme.shapes.largeIncreased,
+                                        color = MaterialTheme.colorScheme.primary
+                                    ) {
+                                        Text(
+                                            "当前",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onPrimary,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                        )
+                                    }
+                                    Spacer(Modifier.width(4.dp))
+                                } else {
+                                    IconButton(onClick = { repo.switchAccount(account.id) }) {
+                                        Icon(
+                                            Icons.Filled.SwapHoriz,
+                                            "切换到该账号",
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                                IconButton(onClick = { pendingDelete = account }) {
+                                    Icon(
+                                        Icons.Filled.Delete,
+                                        "删除账号",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                        if (index != ui.accounts.lastIndex) GroupDivider()
                     }
-                    SettingRow(
-                        title = "添加账号",
-                        subtitle = "登录另一个账号；两个账号的登录态各自保留，切换不用重新收验证码",
-                        trailing = {
-                            IconButton(onClick = { repo.addAccount() }) {
-                                Icon(
-                                    Icons.Filled.Add,
-                                    "添加账号",
-                                    tint = MaterialTheme.colorScheme.primary
+                    if (ui.accounts.isNotEmpty()) GroupDivider()
+                    GroupRow(onClick = { repo.addAccount() }) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        Icons.Filled.Add,
+                                        "添加账号",
+                                        tint = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("添加账号", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    "登录另一个账号；两个账号的登录态各自保留，切换不用重新收验证码",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
-                    )
+                    }
                 }
             }
 
-            item { SectionTitle("积分与签到", Icons.Filled.Star) }
+            // ── 积分与签到 ────────────────────────────────────────────────
             item {
-                SettingCard {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                SettingsGroup(title = "积分与签到") {
+                    GroupRow {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("积分余额", style = MaterialTheme.typography.titleMedium)
+                                Text("积分余额", style = MaterialTheme.typography.titleSmall)
                                 Text(
                                     balanceText(ui),
                                     style = MaterialTheme.typography.bodySmall,
@@ -237,23 +316,26 @@ fun SettingsScreen(
                                 onClick = { repo.claimCheckin() }
                             )
                         }
-                        checkinHint(ui)?.let { hint ->
+                    }
+                    val hints = buildList {
+                        checkinHint(ui)?.let { add(it to false) }
+                        ui.checkinError?.let { add(it to true) }
+                    }
+                    hints.forEach { (hint, isError) ->
+                        GroupDivider()
+                        GroupRow {
                             Text(
                                 hint,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = if (isError) MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        ui.checkinError?.let { message ->
-                            Text(
-                                message,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                        }
-                        if (ui.usage.isNotEmpty()) {
-                            Divider()
-                            ui.usage.take(3).forEach { pack ->
+                    }
+                    if (ui.usage.isNotEmpty()) {
+                        GroupDivider()
+                        ui.usage.take(3).forEachIndexed { index, pack ->
+                            GroupRow {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
                                         pack.name,
@@ -267,177 +349,200 @@ fun SettingsScreen(
                                     )
                                 }
                             }
+                            if (index != minOf(2, ui.usage.lastIndex)) GroupDivider()
                         }
                     }
                 }
             }
 
-            item { SectionTitle("云端环境", Icons.Filled.Cloud) }
+            // ── 云端环境 ──────────────────────────────────────────────────
             item {
-                SettingCard {
-                    SettingRow(
-                        title = "服务站点",
-                        subtitle = repo.settings.baseUrl,
-                        trailing = { Text("官方", style = MaterialTheme.typography.labelSmall) }
-                    )
-                    Divider()
-                    SettingRow(
-                        title = "当前模型",
-                        subtitle = ui.selectedModel.ifBlank { AppSettings.DEFAULT_MODEL },
-                        trailing = { Text("${ui.models.size} 个可选", style = MaterialTheme.typography.labelSmall) }
-                    )
-                    Divider()
-                    SettingRow(
-                        title = "会话执行位置",
-                        subtitle = "官方云端沙箱（/workspace），不在本机执行",
-                        trailing = {
+                SettingsGroup(title = "云端环境") {
+                    GroupRow {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            GroupTextColumn(
+                                title = "服务站点",
+                                subtitle = repo.settings.baseUrl,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text("官方", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    GroupDivider()
+                    GroupRow {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            GroupTextColumn(
+                                title = "当前模型",
+                                subtitle = ui.selectedModel.ifBlank { AppSettings.DEFAULT_MODEL },
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text("${ui.models.size} 个可选", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    GroupDivider()
+                    GroupRow {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            GroupTextColumn(
+                                title = "会话执行位置",
+                                subtitle = "官方云端沙箱（/workspace），不在本机执行",
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(Modifier.width(10.dp))
                             Text(
                                 "云沙箱",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary
                             )
                         }
-                    )
+                    }
                 }
             }
 
-            item { SectionTitle("外观", Icons.Filled.Palette) }
+            // ── 外观 ──────────────────────────────────────────────────────
             item {
-                SettingCard {
-                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("主题", style = MaterialTheme.typography.titleMedium)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(
-                                AppSettings.THEME_SYSTEM to "跟随系统",
-                                AppSettings.THEME_LIGHT to "浅色",
-                                AppSettings.THEME_DARK to "深色"
-                            ).forEach { (value, label) ->
-                                val active = themeMode == value
-                                Surface(
-                                    shape = RoundedCornerShape(50),
-                                    color = if (active) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.surfaceVariant,
-                                    modifier = Modifier.clickable {
-                                        themeMode = value
-                                        repo.settings.themeMode = value
-                                        (context.applicationContext as? cn.cloudbuddy.app.BuddyApp)?.applyTheme()
+                SettingsGroup(title = "外观") {
+                    GroupRow {
+                        Column {
+                            Text("主题", style = MaterialTheme.typography.titleSmall)
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "浅色 / 深色 / 跟随系统",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf(
+                                    AppSettings.THEME_SYSTEM to "跟随系统",
+                                    AppSettings.THEME_LIGHT to "浅色",
+                                    AppSettings.THEME_DARK to "深色"
+                                ).forEach { (value, label) ->
+                                    val active = themeMode == value
+                                    Surface(
+                                        shape = MaterialTheme.shapes.largeIncreased,
+                                        color = if (active) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.surfaceContainerHighest,
+                                        modifier = Modifier.clickable {
+                                            themeMode = value
+                                            repo.settings.themeMode = value
+                                            (context.applicationContext as? cn.cloudbuddy.app.BuddyApp)?.applyTheme()
+                                        }
+                                    ) {
+                                        Text(
+                                            label,
+                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = if (active) MaterialTheme.colorScheme.onPrimary
+                                            else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
                                     }
-                                ) {
-                                    Text(
-                                        label,
-                                        modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = if (active) MaterialTheme.colorScheme.onPrimary
-                                        else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
                                 }
                             }
                         }
                     }
-                    Divider()
-                    SettingRow(
+                    GroupDivider()
+                    SwitchRow(
                         title = "动态取色",
                         subtitle = "跟随系统壁纸生成配色（Android 12+）",
-                        trailing = {
-                            Switch(checked = dynamic, onCheckedChange = {
-                                dynamic = it
-                                repo.settings.dynamicColor = it
-                                (context.applicationContext as? cn.cloudbuddy.app.BuddyApp)?.applyTheme()
-                            })
+                        checked = dynamic,
+                        onCheckedChange = {
+                            dynamic = it
+                            repo.settings.dynamicColor = it
+                            (context.applicationContext as? cn.cloudbuddy.app.BuddyApp)?.applyTheme()
                         }
                     )
                 }
             }
 
-            item { SectionTitle("对话", Icons.Filled.Tune) }
+            // ── 对话 ──────────────────────────────────────────────────────
             item {
-                SettingCard {
-                    ChipSetting(
+                SettingsGroup(title = "对话") {
+                    ChipRow(
                         title = "折叠方式",
                         subtitle = "整轮折叠：除最终回答外全收起；只折过程：正文保留，思考与工具调用收成一条",
                         options = listOf(
                             FoldMode.WHOLE.key to "整轮折叠",
                             FoldMode.BODY.key to "只折思考与工具"
                         ),
-                        selected = ui.foldMode.key
-                    ) { repo.setFoldMode(FoldMode.of(it)) }
-                    Divider()
-                    SettingRow(
+                        selected = ui.foldMode.key,
+                        onSelect = { repo.setFoldMode(FoldMode.of(it)) }
+                    )
+                    GroupDivider()
+                    SwitchRow(
                         title = "折叠中间步骤",
                         subtitle = "只保留提问与最终回答；之后新产生的步骤也自动折叠",
-                        trailing = {
-                            Switch(
-                                checked = ui.stepsCollapsed,
-                                onCheckedChange = { repo.setCollapseSteps(it) }
-                            )
-                        }
+                        checked = ui.stepsCollapsed,
+                        onCheckedChange = { repo.setCollapseSteps(it) }
                     )
-                    Divider()
-                    SettingRow(
+                    GroupDivider()
+                    SwitchRow(
                         title = "展开思考过程",
                         subtitle = "默认把模型的思考分片折叠起来",
-                        trailing = {
-                            Switch(checked = showThoughts, onCheckedChange = {
-                                showThoughts = it
-                                repo.settings.showThoughts = it
-                            })
+                        checked = showThoughts,
+                        onCheckedChange = {
+                            showThoughts = it
+                            repo.settings.showThoughts = it
                         }
                     )
-                    Divider()
-                    SettingRow(
+                    GroupDivider()
+                    SwitchRow(
                         title = "回车发送消息",
                         subtitle = if (enterSend) "回车直接发送" else "回车换行；发送请点右下角按钮",
-                        trailing = {
-                            Switch(checked = enterSend, onCheckedChange = {
-                                enterSend = it
-                                repo.settings.enterSend = it
-                            })
+                        checked = enterSend,
+                        onCheckedChange = {
+                            enterSend = it
+                            repo.settings.enterSend = it
                         }
                     )
-                    Divider()
-                    ChipSetting(
+                    GroupDivider()
+                    ChipRow(
                         title = "一次渲染多少轮对话",
                         subtitle = "只渲染最近若干轮，更早的往上翻再加载；长对话打开更快",
                         options = listOf(10 to "10 轮", 20 to "20 轮", 50 to "50 轮", 0 to "全部"),
-                        selected = historyTurns
-                    ) {
-                        historyTurns = it
-                        repo.settings.historyTurns = it
-                    }
-                    Divider()
-                    ChipSetting(
+                        selected = historyTurns,
+                        onSelect = {
+                            historyTurns = it
+                            repo.settings.historyTurns = it
+                        }
+                    )
+                    GroupDivider()
+                    ChipRow(
                         title = "历史加载超时",
                         subtitle = "对话越长云端回放越慢；超时只会少显示早期内容，不影响继续对话",
                         options = listOf(60 to "60 秒", 120 to "120 秒", 180 to "180 秒", 300 to "300 秒"),
-                        selected = historyTimeout
-                    ) {
-                        historyTimeout = it
-                        repo.settings.historyTimeoutSec = it
-                    }
+                        selected = historyTimeout,
+                        onSelect = {
+                            historyTimeout = it
+                            repo.settings.historyTimeoutSec = it
+                        }
+                    )
                 }
             }
 
-            item { SectionTitle("技能", Icons.Filled.Extension) }
+            // ── 技能 ──────────────────────────────────────────────────────
+            item { GroupLabel("技能") }
             item { SkillsCard(ui, repo) }
 
-            item { SectionTitle("MCP 服务器", Icons.Filled.Hub) }
+            // ── MCP ───────────────────────────────────────────────────────
+            item { GroupLabel("MCP 服务器") }
             item { ConnectorCard(ui, repo) }
             item { McpCard(ui, repo) }
 
-            item { SectionTitle("关于", Icons.Filled.Info) }
+            // ── 关于 ──────────────────────────────────────────────────────
             item {
-                SettingCard {
-                    Column {
-                        Column(
-                            modifier = Modifier.padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text("云伴 WorkBuddy", style = MaterialTheme.typography.titleMedium)
+                SettingsGroup(title = "关于") {
+                    GroupRow {
+                        Column {
+                            Text("云伴 WorkBuddy", style = MaterialTheme.typography.titleSmall)
+                            Spacer(Modifier.height(4.dp))
                             Text(
                                 "版本 ${BuildConfig.VERSION_NAME} · 第三方客户端",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            Spacer(Modifier.height(6.dp))
                             Text(
                                 "本客户端直接对接 WorkBuddy 官方云端会话协议（console 接口 + ACP 事件流 + 沙箱文件网关），" +
                                     "任务在官方云端沙箱内执行，产物保存在沙箱 /workspace 中，" +
@@ -446,54 +551,85 @@ fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        Divider()
-                        AboutRow(
-                            title = "检查更新",
-                            subtitle = when (val s = updateState) {
-                                UpdateCheck.Idle -> "从 GitHub Releases 获取最新版本"
-                                UpdateCheck.Checking -> "正在连接 GitHub…"
-                                UpdateCheck.UpToDate -> "当前 ${BuildConfig.VERSION_NAME} 已是最新"
-                                is UpdateCheck.Available -> "发现新版本 ${s.info.version}，点击查看"
-                                is UpdateCheck.Failed -> "检查失败：${s.message}"
-                            },
-                            trailing = when (val s = updateState) {
-                                UpdateCheck.Idle -> "检查"
-                                UpdateCheck.Checking -> "…"
-                                UpdateCheck.UpToDate -> "已是最新"
-                                is UpdateCheck.Available -> "v${s.info.version}"
-                                is UpdateCheck.Failed -> "重试"
-                            },
-                            accent = updateState is UpdateCheck.Available,
-                            onClick = {
-                                val current = updateState
-                                if (current is UpdateCheck.Available) {
-                                    openUrl(context, current.info.apkUrl ?: current.info.pageUrl)
-                                } else {
-                                    checkUpdate()
-                                }
-                            }
-                        )
-                        Divider()
-                        AboutRow(
-                            title = "GitHub 仓库",
-                            subtitle = UpdateChecker.REPO_SLUG,
-                            trailing = "打开",
-                            onClick = { openUrl(context, UpdateChecker.REPO_URL) }
-                        )
-                        Divider()
-                        AboutRow(
-                            title = "提交反馈",
-                            subtitle = "遇到问题或有想法？在 GitHub Issues 里告诉我们",
-                            trailing = "打开",
-                            onClick = { openUrl(context, "https://github.com/${UpdateChecker.REPO_SLUG}/issues") }
-                        )
+                    }
+                    GroupDivider()
+                    GroupRow(onClick = {
+                        val current = updateState
+                        if (current is UpdateCheck.Available) {
+                            openUrl(context, current.info.apkUrl ?: current.info.pageUrl)
+                        } else {
+                            checkUpdate()
+                        }
+                    }) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            GroupTextColumn(
+                                title = "检查更新",
+                                subtitle = when (val s = updateState) {
+                                    UpdateCheck.Idle -> "从 GitHub Releases 获取最新版本"
+                                    UpdateCheck.Checking -> "正在连接 GitHub…"
+                                    UpdateCheck.UpToDate -> "当前 ${BuildConfig.VERSION_NAME} 已是最新"
+                                    is UpdateCheck.Available -> "发现新版本 ${s.info.version}，点击查看"
+                                    is UpdateCheck.Failed -> "检查失败：${s.message}"
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            val accent = updateState is UpdateCheck.Available
+                            Text(
+                                when (val s = updateState) {
+                                    UpdateCheck.Idle -> "检查"
+                                    UpdateCheck.Checking -> "…"
+                                    UpdateCheck.UpToDate -> "已是最新"
+                                    is UpdateCheck.Available -> "v${s.info.version}"
+                                    is UpdateCheck.Failed -> "重试"
+                                },
+                                style = MaterialTheme.typography.labelLarge,
+                                color = if (accent) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    GroupDivider()
+                    GroupRow(onClick = { openUrl(context, UpdateChecker.REPO_URL) }) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            GroupTextColumn(
+                                title = "GitHub 仓库",
+                                subtitle = UpdateChecker.REPO_SLUG,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                "打开",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    GroupDivider()
+                    GroupRow(onClick = {
+                        openUrl(context, "https://github.com/${UpdateChecker.REPO_SLUG}/issues")
+                    }) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            GroupTextColumn(
+                                title = "提交反馈",
+                                subtitle = "遇到问题或有想法？在 GitHub Issues 里告诉我们",
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                "打开",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }
 
+            // ── 退出登录 ──────────────────────────────────────────────────
             item {
                 Surface(
-                    shape = RoundedCornerShape(16.dp),
+                    shape = MaterialTheme.shapes.extraLargeIncreased,
                     color = MaterialTheme.colorScheme.errorContainer,
                     modifier = Modifier.fillMaxWidth().clickable {
                         repo.signOut()
@@ -501,12 +637,21 @@ fun SettingsScreen(
                     }
                 ) {
                     Row(
-                        modifier = Modifier.padding(16.dp),
+                        modifier = Modifier.padding(20.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Filled.ExitToApp, null, Modifier.size(18.dp))
-                        Spacer(Modifier.width(10.dp))
-                        Text("退出登录", style = MaterialTheme.typography.titleMedium)
+                        Icon(
+                            Icons.Filled.ExitToApp,
+                            null,
+                            Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            "退出登录",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
                     }
                 }
             }
@@ -564,36 +709,166 @@ fun SettingsScreen(
     }
 }
 
-/** 关于板块里的一行：标题 + 说明 + 右侧状态文字，整行可点。 */
+// ─────────────────────────────────────────────────────────────────────────────
+// CardGroup 风格私有组件
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 一组设置项的标题，放在组容器上方。 */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun AboutRow(
+private fun GroupLabel(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.titleSmallEmphasized,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+    )
+}
+
+/**
+ * 一组共享大圆角容器的设置项集合。
+ * 圆角 extraLargeIncreased，颜色 surfaceContainerLow，组间距由外层 LazyColumn 提供。
+ */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun SettingsGroup(
     title: String,
-    subtitle: String,
-    trailing: String,
-    accent: Boolean = false,
-    onClick: () -> Unit
+    content: @Composable () -> Unit
 ) {
-    Row(
+    Column {
+        GroupLabel(title)
+        Surface(
+            shape = MaterialTheme.shapes.extraLargeIncreased,
+            color = MaterialTheme.colorScheme.surfaceContainerLow
+        ) {
+            Column { content() }
+        }
+    }
+}
+
+/**
+ * 组内一行：整行可点，上下 16dp、左右 20dp 内边距。
+ * onClick 为 null 时不可点。
+ */
+@Composable
+private fun GroupRow(
+    onClick: (() -> Unit)? = null,
+    content: @Composable () -> Unit
+) {
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleSmall)
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+            .then(
+                if (onClick != null) Modifier.clickable(onClick = onClick)
+                else Modifier
             )
-        }
-        Spacer(Modifier.width(10.dp))
+            .padding(horizontal = 20.dp, vertical = 16.dp)
+    ) {
+        content()
+    }
+}
+
+/** 组内行间距 1dp 分割线，颜色 outlineVariant 50% 透明。 */
+@Composable
+private fun GroupDivider() {
+    HorizontalDivider(
+        modifier = Modifier.padding(horizontal = 20.dp),
+        thickness = 1.dp,
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+    )
+}
+
+/** 标题 + 副标题竖排（无图标时用）。 */
+@Composable
+private fun GroupTextColumn(title: String, subtitle: String, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        Text(title, style = MaterialTheme.typography.titleSmall)
         Text(
-            trailing,
-            style = MaterialTheme.typography.labelLarge,
-            color = if (accent) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurfaceVariant
+            subtitle,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/** 标题 + 副标题 + 右侧 Switch 的一整行。 */
+@Composable
+private fun SwitchRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    GroupRow(onClick = { onCheckedChange(!checked) }) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            GroupTextColumn(
+                title = title,
+                subtitle = subtitle,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.width(12.dp))
+            Switch(checked = checked, onCheckedChange = onCheckedChange)
+        }
+    }
+}
+
+/** 标题 + 副标题 + 一排可选项 chips。 */
+@Composable
+private fun <T> ChipRow(
+    title: String,
+    subtitle: String,
+    options: List<Pair<T, String>>,
+    selected: T,
+    onSelect: (T) -> Unit
+) {
+    GroupRow {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            GroupTextColumn(title = title, subtitle = subtitle)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                options.forEach { (value, label) ->
+                    val active = selected == value
+                    Surface(
+                        shape = MaterialTheme.shapes.largeIncreased,
+                        color = if (active) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.surfaceContainerHighest,
+                        modifier = Modifier.clickable { onSelect(value) }
+                    ) {
+                        Text(
+                            label,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (active) MaterialTheme.colorScheme.onPrimary
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 签到按钮：FilledTonalButton，形状 largeIncreased。 */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun CheckinButton(loading: Boolean, checkedIn: Boolean, onClick: () -> Unit) {
+    FilledTonalButton(
+        onClick = onClick,
+        enabled = !loading && !checkedIn,
+        shape = MaterialTheme.shapes.largeIncreased
+    ) {
+        if (loading) {
+            Icon(Icons.Filled.Refresh, null, Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+        } else if (checkedIn) {
+            Icon(Icons.Filled.Check, null, Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+        }
+        Text(
+            when {
+                loading -> "处理中…"
+                checkedIn -> "今日已签到"
+                else -> "签到"
+            }
         )
     }
 }
@@ -615,200 +890,6 @@ private fun openUrl(context: Context, url: String) {
         .onFailure {
             Toast.makeText(context, "没有可以打开链接的应用", Toast.LENGTH_SHORT).show()
         }
-}
-
-@Composable
-private fun SectionTitle(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(start = 4.dp, top = 8.dp)
-    ) {
-        Icon(icon, null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.primary)
-        Spacer(Modifier.width(6.dp))
-        Text(text, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-    }
-}
-
-@Composable
-private fun SettingCard(content: @Composable () -> Unit) {
-    Card(
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column { content() }
-    }
-}
-
-/** 账号列表里的一行：头像首字 + 名字 + 手机号，右侧是「当前」标记或切换/删除。 */
-@Composable
-private fun AccountRow(
-    account: Account,
-    active: Boolean,
-    onSwitch: () -> Unit,
-    onDelete: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(enabled = !active, onClick = onSwitch)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceVariant) {
-            Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) {
-                Text(
-                    account.title.take(1),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(account.title, style = MaterialTheme.typography.titleMedium)
-            if (account.subtitle.isNotBlank()) {
-                Text(
-                    account.subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-        if (active) {
-            Text(
-                "当前",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary
-            )
-        } else {
-            IconButton(onClick = onSwitch) {
-                Icon(Icons.Filled.SwapHoriz, "切换到该账号", Modifier.size(18.dp))
-            }
-        }
-        IconButton(onClick = onDelete) {
-            Icon(
-                Icons.Filled.Delete,
-                "删除账号",
-                Modifier.size(18.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-private fun SettingRow(
-    title: String,
-    subtitle: String,
-    trailing: @Composable () -> Unit = {}
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 13.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        Spacer(Modifier.width(10.dp))
-        trailing()
-    }
-}
-
-/** 一行标题 + 副标题 + 一排可选项（用于「渲染多少轮」「超时多少秒」）。 */
-@Composable
-private fun ChipSetting(
-    title: String,
-    subtitle: String,
-    options: List<Pair<Int, String>>,
-    selected: Int,
-    onSelect: (Int) -> Unit
-) = Chips(title, subtitle, options, selected, onSelect)
-
-/** 字符串取值的同款选项行（折叠方式这种非数值设置用）。 */
-@Composable
-private fun ChipSetting(
-    title: String,
-    subtitle: String,
-    options: List<Pair<String, String>>,
-    selected: String,
-    onSelect: (String) -> Unit
-) = Chips(title, subtitle, options, selected, onSelect)
-
-@Composable
-private fun <T> Chips(
-    title: String,
-    subtitle: String,
-    options: List<Pair<T, String>>,
-    selected: T,
-    onSelect: (T) -> Unit
-) {
-    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-        Column {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            options.forEach { (value, label) ->
-                val active = selected == value
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = if (active) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.surfaceVariant,
-                    modifier = Modifier.clickable { onSelect(value) }
-                ) {
-                    Text(
-                        label,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (active) MaterialTheme.colorScheme.onPrimary
-                        else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun Divider() {    Box(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 14.dp)
-            .height(1.dp)
-            .background(MaterialTheme.colorScheme.outlineVariant)
-    )
-}
-
-@Composable
-private fun CheckinButton(loading: Boolean, checkedIn: Boolean, onClick: () -> Unit) {
-    val enabled = !loading && !checkedIn
-    Surface(
-        shape = RoundedCornerShape(50),
-        color = if (enabled) MaterialTheme.colorScheme.primary
-        else MaterialTheme.colorScheme.surfaceVariant,
-        modifier = Modifier.clickable(enabled = enabled, onClick = onClick)
-    ) {
-        Text(
-            text = when {
-                loading -> "处理中…"
-                checkedIn -> "今日已签到"
-                else -> "签到"
-            },
-            style = MaterialTheme.typography.labelMedium,
-            color = if (enabled) MaterialTheme.colorScheme.onPrimary
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
-        )
-    }
 }
 
 /** 余额文案：有等级时一起展示，避免再多一行。 */

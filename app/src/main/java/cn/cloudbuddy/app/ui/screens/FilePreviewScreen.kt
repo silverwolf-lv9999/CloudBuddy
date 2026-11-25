@@ -2,9 +2,7 @@ package cn.cloudbuddy.app.ui.screens
 
 import android.graphics.BitmapFactory
 import android.webkit.WebView
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,15 +15,17 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -43,6 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -56,12 +57,13 @@ import cn.cloudbuddy.app.data.Downloads
 import cn.cloudbuddy.app.data.SandboxPath
 import cn.cloudbuddy.app.ui.components.MarkdownText
 import cn.cloudbuddy.app.ui.components.rememberDownloader
+import cn.cloudbuddy.app.ui.theme.extendColors
 
 /**
  * 沙箱文件预览：图片、HTML、Markdown、纯文本就地渲染，二进制文件提供下载。
  * 内容来自云端文件网关，不落盘（下载除外）。
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun FilePreviewScreen(
     repo: BuddyRepository,
@@ -92,13 +94,22 @@ fun FilePreviewScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, "返回") } },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Filled.ArrowBack, "返回")
+                    }
+                },
                 title = {
                     Column {
-                        Text(name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            name,
+                            style = MaterialTheme.typography.titleSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                         Text(
                             path,
-                            style = MaterialTheme.typography.labelSmall,
+                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -133,7 +144,7 @@ fun FilePreviewScreen(
                         else Icon(Icons.Filled.Download, "下载")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
             )
         },
         containerColor = MaterialTheme.colorScheme.background
@@ -142,14 +153,14 @@ fun FilePreviewScreen(
             notice?.let {
                 Surface(
                     color = MaterialTheme.colorScheme.secondaryContainer,
-                    shape = RoundedCornerShape(10.dp),
+                    shape = MaterialTheme.shapes.largeIncreased,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             it,
-                            modifier = Modifier.weight(1f).padding(10.dp),
-                            style = MaterialTheme.typography.labelSmall
+                            modifier = Modifier.weight(1f).padding(12.dp),
+                            style = MaterialTheme.typography.bodySmall
                         )
                         val saved = lastSaved
                         TextButton(onClick = {
@@ -162,13 +173,20 @@ fun FilePreviewScreen(
             }
             when {
                 loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(Modifier.size(26.dp), strokeWidth = 2.4.dp)
+                    CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.6.dp)
                 }
 
                 error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Filled.InsertDriveFile, null, Modifier.size(30.dp))
-                        Spacer(Modifier.height(8.dp))
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.InsertDriveFile,
+                            null,
+                            Modifier.size(32.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                         Text(error!!, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
@@ -179,6 +197,7 @@ fun FilePreviewScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun PreviewBody(mime: String, name: String, data: ByteArray) {
     when {
@@ -213,55 +232,95 @@ private fun PreviewBody(mime: String, name: String, data: ByteArray) {
             modifier = Modifier.fillMaxSize()
         )
 
-        mime == "text/markdown" -> MarkdownText(
-            markdown = String(data, Charsets.UTF_8),
+        mime == "text/markdown" -> Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            shape = MaterialTheme.shapes.largeIncreased,
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            baseSize = 14.5f
-        )
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+        ) {
+            MarkdownText(
+                markdown = String(data, Charsets.UTF_8),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp),
+                baseSize = 14.5f
+            )
+        }
 
         mime.startsWith("text/") || mime == "application/json" || mime == "text/xml" -> {
             val text = remember(data) { String(data, Charsets.UTF_8) }
-            SelectionContainer {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .horizontalScroll(rememberScrollState())
-                        .padding(14.dp)
-                ) {
-                    Text(
-                        text = text,
-                        style = androidx.compose.ui.text.TextStyle(
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 12.5.sp,
-                            lineHeight = 19.sp,
-                            color = MaterialTheme.colorScheme.onSurface
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                shape = MaterialTheme.shapes.largeIncreased,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+            ) {
+                SelectionContainer {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .horizontalScroll(rememberScrollState())
+                            .padding(16.dp)
+                    ) {
+                        Text(
+                            text = text,
+                            style = androidx.compose.ui.text.TextStyle(
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 12.5.sp,
+                                lineHeight = 19.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
                         )
-                    )
+                    }
                 }
             }
         }
 
         else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+            Surface(
+                shape = MaterialTheme.shapes.extraLargeIncreased,
+                color = MaterialTheme.extendColors.warningContainer
             ) {
-                Icon(Icons.Filled.InsertDriveFile, null, Modifier.size(34.dp))
-                Text("该类型不支持预览", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "${mime} · ${humanSize(data.size.toLong())}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    "点右上角下载到本机后打开",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 24.dp)
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.extendColors.warning,
+                        modifier = Modifier.size(56.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Filled.Warning,
+                                null,
+                                Modifier.size(26.dp),
+                                tint = MaterialTheme.extendColors.onWarning
+                            )
+                        }
+                    }
+                    Text(
+                        "暂不支持预览此类型，请下载后查看",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.extendColors.onWarningContainer
+                    )
+                    Text(
+                        "${mime} · ${humanSize(data.size.toLong())}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.extendColors.onWarningContainer.copy(alpha = 0.8f)
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        "点右上角下载到本机后打开",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.extendColors.onWarningContainer.copy(alpha = 0.8f)
+                    )
+                }
             }
         }
     }

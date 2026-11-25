@@ -27,8 +27,8 @@ android {
         applicationId = "cn.cloudbuddy.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 35
-        versionName = "1.4.11"
+        versionCode = 36
+        versionName = "1.5.0"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -63,6 +63,16 @@ android {
         jvmTarget = "17"
     }
 
+    // 全局打开 M3 Expressive OptIn，避免每个 Composable 文件都加 @OptIn
+    tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+        compilerOptions {
+            freeCompilerArgs.addAll(
+                "-opt-in=androidx.compose.material3.ExperimentalMaterial3ExpressiveApi",
+                "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
+            )
+        }
+    }
+
     buildFeatures {
         compose = true
         buildConfig = true
@@ -80,12 +90,13 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
 
-    val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
+    val composeBom = platform("androidx.compose:compose-bom:2025.04.01")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.foundation:foundation")
-    implementation("androidx.compose.material3:material3")
+    // material3 1.4.x 提供完整 MaterialExpressiveTheme / MaterialShapes / MotionScheme / 大圆角 shapes / Emphasized typography
+    implementation("androidx.compose.material3:material3:1.4.0-alpha17")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.animation:animation")
 

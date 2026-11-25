@@ -2,87 +2,152 @@ package cn.cloudbuddy.app.ui.theme
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Typography
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.MaterialExpressiveTheme
+import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.sp
 
-private val Brand = Color(0xFF0B63F6)
-private val BrandDark = Color(0xFF9EC0FF)
-private val Ink = Color(0xFF0E1524)
-private val Cloud = Color(0xFFF6F8FC)
+// ─────────────────────────────────────────────────────────────────────────────
+// CloudBuddy 主题：Material 3 Expressive（material3 1.4.x）。
+// 蓝紫主色 + 5 级 surfaceContainer + M3 Expressive 动态效果。
+// ─────────────────────────────────────────────────────────────────────────────
 
+// ── Light scheme ────────────────────────────────────────────────────────────
 private val LightScheme = lightColorScheme(
-    primary = Brand,
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFFDCE7FF),
-    onPrimaryContainer = Color(0xFF001A43),
-    secondary = Color(0xFF3F5C8C),
-    secondaryContainer = Color(0xFFE4ECFB),
-    onSecondaryContainer = Color(0xFF10203A),
-    tertiary = Color(0xFF0E8172),
-    tertiaryContainer = Color(0xFFC8F3EA),
-    background = Cloud,
-    onBackground = Ink,
-    surface = Color.White,
-    onSurface = Ink,
-    surfaceVariant = Color(0xFFEDF1F8),
-    onSurfaceVariant = Color(0xFF57637A),
-    outline = Color(0xFFC8D0DE),
-    outlineVariant = Color(0xFFE2E8F1),
-    error = Color(0xFFB3261E),
-    errorContainer = Color(0xFFF9DEDC)
+    primary = Color(0xFF5B53E0),
+    onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFFE3DFFF),
+    onPrimaryContainer = Color(0xFF1A1661),
+    secondary = Color(0xFF5D5C72),
+    onSecondary = Color(0xFFFFFFFF),
+    secondaryContainer = Color(0xFFE2E0F9),
+    onSecondaryContainer = Color(0xFF1A1A2C),
+    tertiary = Color(0xFF7A5268),
+    onTertiary = Color(0xFFFFFFFF),
+    tertiaryContainer = Color(0xFFFFD8EA),
+    onTertiaryContainer = Color(0xFF2E1124),
+    error = Color(0xFFBA1A1A),
+    onError = Color(0xFFFFFFFF),
+    errorContainer = Color(0xFFFFDAD6),
+    onErrorContainer = Color(0xFF410002),
+    background = Color(0xFFFBF8FF),
+    onBackground = Color(0xFF1B1A22),
+    surface = Color(0xFFFBF8FF),
+    onSurface = Color(0xFF1B1A22),
+    surfaceVariant = Color(0xFFE4E1EC),
+    onSurfaceVariant = Color(0xFF474553),
+    outline = Color(0xFF787583),
+    outlineVariant = Color(0xFFC8C5D3),
+    inverseSurface = Color(0xFF302F37),
+    inverseOnSurface = Color(0xFFF2EFF7),
+    inversePrimary = Color(0xFFC5C0FF),
+    surfaceTint = Color(0xFF5B53E0),
+    scrim = Color(0xFF000000),
+    surfaceBright = Color(0xFFFBF8FF),
+    surfaceDim = Color(0xFFDBD8E1),
+    surfaceContainer = Color(0xFFEFEDF5),
+    surfaceContainerHigh = Color(0xFFE9E7EF),
+    surfaceContainerHighest = Color(0xFFE3E1E9),
+    surfaceContainerLow = Color(0xFFF5F2FA),
+    surfaceContainerLowest = Color(0xFFFFFFFF),
 )
 
+// ── Dark scheme ─────────────────────────────────────────────────────────────
 private val DarkScheme = darkColorScheme(
-    primary = BrandDark,
-    onPrimary = Color(0xFF00286B),
-    primaryContainer = Color(0xFF0B3E92),
-    onPrimaryContainer = Color(0xFFDCE7FF),
-    secondary = Color(0xFFB4C7E8),
-    secondaryContainer = Color(0xFF2A3A55),
-    onSecondaryContainer = Color(0xFFDCE7FF),
-    tertiary = Color(0xFF7FD8C8),
-    tertiaryContainer = Color(0xFF005147),
-    background = Color(0xFF0D1117),
-    onBackground = Color(0xFFE6EAF2),
-    surface = Color(0xFF141A23),
-    onSurface = Color(0xFFE6EAF2),
-    surfaceVariant = Color(0xFF1E2632),
-    onSurfaceVariant = Color(0xFFA9B5C7),
-    outline = Color(0xFF3A4557),
-    outlineVariant = Color(0xFF2A333F),
+    primary = Color(0xFFC5C0FF),
+    onPrimary = Color(0xFF2B238F),
+    primaryContainer = Color(0xFF433CB8),
+    onPrimaryContainer = Color(0xFFE3DFFF),
+    secondary = Color(0xFFC6C4DD),
+    onSecondary = Color(0xFF2F2E42),
+    secondaryContainer = Color(0xFF454559),
+    onSecondaryContainer = Color(0xFFE2E0F9),
+    tertiary = Color(0xFFE9B9D2),
+    onTertiary = Color(0xFF47253A),
+    tertiaryContainer = Color(0xFF603B50),
+    onTertiaryContainer = Color(0xFFFFD8EA),
     error = Color(0xFFFFB4AB),
-    errorContainer = Color(0xFF8C1D18)
+    onError = Color(0xFF690005),
+    errorContainer = Color(0xFF93000A),
+    onErrorContainer = Color(0xFFFFDAD6),
+    background = Color(0xFF131218),
+    onBackground = Color(0xFFE5E1EA),
+    surface = Color(0xFF131218),
+    onSurface = Color(0xFFE5E1EA),
+    surfaceVariant = Color(0xFF474553),
+    onSurfaceVariant = Color(0xFFC8C5D3),
+    outline = Color(0xFF918F9C),
+    outlineVariant = Color(0xFF474553),
+    inverseSurface = Color(0xFFE5E1EA),
+    inverseOnSurface = Color(0xFF302F37),
+    inversePrimary = Color(0xFF5B53E0),
+    surfaceTint = Color(0xFFC5C0FF),
+    scrim = Color(0xFF000000),
+    surfaceBright = Color(0xFF39383F),
+    surfaceDim = Color(0xFF131218),
+    surfaceContainer = Color(0xFF1F1E26),
+    surfaceContainerHigh = Color(0xFF2A2931),
+    surfaceContainerHighest = Color(0xFF35343C),
+    surfaceContainerLow = Color(0xFF1B1A22),
+    surfaceContainerLowest = Color(0xFF0E0D13),
 )
 
-private val AppTypography = Typography(
-    displaySmall = TextStyle(fontFamily = FontFamily.Default, fontWeight = FontWeight.SemiBold, fontSize = 30.sp, lineHeight = 36.sp),
-    headlineMedium = TextStyle(fontFamily = FontFamily.Default, fontWeight = FontWeight.SemiBold, fontSize = 24.sp, lineHeight = 30.sp),
-    headlineSmall = TextStyle(fontFamily = FontFamily.Default, fontWeight = FontWeight.SemiBold, fontSize = 20.sp, lineHeight = 26.sp),
-    titleLarge = TextStyle(fontFamily = FontFamily.Default, fontWeight = FontWeight.SemiBold, fontSize = 18.sp, lineHeight = 24.sp),
-    titleMedium = TextStyle(fontFamily = FontFamily.Default, fontWeight = FontWeight.Medium, fontSize = 16.sp, lineHeight = 22.sp),
-    bodyLarge = TextStyle(fontFamily = FontFamily.Default, fontSize = 16.sp, lineHeight = 24.sp),
-    bodyMedium = TextStyle(fontFamily = FontFamily.Default, fontSize = 14.sp, lineHeight = 21.sp),
-    bodySmall = TextStyle(fontFamily = FontFamily.Default, fontSize = 12.sp, lineHeight = 18.sp),
-    labelLarge = TextStyle(fontFamily = FontFamily.Default, fontWeight = FontWeight.Medium, fontSize = 14.sp, lineHeight = 20.sp),
-    labelSmall = TextStyle(fontFamily = FontFamily.Default, fontWeight = FontWeight.Medium, fontSize = 11.sp, lineHeight = 15.sp)
+// ── 语义扩展色（成功 / 警告）─────────────────────────────────────────────────
+class ExtendColors(
+    val success: Color,
+    val onSuccess: Color,
+    val successContainer: Color,
+    val onSuccessContainer: Color,
+    val warning: Color,
+    val onWarning: Color,
+    val warningContainer: Color,
+    val onWarningContainer: Color,
 )
 
+private val LightExtend = ExtendColors(
+    success = Color(0xFF146C2E),
+    onSuccess = Color(0xFFFFFFFF),
+    successContainer = Color(0xFFA2F0A7),
+    onSuccessContainer = Color(0xFF002106),
+    warning = Color(0xFF825500),
+    onWarning = Color(0xFFFFFFFF),
+    warningContainer = Color(0xFFFFDDB3),
+    onWarningContainer = Color(0xFF2A1800),
+)
+
+private val DarkExtend = ExtendColors(
+    success = Color(0xFF87D38D),
+    onSuccess = Color(0xFF00390F),
+    successContainer = Color(0xFF00531C),
+    onSuccessContainer = Color(0xFFA2F0A7),
+    warning = Color(0xFFFFB951),
+    onWarning = Color(0xFF452B00),
+    warningContainer = Color(0xFF633F00),
+    onWarningContainer = Color(0xFFFFDDB3),
+)
+
+val LocalExtendColors = compositionLocalOf { LightExtend }
+
+val androidx.compose.material3.MaterialTheme.extendColors: ExtendColors
+    @Composable
+    @ReadOnlyComposable
+    get() = LocalExtendColors.current
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun CloudBuddyTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     dynamicColor: Boolean = true,
-    content: @Composable () -> Unit
+    content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
     val scheme = when {
@@ -91,5 +156,12 @@ fun CloudBuddyTheme(
         darkTheme -> DarkScheme
         else -> LightScheme
     }
-    MaterialTheme(colorScheme = scheme, typography = AppTypography, content = content)
+    val extend = if (darkTheme) DarkExtend else LightExtend
+    CompositionLocalProvider(LocalExtendColors provides extend) {
+        MaterialExpressiveTheme(
+            colorScheme = scheme,
+            motionScheme = MotionScheme.expressive(),
+            content = content,
+        )
+    }
 }
