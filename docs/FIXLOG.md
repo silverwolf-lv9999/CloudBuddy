@@ -2279,3 +2279,38 @@ IDLE（`turnActive` 时降级返回），**没挡 DONE**——所以即使这轮
 ## 测试
 - 新增 ChatStreamTest（SSE 解析 6 形状）、流式回答去重回归等；963 项全绿（+12），
   三变体 lint 0 error。
+
+# 1.6.0 追加 · 模型列表在提供商详情里拉（照 RikkaHub DetailPage）
+
+## 现象（用户反馈）
+1. 还是拉不到模型列表：「人家模型列表是在提供商设置里面拉的」。
+2. 设置项只搬了一点过来，「人家设置项里很多东西」。
+
+## 根因
+上一轮的提供商只是个编辑弹窗（名称/地址/Key/测试），模型管理仍是全局一张卡 +
+手动选提供商 + 手填 ID——拉取动作和提供商是分离的，这正是 RikkaHub 之前被否掉的形状。
+
+## 改法
+1. **提供商详情页**（`ui/components/ProviderManager.kt` 重写，仿 SettingProviderDetailPage）：
+   - 列表页只留「看 + 入口」：卡片显示地址预览、启用/停用、模型数标签，点击进详情；
+     「添加」即建空壳并跳详情（照 AddButton 的做法）。
+   - 详情页分「配置 / 模型」两块：进入**自动**拉一次该提供商的 `/models`
+     （地址或 Key 改动即重拉，右上可手动刷新），失败保留旧清单并显示错误口径
+     （catalog 的 HTTP 状态描述，与测试连接同通道）。
+   - 「从列表添加」弹窗：搜索过滤、逐条 +/✓、全部加入（N）、已加入的标「已加入」不可重复勾；
+     端点不提供 /models 时走「手动添加」。
+   - 已加入的模型一行一卡，展开编辑显示名 / 思考开关 / 思考强度 / 历史轮数 / 系统提示词
+     （原 CustomModelManager.ModelRow 原样迁移）；当前会话选中的模型标 ✓。
+2. **补齐 RikkaHub 详情页的设置项**：
+   - `chatPath`（自定义请求路径）：留空走 EndpointResolver 统一规则，http(s) 开头当完整 URL；
+     `CustomModelConfig.streamUrl` 统一算 URL，`OpenAiStreamClient.stream()` 用之。
+   - `headers`（自定义请求头）：多行 `Key: Value` 编辑，随请求逐条发送
+     （中转站的 HTTP-Referer / X-Title 这类归属头有了落点）。
+   - Key 输入框加显隐切换（照 secret textFieldItem）。
+3. 删除全局「模型」卡与 `CustomModelManager.kt`：模型管理只存在于提供商详情，
+   候选池机制（内存态）随之退役；设置页的「本机模型」页只留提供商列表 + 全局请求参数。
+4. 「本机模型」页内加三级导航（detailProviderId + BackHandler），返回键回列表不退出设置。
+
+## 测试
+- 新增 LlmProviderTest：encode/decode 往返（含 chatPath/headers）、旧数据 decode 兼容、
+  请求头解析与文本化、streamUrl 三种拼法；全绿（full），base flavor 编译通过，lint 0 error。

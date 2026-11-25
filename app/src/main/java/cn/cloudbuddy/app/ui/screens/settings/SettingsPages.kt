@@ -1,17 +1,21 @@
 package cn.cloudbuddy.app.ui.screens.settings
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -71,7 +75,6 @@ import cn.cloudbuddy.app.data.ThinkingParams
 import cn.cloudbuddy.app.data.ThinkingStyle
 import cn.cloudbuddy.app.data.UpdateChecker
 import cn.cloudbuddy.app.ui.components.ConnectorCard
-import cn.cloudbuddy.app.ui.components.CustomModelManager
 import cn.cloudbuddy.app.ui.components.McpCard
 import cn.cloudbuddy.app.ui.components.ProviderManager
 import cn.cloudbuddy.app.ui.components.SkillsCard
@@ -332,7 +335,6 @@ internal fun CustomApiSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack
         return
     }
 
-    val scope = rememberCoroutineScope()
     // 当前模型的选择键（providerId/modelId 或旧数据的裸 ID），会话默认值。
     var customModelId by remember { mutableStateOf(repo.settings.customModelId) }
     var customTemperature by remember { mutableStateOf(repo.settings.customTemperature) }
@@ -341,116 +343,96 @@ internal fun CustomApiSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack
     var customPrompt by remember { mutableStateOf(repo.settings.customSystemPrompt) }
     var thinkingEffort by remember { mutableStateOf(repo.settings.customThinkingEffort) }
     var thinkingStyle by remember { mutableStateOf(repo.settings.customThinkingStyle) }
-    // 提供商测试：正在测哪个 + 结果（<providerId, 文本>）。
-    var testingId by remember { mutableStateOf<String?>(null) }
-    var providerTestResult by remember { mutableStateOf<Pair<String, String>?>(null) }
-    var fetching by remember { mutableStateOf(false) }
-    var fetchError by remember { mutableStateOf<String?>(null) }
+
+    // 三级页：提供商详情。模型管理全部发生在详情页里（配置 + 拉取列表 + 勾选），
+    // 这个列表页只留入口与摘要。
+    var detailProviderId by remember { mutableStateOf<String?>(null) }
+    val detailProvider = ui.llmProviders.firstOrNull { it.id == detailProviderId }
+    // 详情页内按返回键回列表页，而不是把整个「本机模型」页退出。
+    BackHandler(enabled = detailProvider != null) { detailProviderId = null }
 
     // 这一页只管**本机自定义 API** 的参数。引擎切换（新会话用云端还是本机）不在这里：
     // 它决定的是「这个 App 走哪套后端」，不是某一套后端的配置，放在首页单独一栏。
+    if (detailProvider != null) {
+        SettingsPageScaffold(
+            detailProvider.label.ifBlank { "提供商详情" },
+            onBack = { detailProviderId = null }
+        ) { padding ->
+            androidx.compose.foundation.lazy.LazyColumn(
+                modifier = Modifier.padding(padding).fillMaxSize(),
+                contentPadding = PaddingValues(16.dp)
+            ) {
+                item {
+                    SettingCard {
+                        cn.cloudbuddy.app.ui.components.ProviderDetailPage(
+                            provider = detailProvider,
+                            models = ui.customModels.filter { it.providerId == detailProvider.id },
+                            selectedId = customModelId,
+                            globalEffort = thinkingEffort,
+                            globalTurns = repo.settings.customContextTurns,
+                            onUpdate = { p ->
+                                repo.upsertProvider(p)
+                                customModelId = repo.settings.customModelId
+                            },
+                            onRemove = {
+                                repo.removeProvider(detailProvider.id)
+                                customModelId = repo.settings.customModelId
+                                // detailProvider 变 null 后自动落回列表页
+                                detailProviderId = null
+                            },
+                            onAddModels = { ids ->
+                                repo.addCustomModels(ids, detailProvider.id)
+                                customModelId = repo.settings.customModelId
+                            },
+                            onRemoveModel = { key ->
+                                repo.removeCustomModel(key)
+                                customModelId = repo.settings.customModelId
+                            },
+                            onUpdateModel = { key, m ->
+                                repo.updateCustomModel(key, m)
+                                customModelId = repo.settings.customModelId
+                            },
+                            onSelect = { id ->
+                                customModelId = id
+                                repo.settings.customModelId = id
+                            },
+                            onFetch = { p -> repo.fetchProviderModels(p) }
+                        )
+                    }
+                }
+            }
+        }
+        return
+    }
+
     SettingsPageScaffold("本机模型", onBack) { padding ->
         SettingsList(padding) {
-            title("提供商", Icons.Filled.Extension)
+            title("提供商", Icons.Filled.Extension, hint = "点一个提供商进去配地址、Key，并拉取它的模型列表")
             item {
                 SettingCard {
                     Column(
                         modifier = Modifier.padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        // 一个提供商一个端点：名称 + 地址 + Key + 开关。
-                        // 模型挂在提供商下面（见下方「模型」卡），会话按「提供商 + 模型」选。
-                        ProviderManager(
+                        // 一个提供商一个端点。编辑与模型管理都在详情页里：
+                        // 模型列表是在提供商设置里拉的，不是在别处手填。
+                        cn.cloudbuddy.app.ui.components.ProviderManager(
                             providers = ui.llmProviders,
-                            testingId = testingId,
-                            testResult = providerTestResult,
+                            models = ui.customModels,
+                            onOpen = { p -> detailProviderId = p.id },
                             onAdd = { p ->
-                                repo.upsertProvider(p)
-                                providerTestResult = null
+                                val id = repo.upsertProvider(p)
+                                detailProviderId = id
                             },
-                            onUpdate = { p ->
-                                repo.upsertProvider(p)
-                                // 配置变了，旧的测试结果不再成立。
-                                providerTestResult = null
-                            },
-                            onRemove = { id ->
-                                repo.removeProvider(id)
+                            onRemove = { p ->
+                                repo.removeProvider(p.id)
                                 customModelId = repo.settings.customModelId
-                                providerTestResult = null
-                            },
-                            onTest = { p ->
-                                if (testingId != null) return@ProviderManager
-                                testingId = p.id
-                                scope.launch {
-                                    val r = repo.testProvider(p)
-                                    testingId = null
-                                    providerTestResult = p.id to if (r.ok) {
-                                        "连接成功 · 端点上有 ${r.models.size} 个模型"
-                                    } else {
-                                        r.error ?: "连接失败"
-                                    }
-                                }
                             }
                         )
                         Text(
                             "Key 只存在本机，不上传、不写日志、不进沙箱工作区。",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-
-            title("模型", Icons.Filled.Psychology)
-            item {
-                SettingCard {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        // 拉到的候选池只是目录，勾进来的才进列表，
-                        // 每条可以单独改显示名 / 思考强度 / 系统提示词（见 CustomModelManager）。
-                        CustomModelManager(
-                            models = ui.customModels,
-                            providers = ui.llmProviders,
-                            selectedId = customModelId,
-                            candidates = ui.customCandidates,
-                            globalEffort = thinkingEffort,
-                            globalTurns = customCtxTurns.toIntOrNull() ?: repo.settings.customContextTurns,
-                            fetching = fetching,
-                            error = fetchError,
-                            onFetch = { providerId ->
-                                if (fetching || providerId.isBlank()) return@CustomModelManager
-                                fetching = true
-                                fetchError = null
-                                scope.launch {
-                                    val p = ui.llmProviders.firstOrNull { it.id == providerId }
-                                    val r = if (p == null) {
-                                        cn.cloudbuddy.app.data.CustomModelCatalog.Result(emptyList(), "提供商不存在")
-                                    } else {
-                                        repo.fetchProviderModels(p)
-                                    }
-                                    fetching = false
-                                    fetchError = if (r.ok) null else r.error
-                                }
-                            },
-                            onClearCandidates = { repo.clearCustomCandidates() },
-                            onAdd = { ids, providerId ->
-                                repo.addCustomModels(ids, providerId)
-                                customModelId = repo.settings.customModelId
-                            },
-                            onRemove = { id ->
-                                repo.removeCustomModel(id)
-                                customModelId = repo.settings.customModelId
-                            },
-                            onUpdate = { originalId, model ->
-                                repo.updateCustomModel(originalId, model)
-                                customModelId = repo.settings.customModelId
-                            },
-                            onSelect = { id ->
-                                customModelId = id
-                                repo.settings.customModelId = id
-                            }
                         )
                     }
                 }

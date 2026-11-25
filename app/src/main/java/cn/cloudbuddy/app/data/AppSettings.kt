@@ -441,7 +441,8 @@ class AppSettings(context: Context) {
         val key = customModelFor(conversationId)
         val entry = customModelEntryByKey(key)
         val modelId = entry?.id ?: key.substringAfterLast('/')
-        val (baseUrl, apiKey) = endpointFor(entry)
+        val provider = providerFor(entry)
+        val (baseUrl, apiKey) = provider?.let { it.baseUrl to it.apiKey } ?: (customBaseUrl to customApiKey)
         return CustomModelConfig(
             baseUrl = baseUrl,
             apiKey = apiKey,
@@ -455,12 +456,19 @@ class AppSettings(context: Context) {
             // 片段是全局的（不跟模型走）：一条「提交前跑测试」对哪个模型都成立，
             // 按模型各存一份只会让用户在换模型后发现规矩莫名其妙没了。
             presets = prompts.enabled(),
+            // 路径与自定义请求头是提供商级配置：同一个端点上的所有模型共用。
+            chatPathOverride = provider?.chatPath.orEmpty(),
+            extraHeaders = provider?.headers ?: emptyMap(),
         )
     }
 
+    /** 一条模型所属的提供商；旧数据（迁移前挂全局端点的）返回 null。 */
+    private fun providerFor(entry: CustomModel?): LlmProvider? =
+        entry?.providerId?.takeIf { it.isNotBlank() }?.let { providerOf(it) }
+
     /** 一条模型的端点与 Key：挂在提供商下取提供商的，旧数据回落全局字段。 */
     private fun endpointFor(entry: CustomModel?): Pair<String, String> {
-        val provider = entry?.providerId?.takeIf { it.isNotBlank() }?.let { providerOf(it) }
+        val provider = providerFor(entry)
         if (provider != null) return provider.baseUrl to provider.apiKey
         return customBaseUrl to customApiKey
     }

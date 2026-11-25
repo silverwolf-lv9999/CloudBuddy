@@ -114,8 +114,7 @@ class OpenAiStreamClient : java.io.Closeable {
         onReasoningDelta: (String) -> Unit = {},
         onContentDelta: (String) -> Unit = {},
     ): ChatStreamResult {
-        val resolved = config.endpoint
-        val url = resolved.baseUrl.trimEnd('/') + "/" + resolved.chatCompletionsPath.trimStart('/')
+        val url = config.streamUrl
         val body = buildRequestBody(config, messages, tools)
 
         val content = StringBuilder()
@@ -125,6 +124,10 @@ class OpenAiStreamClient : java.io.Closeable {
 
         http.preparePost(url) {
             bearerAuth(config.apiKey)
+            // 提供商的自定义请求头（中转站常要 Referer / X-Title 之类），覆盖默认值时放后面生效。
+            config.extraHeaders.forEach { (k, v) ->
+                if (k.isNotBlank() && v.isNotBlank()) header(k, v)
+            }
             header(HttpHeaders.ContentType, "application/json")
             header(HttpHeaders.Accept, "text/event-stream")
             setBody(body)

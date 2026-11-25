@@ -29,11 +29,31 @@ data class CustomModelConfig(
      * （拼 prompt、重试），中途用户改了片段不该让同一轮前后两次请求的提示词不一样。
      */
     val presets: List<PromptPreset> = emptyList(),
+    /**
+     * 自定义请求路径。空 = 按 [EndpointResolver] 的统一规则拼；
+     * 非空时：http(s) 开头当完整 URL，否则当相对 origin 的路径。
+     */
+    val chatPathOverride: String = "",
+    /** 提供商的自定义请求头，逐条加在 Authorization 之外。 */
+    val extraHeaders: Map<String, String> = emptyMap(),
 ) {
     val usable: Boolean get() = baseUrl.isNotBlank() && apiKey.isNotBlank() && modelId.isNotBlank()
 
     /** 归一化后的端点，见 [EndpointResolver]。 */
     val endpoint: EndpointResolver.Resolved get() = EndpointResolver.resolve(baseUrl)
+
+    /** 流式请求的最终 URL：chatPathOverride 优先，其余走统一拼接规则。 */
+    val streamUrl: String
+        get() {
+            val override = chatPathOverride.trim()
+            if (override.isNotEmpty()) {
+                if (override.startsWith("http://") || override.startsWith("https://")) return override
+                val origin = EndpointResolver.resolve(baseUrl).baseUrl
+                if (origin.isNotBlank()) return origin.trimEnd('/') + "/" + override.trimStart('/')
+            }
+            val resolved = endpoint
+            return resolved.baseUrl.trimEnd('/') + "/" + resolved.chatCompletionsPath.trimStart('/')
+        }
 
     /** 实际下发给模型的系统提示词：片段 → 全局提示词（含沙箱规则）→ 片段。 */
     val effectiveSystemPrompt: String get() = PromptComposer.system(systemPrompt, presets)
