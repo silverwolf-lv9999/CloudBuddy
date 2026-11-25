@@ -1,10 +1,5 @@
 package cn.cloudbuddy.app.data
 
-import ai.koog.prompt.executor.clients.openai.OpenAIClientSettings
-import ai.koog.prompt.executor.clients.openai.OpenAILLMClient
-import ai.koog.prompt.executor.llms.SingleLLMPromptExecutor
-import ai.koog.prompt.llm.LLMCapability
-import ai.koog.prompt.llm.LLModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -217,7 +212,7 @@ class BuddyRepository(val settings: AppSettings) {
 
     /** 自定义模型（本机 agent）的执行通道，与 ACP 完全独立。 */
     val sandboxExec = SandboxExec(http, settings)
-    private val customAgents = SessionAgentHub(sandboxExec, settings.agentMemory)
+    private val customAgents: AgentRuntime = AgentSupport.create(sandboxExec, settings.agentMemory)
 
     /** 自定义端点的模型清单（`GET /models`），只在设置页与模型弹窗用。 */
     private val catalog = CustomModelCatalog()
@@ -408,6 +403,10 @@ class BuddyRepository(val settings: AppSettings) {
             settings.markSessionExpired()
             _ui.value = _ui.value.copy(loggedIn = false, sessionExpired = true)
         }
+        // 精简版没有自定义引擎：把可能残留在偏好里的自定义模式压回云端。
+        // 否则设置页不显示引擎选择、会话却还在按本机模式发问，用户只会看到
+        // 一条「自定义模型未配置完整」，找不到能改的地方。
+        if (!Edition.full) settings.engineMode = AppSettings.ENGINE_WB
         scope.launch { stateSyncLoop() }
     }
 
@@ -2361,34 +2360,7 @@ class BuddyRepository(val settings: AppSettings) {
      * 是 key 错、地址错还是模型名错。这里直接要一句最短回复，把具体错误原样带回来。
      */
     suspend fun testCustomModel(cfg: CustomModelConfig = settings.customModel()): Result<String> =
-        withContext(Dispatchers.IO) {
-            runCatching {
-                if (!cfg.usable) throw CloudException("地址、API Key、模型 ID 需要全部填写")
-                val resolved = cfg.endpoint
-                val settingsOpenAI = OpenAIClientSettings(
-                    baseUrl = resolved.baseUrl,
-                    chatCompletionsPath = resolved.chatCompletionsPath,
-                )
-                val client = OpenAILLMClient(cfg.apiKey, settingsOpenAI)
-                val model = LLModel(
-                    provider = CustomLLMProvider,
-                    id = cfg.modelId,
-                    capabilities = listOf(
-                        LLMCapability.Completion,
-                        LLMCapability.OpenAIEndpoint.Completions,
-                    ),
-                    contextLength = 128_000L,
-                )
-                val executor = SingleLLMPromptExecutor(client)
-                val probe = ai.koog.prompt.dsl.prompt("cb-connect-test") {
-                    user("只回复两个字：可用")
-                }
-                val started = System.currentTimeMillis()
-                val reply = executor.execute(probe, model).firstOrNull()?.content.orEmpty()
-                val cost = System.currentTimeMillis() - started
-                "连接成功（${cost}ms）· 回复：${reply.take(60)}"
-            }
-        }
+        customAgents.testConnection(cfg)
 
     /** 后台刷新工作区，失败不打扰用户（自定义模式常在跑完后才产生文件）。 */
     private suspend fun refreshWorkspaceQuietly(convId: String?) {

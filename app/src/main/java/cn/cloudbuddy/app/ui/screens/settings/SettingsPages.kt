@@ -62,6 +62,7 @@ import cn.cloudbuddy.app.data.AppSettings
 import cn.cloudbuddy.app.data.AppUiState
 import cn.cloudbuddy.app.data.BuddyRepository
 import cn.cloudbuddy.app.data.CustomModelConfig
+import cn.cloudbuddy.app.data.Edition
 import cn.cloudbuddy.app.data.EndpointResolver
 import cn.cloudbuddy.app.data.FoldMode
 import cn.cloudbuddy.app.data.ReleaseInfo
@@ -317,6 +318,26 @@ private sealed interface ProbeState {
 
 @Composable
 internal fun CustomApiSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack: () -> Unit) {
+    // 精简版没有这一页的能力。入口已经在首页隐藏，这里再拦一道：
+    // 万一从旧状态或深链进来，看到的是一句说明，不是半张空表单。
+    if (!Edition.full) {
+        SettingsPageScaffold("模型与推理", onBack) { padding ->
+            SettingsList(padding) {
+                title("本版本不含此功能", Icons.Filled.Info)
+                item {
+                    SettingCard {
+                        Text(
+                            Edition.CORE_ONLY_CLOUD,
+                            modifier = Modifier.padding(14.dp),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
+        }
+        return
+    }
+
     val scope = rememberCoroutineScope()
     var customBaseUrl by remember { mutableStateOf(repo.settings.customBaseUrl) }
     var customApiKey by remember { mutableStateOf(repo.settings.customApiKey) }

@@ -533,6 +533,19 @@ release APK（`verify.sh` 里的证书 DN 校验通过，证明用的是正式�
     设置页统一换 `Surface`（0 阴影，靠 surface/background 色差分层次）。
     其次，不同高度的 item（分组标题 vs 卡片）必须给不同的 `contentType`，
     否则 LazyColumn 复用槽位时会在两者之间反复丢弃重建组合树。
+59. **"要不要覆盖安装"是包名问题，不是文件名问题**。三个包（见 build.gradle.kts 的
+    `edition` 维度）：`base` 与 `full` 共用 `cn.cloudbuddy.app`，装哪个都是覆盖，
+    登录态与设置保留；`plus` 带 `.plus` 后缀，可与前两者并存但要重新登录。
+    文件名带 flavor 只是给人看的，`applicationId` 才是安装身份——改包名等于换应用，
+    老用户的数据不会跟过来。`scripts/verify.sh` 里对三个包各自断言包名，不靠记性。
+60. **"不含某功能"要靠源集，不是靠隐藏入口**。把 `if (Edition.full)` 加在按钮上，
+    类还在 dex 里、库还在依赖图里，APK 一样大。做法是：实现文件放 `src/full/java`，
+    基础版在 `src/base/java` 放同名的空实现（`AgentSupport`）或占位页（`TerminalScreen`），
+    两个源集各取一份；依赖用 `fullImplementation`/`plusImplementation` 声明。
+    验证方法是数 dex 里的字符串（`ai/koog`、`TabStrip` 应为 0），不是打开界面看看。
+61. **多 flavor 共用实现要用 `sourceSets` 指过去，别复制文件**。
+    `plus` 与 `full` 功能完全一样，`sourceSets["plus"].java.srcDir("src/full/java")`
+    一行就够；复制一份的后果是修一个 bug 要改两处，第二次总会漏。
 
 ## 协议速查
 

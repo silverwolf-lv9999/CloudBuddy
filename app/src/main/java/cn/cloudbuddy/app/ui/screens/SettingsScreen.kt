@@ -50,6 +50,7 @@ import cn.cloudbuddy.app.data.Account
 import cn.cloudbuddy.app.data.AppSettings
 import cn.cloudbuddy.app.data.AppUiState
 import cn.cloudbuddy.app.data.BuddyRepository
+import cn.cloudbuddy.app.data.Edition
 import cn.cloudbuddy.app.data.FoldMode
 import cn.cloudbuddy.app.ui.screens.settings.AboutSettingsPage
 import cn.cloudbuddy.app.ui.screens.settings.AccountSettingsPage
@@ -155,16 +156,20 @@ private fun SettingsHome(
                 }
             }
 
-            title("推理", Icons.Filled.Psychology)
-            item {
-                SettingCard {
-                    // 引擎选择和端点配置是同一件事的两面：一个"用哪套"、一个"怎么连"。
-                    // 拆成两个二级页时，推理页里又有"去配置端点"的入口，点进去还是这堆东西。
-                    SettingsEntryRow(
-                        title = "模型与推理",
-                        subtitle = engineSummary(repo) + " · " + customApiSummary(repo, ui),
-                        onClick = { onOpen(SettingsPage.CustomApi) }
-                    )
+            // 精简版没有引擎可选，这一组整块不出现；留一个空入口只会让人点进去看
+            // 一页「本版本不支持」。
+            if (Edition.full) {
+                title("推理", Icons.Filled.Psychology)
+                item {
+                    SettingCard {
+                        // 引擎选择和端点配置是同一件事的两面：一个"用哪套"、一个"怎么连"。
+                        // 拆成两个二级页时，推理页里又有"去配置端点"的入口，点进去还是这堆东西。
+                        SettingsEntryRow(
+                            title = "模型与推理",
+                            subtitle = engineSummary(repo) + " · " + customApiSummary(repo, ui),
+                            onClick = { onOpen(SettingsPage.CustomApi) }
+                        )
+                    }
                 }
             }
 

@@ -69,6 +69,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cn.cloudbuddy.app.data.AppUiState
 import cn.cloudbuddy.app.data.BuddyRepository
+import cn.cloudbuddy.app.data.Edition
 import cn.cloudbuddy.app.data.Downloads
 import cn.cloudbuddy.app.data.SandboxEntry
 import cn.cloudbuddy.app.data.SandboxPath
@@ -205,9 +206,11 @@ fun WorkspaceScreen(
                 },
                 actions = {
                     // 文件看到一半想确认"这东西到底是啥"，直接开终端敲一条命令，
-                    // 比退出去找聊天页快得多。
-                    IconButton(onClick = onOpenTerminal) {
-                        Icon(Icons.Filled.Terminal, "命令行窗口")
+                    // 比退出去找聊天页快得多。（精简版没有终端，按钮不出现。）
+                    if (Edition.full) {
+                        IconButton(onClick = onOpenTerminal) {
+                            Icon(Icons.Filled.Terminal, "命令行窗口")
+                        }
                     }
                     IconButton(onClick = {
                         conversationId?.let { repo.scopeLoad(it, workspace.path) }

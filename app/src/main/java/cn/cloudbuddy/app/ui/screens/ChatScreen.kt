@@ -97,6 +97,7 @@ import cn.cloudbuddy.app.data.AskOption
 import cn.cloudbuddy.app.data.AskPick
 import cn.cloudbuddy.app.data.AskQuestion
 import cn.cloudbuddy.app.data.BuddyRepository
+import cn.cloudbuddy.app.data.Edition
 import cn.cloudbuddy.app.data.PendingAttachment
 import cn.cloudbuddy.app.data.TurnState
 import cn.cloudbuddy.app.ui.components.ChatItem
@@ -252,13 +253,16 @@ fun ChatScreen(
                                 leadingIcon = { Icon(Icons.Filled.Folder, null, Modifier.size(18.dp)) },
                                 onClick = { menu = false; onOpenWorkspace() }
                             )
-                            DropdownMenuItem(
-                                text = { Text("命令行窗口") },
-                                leadingIcon = {
-                                    Icon(Icons.Filled.Terminal, null, Modifier.size(18.dp))
-                                },
-                                onClick = { menu = false; onOpenTerminal() }
-                            )
+                            // 精简版没有终端：入口不出现，而不是点进去发现是空的。
+                            if (Edition.full) {
+                                DropdownMenuItem(
+                                    text = { Text("命令行窗口") },
+                                    leadingIcon = {
+                                        Icon(Icons.Filled.Terminal, null, Modifier.size(18.dp))
+                                    },
+                                    onClick = { menu = false; onOpenTerminal() }
+                                )
+                            }
                             DropdownMenuItem(
                                 text = { Text("选择模型") },
                                 leadingIcon = { Icon(Icons.Filled.Cloud, null, Modifier.size(18.dp)) },

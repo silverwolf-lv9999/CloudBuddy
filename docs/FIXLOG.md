@@ -10,6 +10,94 @@
 
 ---
 
+## 1.7.0（同步上游；一份代码出三个包）
+
+### 一、同步上游最新提交
+
+上游这次只动了两处：`BuddyRepository` 里「工具调用中重进」的判定，以及版本号。
+我改的部分（终端多标签、设置二级页、模型管理）跟它不冲突，`rebase` 之后只剩三处要手工合：
+
+| 文件 | 冲突 | 处理 |
+|---|---|---|
+| `app/build.gradle.kts` | 上游 1.4.11 / 本地 1.6.6 | 取本地，再升 1.7.0 |
+| `README.md` | 版本行 | 取本地，补三包说明 |
+| `BuddyRepository.kt` | `suspectEnd` 判定 | 保留上游新增的条件，同时保留本地「补历史」分支 |
+
+`BuddyRepository` 那处值得留一笔：两边的改动都在同一个 `if` 的头部，谁覆盖谁都会丢功能——
+上游加的是「`!activeLocal`」（本地请求在途时不采信远端终态），本地加的是「`suspectEnd`」
+（历史停在未完成工具上时不采信）。两个条件必须同时成立才算可采纳，所以是**合并**而不是二选一。
+
+### 二、三个包：基础版 / 完整版 / 共存版
+
+用户的要求分两步：先要「完整版和不带 agent 的版本各一个」，再追加「完整版要两种——
+一种与基础版同包名可互相覆盖，一种包名不同可共存」。
+
+**包名分配**（`edition` 维度，三个 flavor）：
+
+| flavor | applicationId | 内容 | 关系 |
+|---|---|---|---|
+| `base` | `cn.cloudbuddy.app` | 云端模型 | 与 `full` 互斥 |
+| `full` | `cn.cloudbuddy.app` | 云端 + 本机 agent + 第三方 API + 终端 | 覆盖 `base` 即升级，数据保留 |
+| `plus` | `cn.cloudbuddy.app.plus` | 同 `full` | 可与前两者并存 |
+
+关键取舍：
+
+- **`base` 与 `full` 必须同包名**，否则「覆盖安装」无从谈起。为此把 `defaultConfig.applicationId`
+  从 `.plus` 改回上游的 `cn.cloudbuddy.app`——`.plus` 只留给共存版做后缀。
+- **三个包应用名都叫「云伴 Plus」**（用户明确要求）。代价是共存安装时桌面并排两个同名图标，
+  只能靠「应用信息」里的包名区分；文档里写清楚，比自造三个名字更符合用户的品牌意图。
+- **不加 `versionNameSuffix`**：三个包同一版本号就是同一份代码，`1.7.0` 全一样。
+  `scripts/verify.sh` 会断言三个包的 versionName 完全相等。
+- `plus` 不复制代码：`sourceSets["plus"].java.srcDir("src/full/java")` 直接挂 full 的源集。
+  复制一份的后果是改一个 bug 要改两处，第二次总会漏。
+
+### 三、能力隔离：不在依赖图里，也不在 dex 里
+
+之前只是「把入口藏起来」，`TerminalScreen` 的类仍然打在基础版里。这次彻底分开：
+
+```
+src/main      共用：网络、会话、设置、UI 骨架、AgentContracts（接口与数据类）
+src/base      AgentSupport 空实现 + TerminalScreen 占位页
+src/full      SessionAgent / CustomLlmClient / SandboxTools + TerminalScreen 完整实现
+src/testFull  agent 三个测试类
+```
+
+- `ai.koog:agents-core`、`prompt-executor-llms`、`ktor-client-okhttp` 改成 `fullImplementation`
+  与 `plusImplementation` 两条，基础版的依赖图里没有它们。
+- **`kotlinx-serialization-json` 必须显式声明**：它原先只是 Koog 的传递依赖，基础版不含 Koog 后
+  数据层直接编译失败（`Json` 找不到）。版本钉在 1.8.1，与 Koog 的约束一致。
+- `SessionAgent` 加 `: AgentSession`、`SessionAgentHub` 加 `: AgentRuntime`，接口全部落在 main 的
+  `AgentContracts.kt`；仓储层只认接口，`customAgents = AgentSupport.create(...)`。
+  `testConnection` 从仓储里搬到实现侧——基础版连这段代码都不该编译。
+- 基础版启动时把 `engineMode` 压回云端：偏好里可能残留 `custom`，而设置页不显示引擎选择，
+  否则用户会看到「自定义模型未配置完整」却找不到能改的地方。
+
+验证不靠人眼，直接数 dex 里的字符串：
+
+| 包 | `ai/koog` | `TabStrip` | 占位页文案 | 体积 |
+|---|---|---|---|---|
+| base | 0 | 0 | 有 | 18 MB |
+| full | 4089 | 38 | 无 | 22 MB |
+| plus | 4089 | 38 | 无 | 22 MB |
+
+### 四、脚本与 CI 跟着改三份
+
+- `scripts/verify.sh`：`EDITIONS=(base full plus)`，新增 `--base/--plus`；产物名
+  `CloudBuddy-<版本>-{base,plus}-<mode>.apk`（full 不带后缀，仍是最常下的那个）；
+  **新增包名断言**——包名错就没法覆盖安装，这件事不能靠人记得，必须脚本卡住。
+- `scripts/build.sh`：三个 assemble 任务与三行产物路径。
+- `.github/workflows/release.yml`：Release 说明改成三行表格，写清「基础版与完整版同包名、
+  装完整版即升级」与「共存版包名不同可并存」；三个包都作为资产上传。
+
+### 五、校验
+
+- `scripts/verify.sh --debug` 全绿：三个变体单测（base 221 / full 241 / plus 241），
+  lint 三个变体各 **0 error / 3 既有 warning**。
+- `aapt2 dump badging` 确认：`base`/`full` = `cn.cloudbuddy.app`，`plus` = `cn.cloudbuddy.app.plus`，
+  三者 versionCode 49、versionName 1.7.0、应用名「云伴 Plus」。
+
+---
+
 ## 1.6.6（账号栏去重；设置页滑动优化）
 
 ### 一、首页与「账号与额度」页互相重复

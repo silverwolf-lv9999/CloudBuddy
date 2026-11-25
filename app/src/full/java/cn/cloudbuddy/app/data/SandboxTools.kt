@@ -10,19 +10,6 @@ import kotlinx.serialization.builtins.serializer
 import java.util.Base64
 
 /**
- * 一次工具调用的进度事件。UI 靠它把「正在跑什么」显示出来，
- * 而不是只能读一句拼好的字符串。
- */
-data class SandboxToolEvent(
-    /** 工具名，如 run_shell / edit_file。 */
-    val tool: String,
-    /** 人类可读的详情，如命令前 60 字、被编辑的文件路径。 */
-    val detail: String,
-    /** true 表示开始执行，false 表示已结束。 */
-    val running: Boolean,
-)
-
-/**
  * 暴露给模型的工具集，全部落在沙箱里执行。
  *
  * 实现选择：一律走 `sh -c`，而不是再调一套文件 RPC。原因是

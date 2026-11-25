@@ -110,19 +110,37 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          apk=$(ls dist/CloudBuddy-*-release.apk | head -1)
-          sha=$(sha256sum "$apk" | cut -d' ' -f1)
+          # 三个包一起发：基础版、完整版（与基础版同包名，互相覆盖）、共存版（包名带 .plus）。
+          # 缺任何一个都会让人以为"这个版本没有我要的那个档位"。
+          ls -l dist/
+          full_apk=$(ls dist/CloudBuddy-*-release.apk | grep -v -e '-base-release' -e '-plus-release' | head -1)
+          base_apk=$(ls dist/CloudBuddy-*-base-release.apk | head -1)
+          plus_apk=$(ls dist/CloudBuddy-*-plus-release.apk | head -1)
+          test -f "$full_apk" || { echo "::error::没有找到完整版安装包"; exit 1; }
+          test -f "$base_apk" || { echo "::error::没有找到基础版安装包"; exit 1; }
+          test -f "$plus_apk" || { echo "::error::没有找到共存版安装包"; exit 1; }
+          full_sha=$(sha256sum "$full_apk" | cut -d' ' -f1)
+          base_sha=$(sha256sum "$base_apk" | cut -d' ' -f1)
+          plus_sha=$(sha256sum "$plus_apk" | cut -d' ' -f1)
           {
             echo "## CloudBuddy ${GITHUB_REF_NAME#v}"
             echo
-            echo "版本号与 tag 一致，使用正式密钥签名。"
+            echo "版本号与 tag 一致，使用正式密钥签名。同一份代码三个包，按需要选一个："
             echo
-            echo '```'
-            echo "sha256 $sha"
-            echo '```'
+            echo "| 包 | 包名 | 包含 | sha256 |"
+            echo "|---|---|---|---|"
+            echo "| 基础版 | \`cn.cloudbuddy.app\` | 只有云端模型；不含本机 agent、第三方 API、终端 | \`$base_sha\` |"
+            echo "| 完整版 | \`cn.cloudbuddy.app\` | 云端模型 + 本机 agent（Koog）+ 第三方 OpenAI 兼容 API + 终端命令行 | \`$full_sha\` |"
+            echo "| 共存版 | \`cn.cloudbuddy.app.plus\` | 内容同完整版；包名不同，可与上面两个同时安装 | \`$plus_sha\` |"
+            echo
+            echo "**基础版与完整版包名相同**，装完整版就是覆盖升级，登录态与设置原样保留；"
+            echo "想退回基础版再装一次即可，同样不丢数据——这两个是同一个应用的两个档位。"
+            echo
+            echo "**共存版包名不同**，可以同时安装（桌面上会并排出现两个同名图标，"
+            echo "卸载或升级时按「应用信息」里的包名区分）。三个包版本号一致，各升各的。"
           } > /tmp/notes.md
           # 已存在同名 Release 时补传资产，不重建——重建会丢已写的说明。
           gh release create "$GITHUB_REF_NAME" \
             --title "CloudBuddy ${GITHUB_REF_NAME#v}" \
-            --notes-file /tmp/notes.md "$apk" \
-            || gh release upload "$GITHUB_REF_NAME" "$apk" --clobber
+            --notes-file /tmp/notes.md "$full_apk" "$base_apk" "$plus_apk" \
+            || gh release upload "$GITHUB_REF_NAME" "$full_apk" "$base_apk" "$plus_apk" --clobber
