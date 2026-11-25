@@ -346,7 +346,9 @@ fun ChatScreen(
         Column(modifier = Modifier.padding(padding).fillMaxSize().imePadding()) {
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 when {
-                    ui.loadingConversation -> Column(
+                    // 有本地缓存时不要整屏盖住：直接显示缓存内容，只在顶部给一条细进度条。
+                    // 以前 loadingConversation 一律走全屏 loading，缓存等于白读。
+                    ui.loadingConversation && ui.messages.isEmpty() -> Column(
                         modifier = Modifier.fillMaxSize(),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
@@ -404,35 +406,48 @@ fun ChatScreen(
                         )
                     }
 
-                    else -> LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        if (window.hasMore) {
-                            item(key = "earlier") {
-                                EarlierRow(
-                                    hiddenTurns = window.hiddenTurns,
-                                    hiddenMessages = window.hiddenMessages,
-                                    onLoad = {
-                                        anchorKey = timeline.firstOrNull()?.key
-                                        extraTurns += if (pageTurns > 0) pageTurns else 50
-                                    }
-                                )
-                            }
+                    else -> Column(modifier = Modifier.fillMaxSize()) {
+                        // 有缓存时后台仍在同步云端历史：顶部一条细进度条，不打断阅读。
+                        if (ui.loadingConversation) {
+                            LinearProgressIndicator(
+                                modifier = Modifier.fillMaxWidth().height(2.dp),
+                                color = MaterialTheme.colorScheme.primary,
+                                trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                            )
                         }
-                        items(timeline, key = { it.key }, contentType = { item ->
-                            if (item is ChatItem.Steps) "steps" else "single"
-                        }) { item ->
-                            when (item) {
-                                is ChatItem.Single -> MessageRow(
-                                    message = item.message,
-                                    showThoughts = repo.settings.showThoughts
-                                )
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            if (window.hasMore) {
+                                item(key = "earlier") {
+                                    EarlierRow(
+                                        hiddenTurns = window.hiddenTurns,
+                                        hiddenMessages = window.hiddenMessages,
+                                        onLoad = {
+                                            anchorKey = timeline.firstOrNull()?.key
+                                            extraTurns += if (pageTurns > 0) pageTurns else 50
+                                        }
+                                    )
+                                }
+                            }
+                            items(timeline, key = { it.key }, contentType = { item ->
+                                if (item is ChatItem.Steps) "steps" else "single"
+                            }) { item ->
+                                when (item) {
+                                    is ChatItem.Single -> MessageRow(
+                                        message = item.message,
+                                        showThoughts = repo.settings.showThoughts
+                                    )
 
                                 is ChatItem.Steps -> {
-                                    val expanded = ui.stepsExpanded[item.key] ?: !ui.stepsCollapsed
+                                    // 默认展开规则：正在执行的那一轮永远展开（用户要看实时进度），
+                                    // 其余按全局折叠开关。之前只看 stepsCollapsed，运行中也被折叠成一行。
+                                    val runningTurn = ui.state == TurnState.RUNNING || ui.sending
+                                    val expanded = ui.stepsExpanded[item.key]
+                                        ?: (if (runningTurn) true else !ui.stepsCollapsed)
                                     StepsGroup(
                                         steps = item.steps,
                                         expanded = expanded,
@@ -458,7 +473,8 @@ fun ChatScreen(
                                 }
                             }
                         }
-                        item("tail") { Spacer(Modifier.height(8.dp)) }
+                            item("tail") { Spacer(Modifier.height(8.dp)) }
+                        }
                     }
                 }
             }

@@ -540,7 +540,7 @@ class AppSettings(context: Context) {
      * 打开会话时先显示缓存（立即有内容），后台再从云端拉最新。
      */
     fun loadMessageCache(conversationId: String): List<ChatMessage> {
-        val raw = prefs.getString(KEY_MSG_CACHE_PREFIX + conversationId, null) ?: return emptyList()
+        val raw = prefs.getString(msgCacheKey(conversationId), null) ?: return emptyList()
         return runCatching {
             val array = org.json.JSONArray(raw)
             (0 until array.length()).mapNotNull { i ->
@@ -581,12 +581,12 @@ class AppSettings(context: Context) {
             }
             array.put(obj)
         }
-        prefs.edit().putString(KEY_MSG_CACHE_PREFIX + conversationId, array.toString()).apply()
+        prefs.edit().putString(msgCacheKey(conversationId), array.toString()).apply()
     }
 
     /** 清除某个会话的消息缓存。 */
     fun clearMessageCache(conversationId: String) {
-        prefs.edit().remove(KEY_MSG_CACHE_PREFIX + conversationId).apply()
+        prefs.edit().remove(msgCacheKey(conversationId)).apply()
     }
 
     /** 网关签发的 session 会与登录时的 UA 绑定，登录与业务请求必须共用同一个值。 */
@@ -626,6 +626,10 @@ class AppSettings(context: Context) {
     // ---------- 内部 ----------
 
     private fun accountKey(name: String): String = "a:${activeAccountId}:$name"
+
+    /** 消息缓存按账号 + 会话隔离：同一个会话 id 在不同账号下不是同一份内容。 */
+    private fun msgCacheKey(conversationId: String): String =
+        KEY_MSG_CACHE_PREFIX + activeAccountId + ":" + conversationId
 
     private fun cookieSlotFor(accountId: String): String = accountId.ifBlank { GUEST_SLOT }
 

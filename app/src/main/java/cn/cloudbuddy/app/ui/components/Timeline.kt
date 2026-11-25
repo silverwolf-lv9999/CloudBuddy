@@ -48,12 +48,13 @@ sealed interface ChatItem {
  * 5. 一轮里连续的思考 / 工具调用合成一个 [ChatItem.Steps]；
  * 6. 助手正文一律独立显示，包括任务过程中陆续输出的段落——这正是两种模式的差别。
  */
-fun projectTimeline(messages: List<ChatMessage>, mode: FoldMode = FoldMode.WHOLE): List<ChatItem> {
+fun projectTimeline(messages: List<ChatMessage>, mode: FoldMode = FoldMode.of(FoldMode.DEFAULT)): List<ChatItem> {
     if (messages.isEmpty()) return emptyList()
     val items = mutableListOf<ChatItem>()
     // 空白助手消息（流式刚起头的那一帧、或云端补的空分片）不占位，也不进步骤组。
     val visible = messages.filterNot { it.role == ChatRole.ASSISTANT && it.text.isBlank() }
-    for ((_, turnMessages) in visible.groupBy { it.turn }) {
+    // 按 turn 升序分组：缓存截断后头部轮次可能缺失，groupBy 的首次出现顺序不再可靠。
+    for ((_, turnMessages) in visible.sortedBy { it.turn }.groupBy { it.turn }) {
         when (mode) {
             FoldMode.WHOLE -> projectWholeTurn(turnMessages, items)
             FoldMode.BODY -> projectBodyPreservingTurn(turnMessages, items)
@@ -74,7 +75,7 @@ private fun projectWholeTurn(turnMessages: List<ChatMessage>, items: MutableList
                 val steps = turnMessages.filterIndexed { i, m ->
                     i != finalIndex && m.role != ChatRole.USER
                 }
-                items += ChatItem.Steps(message.turn, steps)
+                emitSteps(steps, message.turn, 0, items)
                 stepsEmitted = true
             }
         }
@@ -86,7 +87,7 @@ private fun projectBodyPreservingTurn(turnMessages: List<ChatMessage>, items: Mu
     var ordinal = 0
     fun flush() {
         if (buffer.isEmpty()) return
-        items += ChatItem.Steps(turnMessages.first().turn, buffer.toList(), ordinal++)
+        emitSteps(buffer.toList(), turnMessages.first().turn, ordinal++, items)
         buffer = mutableListOf()
     }
     for (message in turnMessages) {
@@ -100,6 +101,26 @@ private fun projectBodyPreservingTurn(turnMessages: List<ChatMessage>, items: Mu
         }
     }
     flush()
+}
+
+/**
+ * 统一折叠规则：只有 1 个步骤时直接当普通项内联显示（一条转圈的工具调用
+ * 再包一层「1 个步骤」的折叠条毫无意义）；2 个及以上才成组折叠。
+ *
+ * 这样「一大堆被折叠成一行」和「一两行也被折叠」的不一致就没有了：
+ * 是否成组只由步骤数决定，与内容长短、流式阶段无关。
+ */
+private fun emitSteps(
+    steps: List<ChatMessage>,
+    turn: Int,
+    ordinal: Int,
+    items: MutableList<ChatItem>
+) {
+    if (steps.size <= 1) {
+        steps.firstOrNull()?.let { items += ChatItem.Single(it) }
+    } else {
+        items += ChatItem.Steps(turn, steps, ordinal)
+    }
 }
 
 /** 这一轮的回答是否已经落地：助手输出且正文非空。流式中的那条也算，用户要看着它长出来。 */
@@ -131,11 +152,11 @@ data class TimelineWindow(
 fun windowTimeline(
     messages: List<ChatMessage>,
     turns: Int,
-    mode: FoldMode = FoldMode.WHOLE
+    mode: FoldMode = FoldMode.of(FoldMode.DEFAULT)
 ): TimelineWindow {
     if (messages.isEmpty()) return TimelineWindow(emptyList(), 0, 0)
     val visible = messages.filterNot { it.role == ChatRole.ASSISTANT && it.text.isBlank() }
-    val order = visible.map { it.turn }.distinct()
+    val order = visible.map { it.turn }.distinct().sorted()
     if (turns <= 0 || order.size <= turns) {
         return TimelineWindow(projectTimeline(visible, mode), 0, 0)
     }

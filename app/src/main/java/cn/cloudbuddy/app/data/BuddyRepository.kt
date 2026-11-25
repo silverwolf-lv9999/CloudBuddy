@@ -95,7 +95,7 @@ data class AppUiState(
      */
     val stepsCollapsed: Boolean = true,
     /** 折叠方式（整轮 / 只折思考与工具）。 */
-    val foldMode: FoldMode = FoldMode.WHOLE,
+    val foldMode: FoldMode = FoldMode.of(FoldMode.DEFAULT),
     /**
      * 启动时连不上服务器，但本地凭据还在：直接进主页，不弹错误、不踢回登录页。
      */
@@ -436,7 +436,11 @@ class BuddyRepository(val settings: AppSettings) {
             if (ready && StateReconciler.intervalMs(foreground, anyActive) > 0) {
                 anyActive = runCatching { reconcile() }.getOrDefault(anyActive)
             }
-            val next = StateReconciler.intervalMs(foreground && ready, anyActive, current.sending)
+            // 在途口径与 StateReconciler.decide 保持一致：看「连接上真的有流」，
+            // 而不是看 sending 这个 UI 标记——它在异常路径上可能滞留成 true，
+            // 会让对账永远走 30 秒慢档，云端早已结束却迟迟发现不了。
+            val liveTurn = current.activeId?.let { hasLiveTurn(it) } == true
+            val next = StateReconciler.intervalMs(foreground && ready, anyActive, liveTurn)
             delay(if (next > 0L) next else 30_000L)
         }
     }
@@ -1187,6 +1191,19 @@ class BuddyRepository(val settings: AppSettings) {
         sessions.clear()
         acpModels.clear()
         acpCurrentModels.clear()
+        // 这些簿记都是按会话 id 记的，而会话 id 属于上一个账号：不清的话新账号
+        // 的会话可能撞上旧记录，表现为「明明没在跑却显示运行中」或「一直不刷新」。
+        inFlightTurns.clear()
+        stuckSince.clear()
+        healAt.clear()
+        healTries.clear()
+        syncedAt.clear()
+        customJobs.clear()
+        toolMsgIds.clear()
+        customAgents.clear()
+        // 终端里存着上一个账号的会话 id 与命令记录：不重置，openTerminal 后
+        // runShell 会拿旧会话 id 去请求新账号的沙箱。
+        _terminal.value = TerminalState()
         _ui.value = AppUiState(
             booting = false,
             loggedIn = settings.loggedIn && settings.cookies.hasAny(),
@@ -1230,8 +1247,11 @@ class BuddyRepository(val settings: AppSettings) {
                     // 本机会话的「状态」只在本机：云端那条记录是空壳（从没收到过 prompt），
                     // 它的状态位要么恒为 null，要么是这条会话还是云会话时的历史残留。
                     // 直接采信就会看到「本机」标签旁边挂着「云端执行中」，而且永远不消失。
-                    // 真实情况只有一种：本进程里有没有它的 job 在跑（进程一死，agent 也就没了）。
                     settings.isLocal(remote.id) -> remote.asLocal()
+                    // 本客户端还在替这条会话跑（发过 prompt 且 SSE 仍活着）：本地状态才是真的。
+                    // 不拦的话，云端列表的滞后记录会把「运行中」抹成空闲，列表和会话页就对不上了。
+                    hasLiveTurn(remote.id) -> remote.copy(state = _ui.value.conversations
+                        .firstOrNull { it.id == remote.id }?.state ?: remote.state)
                     else -> remote
                 }
             }
@@ -1690,6 +1710,12 @@ class BuddyRepository(val settings: AppSettings) {
      * 所以「重新载入」「历史不完整时重试」必须先把旧连接关掉。
      */
     suspend fun reloadConversation(id: String) {
+        // 本机会话没有任何 ACP 连接需要重建：去 close 一次纯属无意义副作用
+        //（若之前因 seedCustomHistory 建过连接，还会被顺手关掉）。
+        if (settings.isLocal(id)) {
+            openConversation(id)
+            return
+        }
         connections.remove(id)?.close()
         openConversation(id)
     }
@@ -1749,8 +1775,7 @@ class BuddyRepository(val settings: AppSettings) {
                     applyIfActive(targetId) { copy(sending = false) }
                     _events.tryEmit("上一轮还没收尾，消息未发送：可稍候，或点停止后再发")
                     return@launch
-                }
-                inFlightTurns.add(id)
+                }                inFlightTurns.add(id)
                 val conn = withContext(Dispatchers.IO) { connection(id) }
                 turnConn = conn
                 // 这一轮是本客户端发起的：允许它的 SSE 事件推进度/状态。
@@ -1773,7 +1798,14 @@ class BuddyRepository(val settings: AppSettings) {
             } finally {
                 turnConn?.setLocalTurnActive(false)
                 turnId?.let { inFlightTurns.remove(it) }
-                if (_ui.value.activeId == targetId) _ui.value = _ui.value.copy(sending = false)
+                // 用 turnId 而不是 targetId 判：新会话的首轮 targetId 是 null，
+                // 按 targetId 判会让 sending 永远停在 true，输入栏卡着红色停止键。
+                val finishedId = turnId
+                if (finishedId != null && _ui.value.activeId == finishedId) {
+                    _ui.value = _ui.value.copy(sending = false)
+                } else if (finishedId == null) {
+                    _ui.value = _ui.value.copy(sending = false)
+                }
                 runCatching { refreshConversations() }
             }
         }
@@ -2465,6 +2497,9 @@ class BuddyRepository(val settings: AppSettings) {
                     sessions.remove(id)
                     // 会话级选择（模型/引擎）与本地历史一起清掉，别留下孤儿记录。
                     settings.clearConversationPrefs(id)
+                    // 消息缓存同样按会话存：不清的话删完还占着 SharedPreferences，
+                    // 且会话 id 若被复用会读到已删会话的旧内容。
+                    settings.clearMessageCache(id)
                     // 本机会话的对话内容只在本机，不跟着清就会一直躺在 prefs 里，
                     // 谁也读不到、谁也删不掉。
                     settings.agentMemory.clear(id)
@@ -2872,7 +2907,15 @@ class BuddyRepository(val settings: AppSettings) {
     }
 
     private companion object {
-        const val PROMPT_TIMEOUT = 10 * 60_000L
+        /**
+         * 本地等 prompt 响应的兜底窗口。
+         *
+         * 这个值只管「本地协程等多久」，不是任务本身的时限：窗口到了会抛
+         * [PromptWaitTimeout]，界面不标失败，状态交给 SSE 自己收敛。
+         * 因此要取得足够长——复杂任务（装依赖、跑测试、长链路工具调用）常常
+         * 远超十分钟，取短了会让本地提前放弃、后续事件没人接。
+         */
+        const val PROMPT_TIMEOUT = 2 * 60 * 60_000L
         const val MAX_INLINE = 8 * 1024 * 1024
 
         /** 手动命令的超时（秒）。装依赖、跑测试这类动作比工具调用更慢。 */
