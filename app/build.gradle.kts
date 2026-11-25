@@ -55,6 +55,10 @@ android {
     buildTypes {
         debug {
             isMinifyEnabled = false
+            // debug 包换临时包名，与正式版共存（用户测试新功能时不覆盖正式版）。
+            // FileProvider 的 authorities 用的是 ${applicationId} 占位符，自动跟着变。
+            applicationIdSuffix = ".debug"
+            resValue("string", "app_name", "云伴调试")
         }
         release {
             isMinifyEnabled = false
