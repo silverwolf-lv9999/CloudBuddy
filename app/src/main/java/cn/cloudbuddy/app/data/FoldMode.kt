@@ -17,12 +17,12 @@ enum class FoldMode(val key: String) {
     BODY("body");
 
     companion object {
-        /** 默认整轮折叠：短会话里步骤占了绝大多数体积。 */
-        const val DEFAULT = "whole"
+        /** 默认只折思考与工具：正文始终可见，思考块按正文分段。 */
+        const val DEFAULT = "body"
 
         fun of(raw: String?): FoldMode = when (raw) {
-            BODY.key -> BODY
-            else -> WHOLE
+            WHOLE.key -> WHOLE
+            else -> BODY
         }
     }
 }

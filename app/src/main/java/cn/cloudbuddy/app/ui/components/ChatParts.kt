@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -210,8 +211,8 @@ private fun UserMessageBubble(
 }
 
 /**
- * AI 消息气泡：镜像圆角（topStart=6, topEnd=24），surfaceContainerHigh。
- * 流式时头像 Cookie6Sided 旋转，完成后 CircleShape。
+ * AI 消息：平铺正文（无气泡背景），参考 ChatGPT / RikkaHub 的呈现。
+ * 头像 + 正文一行，正文占满剩余宽度。
  */
 @Composable
 private fun AssistantMessageBubble(
@@ -229,7 +230,7 @@ private fun AssistantMessageBubble(
             val avatarShape = rememberAvatarShape(loading = message.streaming)
             Box(
                 modifier = Modifier
-                    .size(32.dp)
+                    .size(28.dp)
                     .clip(avatarShape)
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh),
                 contentAlignment = Alignment.Center
@@ -238,36 +239,23 @@ private fun AssistantMessageBubble(
                     Icons.Filled.Cloud,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(14.dp)
                 )
             }
-            Spacer(Modifier.width(8.dp))
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                shape = RoundedCornerShape(
-                    topStart = BubbleTailCorner,
-                    topEnd = BubbleCorner,
-                    bottomEnd = BubbleCorner,
-                    bottomStart = BubbleCorner
-                ),
-                modifier = Modifier.widthIn(max = 320.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(
-                        horizontal = BubbleHorizontalPadding,
-                        vertical = BubbleVerticalPadding
-                    )
-                ) {
-                    MarkdownText(
-                        markdown = message.text,
-                        baseSize = 15f,
-                        textColor = MaterialTheme.colorScheme.onSurface
-                    )
-                    if (message.streaming) TypingCursor()
-                }
+            Spacer(Modifier.width(10.dp))
+            // 平铺正文，无气泡背景
+            Column(modifier = Modifier.weight(1f)) {
+                MarkdownText(
+                    markdown = message.text,
+                    baseSize = 15f,
+                    textColor = MaterialTheme.colorScheme.onSurface
+                )
+                if (message.streaming) TypingCursor()
             }
         }
-        if (longText && !message.streaming) ActionText("复制", copy)
+        if (longText && !message.streaming) {
+            ActionText("复制", copy)
+        }
     }
 }
 
@@ -587,6 +575,11 @@ private fun ThinkingSeconds(streaming: Boolean) {
 
 // ── 工具调用行 ────────────────────────────────────────────────────────────────
 
+/**
+ * 工具调用卡片：标题行 + 可选的命令/输入 + 可选的格式化输出。
+ *
+ * 不原始输出 JSON；命令类工具显示命令本身，输出按换行整理后展示。
+ */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun ToolRow(message: ChatMessage) {
@@ -596,25 +589,99 @@ private fun ToolRow(message: ChatMessage) {
         ToolState.FAILED -> MaterialTheme.colorScheme.error
         ToolState.NONE -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(7.dp),
+    val hasInput = !message.toolInput.isNullOrBlank()
+    val hasOutput = !message.toolOutput.isNullOrBlank()
+    var expanded by remember(message.id) { mutableStateOf(message.toolState == ToolState.RUNNING) }
+
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = MaterialTheme.shapes.medium,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Icon(Icons.Filled.Build, contentDescription = null, modifier = Modifier.size(13.dp), tint = tint)
-        Text(
-            text = message.text.lineSequence().firstOrNull().orEmpty().ifBlank { "调用工具" },
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1f)
-        )
-        when (message.toolState) {
-            ToolState.RUNNING -> ContainedLoadingIndicator(
-                modifier = Modifier.size(10.dp)
-            )
-            ToolState.DONE -> Icon(Icons.Filled.Check, null, Modifier.size(12.dp), tint = tint)
-            ToolState.FAILED -> Icon(Icons.Filled.Close, null, Modifier.size(12.dp), tint = tint)
-            ToolState.NONE -> Unit
+        Column(modifier = Modifier.padding(10.dp)) {
+            // 标题行：图标 + 名称 + 状态
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    Icons.Filled.Build,
+                    contentDescription = null,
+                    modifier = Modifier.size(13.dp),
+                    tint = tint
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = message.toolName ?: message.text.lineSequence().firstOrNull().orEmpty().ifBlank { "调用工具" },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (message.text.isNotBlank() && message.toolName != null && message.text != message.toolName) {
+                        Text(
+                            text = message.text,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                when (message.toolState) {
+                    ToolState.RUNNING -> ContainedLoadingIndicator(modifier = Modifier.size(10.dp))
+                    ToolState.DONE -> Icon(Icons.Filled.Check, null, Modifier.size(12.dp), tint = tint)
+                    ToolState.FAILED -> Icon(Icons.Filled.Close, null, Modifier.size(12.dp), tint = tint)
+                    ToolState.NONE -> Unit
+                }
+            }
+
+            // 命令/输入（终端命令等）
+            if (hasInput) {
+                Spacer(Modifier.height(6.dp))
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    shape = MaterialTheme.shapes.small
+                ) {
+                    Text(
+                        text = message.toolInput!!,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        ),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                    )
+                }
+            }
+
+            // 输出（可展开/收起）
+            if (hasOutput) {
+                Spacer(Modifier.height(4.dp))
+                val output = message.toolOutput!!
+                val lines = output.lines()
+                val preview = if (expanded) output else lines.take(3).joinToString("\n")
+                Text(
+                    text = preview,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 2.dp)
+                )
+                if (lines.size > 3) {
+                    TextButton(
+                        onClick = { expanded = !expanded },
+                        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp)
+                    ) {
+                        Text(
+                            if (expanded) "收起" else "展开 ${lines.size - 3} 行",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
         }
     }
 }

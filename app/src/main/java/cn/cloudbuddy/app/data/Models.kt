@@ -21,7 +21,13 @@ data class ChatMessage(
     val text: String,
     val toolState: ToolState = ToolState.NONE,
     val streaming: Boolean = false,
-    val turn: Int = 0
+    val turn: Int = 0,
+    /** 工具名（tool_call 的 toolName / name）。 */
+    val toolName: String? = null,
+    /** 工具输入（rawInput 序列化后的可读文本，比如终端命令、文件路径）。 */
+    val toolInput: String? = null,
+    /** 工具输出（rawOutput / content 的文本，已经按换行整理好）。 */
+    val toolOutput: String? = null
 )
 
 enum class ToolState { NONE, RUNNING, DONE, FAILED }
