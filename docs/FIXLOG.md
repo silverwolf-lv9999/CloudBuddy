@@ -2543,3 +2543,25 @@ full/base 编译、单测、lint 全绿。
 
 ## 测试
 full/base 编译、单测、lint 全绿。
+
+# 1.6.0 · release 开 R8 + 版本发布
+
+## 改动
+1. `release` 构建类型开 `isMinifyEnabled = true` + `isShrinkResources = true`。
+   之前所有 release 包都未压缩未混淆（proguard-rules.pro 里只有 okhttp 的
+   dontwarn），这次补齐：
+   - **kotlinx-serialization 官方 keep 规则**，且用 `**` 通配罩住依赖库
+     （Koog / ktor / MCP SDK）里的 @Serializable 类——它们同样靠生成的
+     serializer 按命名约定反射查找；
+   - okhttp/okio/slf4j/ktor 的缺类 dontwarn（探测可选平台引擎触发）。
+2. 版本号 1.5.1(38) → **1.6.0(39)**。
+3. 签名仍在 GitHub Actions（secrets 解 keystore 写 local.properties），
+   本地与 CI 构建流程不变。
+
+## 验证
+- 本地 `assembleFullRelease`/`assembleBaseRelease`/`assemblePlusRelease`
+  R8 全部通过（无 missing class、无 keep 失败告警）；
+- 体积：base 11.9MB→**1.7MB**（-85%），full/plus 15.6MB→**2.9MB**（-82%）；
+- 单测、lint 全绿。
+- **注意**：R8 只在构建期验证，运行期混淆问题（如反射找不到类）需要真机
+  冒烟测试确认——重点过一遍：登录、会话列表、发消息、附件、设置页各二级页。

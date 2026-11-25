@@ -35,9 +35,10 @@ android {
         applicationId = "cn.cloudbuddy.app"
         minSdk = 26
         targetSdk = 35
-        // 1.5.1：修本机会话残留云端同步通道导致的历史消息覆盖（FIXLOG 1.5.1）。
-        versionCode = 38
-        versionName = "1.5.1"
+        // 1.6.0：模型能力指示图标、读图直发修复、附件显示与图片/文件入口、
+        // 主页列表性能与风格统一、release 开 R8（FIXLOG 1.6.0）。
+        versionCode = 39
+        versionName = "1.6.0"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -61,7 +62,10 @@ android {
             resValue("string", "app_name", "云伴调试")
         }
         release {
-            isMinifyEnabled = false
+            // R8 压缩 + 混淆：去无引用代码、资源与类名（APK 明显变小，逆向难度提高）。
+            // keep 规则见 proguard-rules.pro——kotlinx-serialization 与 ktor 必须保。
+            isMinifyEnabled = true
+            isShrinkResources = true
             signingConfig = if (hasReleaseKey) signingConfigs.getByName("release") else null
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
