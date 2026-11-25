@@ -35,8 +35,8 @@ android {
         applicationId = "cn.cloudbuddy.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 40
-        versionName = "1.5.4"
+        versionCode = 41
+        versionName = "1.5.5"
         vectorDrawables { useSupportLibrary = true }
     }
 

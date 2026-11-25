@@ -92,7 +92,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
@@ -442,11 +441,15 @@ fun ChatScreen(
                                     )
 
                                 is ChatItem.Steps -> {
-                                    // 默认展开规则：正在执行的那一轮永远展开（用户要看实时进度），
-                                    // 其余按全局折叠开关。之前只看 stepsCollapsed，运行中也被折叠成一行。
-                                    val runningTurn = ui.state == TurnState.RUNNING || ui.sending
+                                    // 默认展开规则：只有「正在跑的那一轮」展开，历史轮次按全局开关折叠。
+                                    // 之前用全局 running 判断，导致任意一轮在跑时，所有历史折叠条
+                                    // 都被强行展开，看起来就是「每一个都张开了」。
+                                    val lastTurn = ui.messages.lastOrNull()?.turn
+                                    val groupTurn = item.steps.lastOrNull()?.turn
+                                    val runningThisTurn = (ui.state == TurnState.RUNNING || ui.sending) &&
+                                        groupTurn != null && groupTurn == lastTurn
                                     val expanded = ui.stepsExpanded[item.key]
-                                        ?: (if (runningTurn) true else !ui.stepsCollapsed)
+                                        ?: (if (runningThisTurn) true else !ui.stepsCollapsed)
                                     StepsGroup(
                                         steps = item.steps,
                                         expanded = expanded,
@@ -476,20 +479,6 @@ fun ChatScreen(
                         }
                     }
                 }
-                // 顶栏是透明的，列表向上滚动时上沿会把某张卡片硬切成一条浅灰色横边，
-                // 看起来就像标题胶囊下面多了一条挡视线的东西。这里盖一层与背景同色的
-                // 竖向渐变把视口上沿虚化；它不参与手势，不拦截点击。
-                Box(
-                    Modifier
-                        .align(Alignment.TopCenter)
-                        .fillMaxWidth()
-                        .height(18.dp)
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(Color.Transparent, Color.Transparent)
-                            )
-                        )
-                )
             }
 
             ui.historyNotice?.let { notice ->

@@ -2770,8 +2770,11 @@ class BuddyRepository(val settings: AppSettings) {
     private fun publishReplayProgress(id: String, count: Int) {
         val current = _ui.value
         if (current.activeId != id) return
-        if (current.historyProgress == count && current.loadingConversation) return
-        _ui.value = current.copy(historyProgress = count, loadingConversation = true)
+        // 有缓存时内容已经在上屏，就不要再翻回「正在载入」：
+        // 否则每次返回会话都会先闪一下加载态，再被回放结果替换。
+        val loading = current.messages.isEmpty()
+        if (current.historyProgress == count && current.loadingConversation == loading) return
+        _ui.value = current.copy(historyProgress = count, loadingConversation = loading)
     }
 
     private fun publish(id: String, snapshot: AcpSnapshot) = synchronized(uiLock) {

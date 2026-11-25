@@ -350,9 +350,10 @@ private fun FloatingTabBar(
     onTabSelected: (Tab) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // 底部留白由外层 Scaffold 的 bottomBar 处理，这里不再额外加 bottom padding，
-    // 否则导航栏 inset 会被扣两次，胶囊下方会多出一截空白。
-    val bottomPadding = 0.dp
+    // 应用是 edge-to-edge，胶囊必须自己避开系统导航栏：有 inset 时只额外留 8dp，
+    // 没有 inset 时留 12dp。不要再放大这个值，否则胶囊下方会出现一截同色空白。
+    val navInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val bottomPadding = if (navInset != 0.dp) 8.dp + navInset else 12.dp
 
     Box(
         modifier = modifier.fillMaxWidth(),
