@@ -126,7 +126,7 @@ bash scripts/verify.sh --debug   # 需要 debug 包时
 bash scripts/verify.sh --base    # 只出基础版，另支持 --full / --plus
 ```
 
-当前版本 **1.5.0**（versionCode 37，接 v1.4.12）。同一份代码出三个包，
+当前版本 **1.5.1**（versionCode 38，接 v1.5.0）。同一份代码出三个包，
 三个桌面上都叫「云伴 WorkBuddy」：
 
 | 包 | 包名 | 包含 | 装法 |
@@ -215,6 +215,10 @@ reasoning_effort 三种写法，字段在 HTTP 层并进请求体），模型弹
 `/v1` 端点解析修正；新增本机三件套——提示词片段、本机技能（目录式 SKILL.md + use_skill
 渐进披露）、本机 MCP（url 型桥接，双作用域开关）；设置页按能力归属重排为六栏；
 应用内更新按档位挑包（三个包同一把签名，都能自查更新）；单测 951 项。
+1.5.1 封死本机会话残留的云端同步通道：seedCustomHistory 建的连接留在缓存里，
+云端事件一推就用空快照覆盖界面消息（用户报的「历史消息还是会消失」，猜测与
+云端同步有关，方向正确）；publish / publishModels / silentResync 出口拦截 +
+connection() 入口拦截 + isLocalConv() 判定自愈三层堵死。
 
 1.1.0 关于板块加了 GitHub 仓库入口与「检查更新」（读 Releases 比对版本）；改用 4096 位 RSA
 正式密钥签名并发布 Release，从此不再用 debug key 对外分发。

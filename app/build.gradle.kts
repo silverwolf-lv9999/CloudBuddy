@@ -35,10 +35,9 @@ android {
         applicationId = "cn.cloudbuddy.app"
         minSdk = 26
         targetSdk = 35
-        // 1.5.0：本机技能 / 本机 MCP / 提示词片段 + 会话消息流持久化（功能版）。
-        // 远端已发到 v1.4.12，这版起本地功能线与发布线并轨，versionCode 顺延 37。
-        versionCode = 37
-        versionName = "1.5.0"
+        // 1.5.1：修本机会话残留云端同步通道导致的历史消息覆盖（FIXLOG 1.5.1）。
+        versionCode = 38
+        versionName = "1.5.1"
         vectorDrawables { useSupportLibrary = true }
     }
 
