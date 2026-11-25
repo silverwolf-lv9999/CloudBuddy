@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
@@ -89,6 +90,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import cn.cloudbuddy.app.data.AppSettings
 import cn.cloudbuddy.app.data.AppUiState
 import cn.cloudbuddy.app.data.AskAnswer
 import cn.cloudbuddy.app.data.AskOption
@@ -113,7 +115,9 @@ fun ChatScreen(
     ui: AppUiState,
     repo: BuddyRepository,
     onBack: () -> Unit,
-    onOpenWorkspace: () -> Unit
+    onOpenWorkspace: () -> Unit,
+    onOpenTerminal: () -> Unit = {},
+    onOpenSettings: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -249,12 +253,23 @@ fun ChatScreen(
                                 onClick = { menu = false; onOpenWorkspace() }
                             )
                             DropdownMenuItem(
+                                text = { Text("命令行窗口") },
+                                leadingIcon = {
+                                    Icon(Icons.Filled.Terminal, null, Modifier.size(18.dp))
+                                },
+                                onClick = { menu = false; onOpenTerminal() }
+                            )
+                            DropdownMenuItem(
                                 text = { Text("选择模型") },
                                 leadingIcon = { Icon(Icons.Filled.Cloud, null, Modifier.size(18.dp)) },
                                 onClick = {
                                     menu = false
                                     showModels = true
-                                    scope.launch { repo.refreshModels() }
+                                    // 本机模型清单只在设置页手动拉：打开弹窗就顺手打一次
+                                    // 用户的付费端点，既慢又没必要（模型很少变）。
+                                    if (ui.engine != AppSettings.ENGINE_CUSTOM) {
+                                        scope.launch { repo.refreshModels() }
+                                    }
                                 }
                             )
                             DropdownMenuItem(
@@ -287,20 +302,35 @@ fun ChatScreen(
                 onValueChange = { input = it },
                 attachments = attachments,
                 uploading = uploading,
-                model = ui.models.firstOrNull { it.id == ui.selectedModel }?.name ?: ui.selectedModel,
+                model = if (ui.engine == AppSettings.ENGINE_CUSTOM) {
+                    "本机 · " + ui.selectedModel.ifBlank { "未配置" }
+                } else {
+                    ui.models.firstOrNull { it.id == ui.selectedModel }?.name
+                        ?: ui.selectedModel.ifBlank { "云端默认" }
+                },
                 running = ui.state == TurnState.RUNNING || ui.sending,
                 enterSends = repo.settings.enterSend,
                 onPickFile = { picker.launch(arrayOf("*/*")) },
                 onRemoveAttachment = { name -> attachments = attachments.filterNot { it.name == name } },
                 onModelClick = {
                     showModels = true
-                    scope.launch { repo.refreshModels() }
+                    // 本机会话问的是用户自己的端点，云端那份模型清单在这里没有意义；
+                    // 它自己那套模型也只在设置页手动拉，这里不自动请求。
+                    if (ui.engine != AppSettings.ENGINE_CUSTOM) {
+                        scope.launch { repo.refreshModels() }
+                    }
                 },
                 onStop = { repo.stop() },
                 onSend = {
                     val text = input.trim()
                     if (text.isEmpty() && attachments.isEmpty()) return@Composer
-                    repo.send(text, attachments)
+                    // 引擎按**会话**分流：同一台手机里 A 会话走云端、B 会话走本机，
+                    // 互不干扰。默认仍是云端（原有行为）。
+                    if (ui.engine == AppSettings.ENGINE_CUSTOM) {
+                        repo.sendCustom(text, attachments)
+                    } else {
+                        repo.send(text, attachments)
+                    }
                     input = ""
                     attachments = emptyList()
                 }
@@ -340,17 +370,30 @@ fun ChatScreen(
                         verticalArrangement = Arrangement.Center,
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
+                        val localKind = ui.engine == AppSettings.ENGINE_CUSTOM
                         Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
                             Box(Modifier.size(58.dp), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Filled.Cloud, null, tint = MaterialTheme.colorScheme.primary)
+                                Icon(
+                                    if (localKind) Icons.Filled.Terminal else Icons.Filled.Cloud,
+                                    null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
                             }
                         }
                         Spacer(Modifier.height(14.dp))
-                        Text("在云端沙箱里开始任务", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            if (localKind) "用你自己的模型开始任务" else "在云端沙箱里开始任务",
+                            style = MaterialTheme.typography.titleMedium
+                        )
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            "任务在官方云端环境执行，产出的文件会出现在沙箱 /workspace 里，" +
-                                "可以直接在「工作区」中浏览、预览和取回。",
+                            if (localKind) {
+                                "对话在本机推理（不扣积分），工具调用仍在官方沙箱里执行，" +
+                                    "产出的文件一样出现在 /workspace。"
+                            } else {
+                                "任务在官方云端环境执行，产出的文件会出现在沙箱 /workspace 里，" +
+                                    "可以直接在「工作区」中浏览、预览和取回。"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -449,14 +492,36 @@ fun ChatScreen(
 
     if (showModels) {
         ModelDialog(
+            kind = ui.engine,
             models = ui.models,
+            customModels = ui.customModels,
             selected = ui.selectedModel,
             loading = ui.modelsLoading,
             error = ui.modelError,
-            onRefresh = { scope.launch { repo.refreshModels() } },
+            endpointHint = repo.settings.customBaseUrl,
+            // 草稿态才有「这条会话还没定型」这回事；已有会话的类型是历史事实。
+            canSwitchKind = ui.activeId == null,
+            onSwitchKind = { kind ->
+                if (kind == AppSettings.ENGINE_CUSTOM) {
+                    scope.launch { repo.useCustomEngine() }
+                } else {
+                    repo.useCloudEngine()
+                }
+            },
+            onRefresh = {
+                // 本机的候选清单只能在设置页拉：那里才有地址、Key 与勾选加入的上下文，
+                // 弹窗里拉完没地方放（只会静默改一个用户看不到的池子）。
+                if (ui.engine != AppSettings.ENGINE_CUSTOM) {
+                    scope.launch { repo.refreshModels() }
+                }
+            },
             onSelect = {
                 repo.selectModel(it)
                 showModels = false
+            },
+            onOpenSettings = {
+                showModels = false
+                onOpenSettings()
             },
             onDismiss = { showModels = false }
         )
@@ -832,20 +897,29 @@ private fun Composer(
 
 @Composable
 fun ModelDialog(
+    /** 这条会话的类型：[AppSettings.ENGINE_WB] 只显示云端模型，[AppSettings.ENGINE_CUSTOM] 只显示本机模型。 */
+    kind: String,
     models: List<cn.cloudbuddy.app.data.ModelChoice>,
+    customModels: List<cn.cloudbuddy.app.data.CustomModel>,
     selected: String,
     loading: Boolean,
     error: String?,
+    /** 本机端点的展示串（如 `api.deepseek.com`），让用户确认选的是哪套配置。 */
+    endpointHint: String = "",
+    /** 草稿会话才允许在这里改类型；会话建出来之后类型固定。 */
+    canSwitchKind: Boolean = false,
+    onSwitchKind: (String) -> Unit = {},
     onRefresh: () -> Unit,
     onSelect: (String) -> Unit,
+    onOpenSettings: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
-    var custom by remember { mutableStateOf("") }
+    val local = kind == cn.cloudbuddy.app.data.AppSettings.ENGINE_CUSTOM
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("选择模型", modifier = Modifier.weight(1f))
+                Text(if (local) "本机模型" else "云端模型", modifier = Modifier.weight(1f))
                 if (loading) {
                     CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                 }
@@ -853,67 +927,170 @@ fun ModelDialog(
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    "当前：" + (models.firstOrNull { it.id == selected }?.name
-                        ?: selected.ifBlank { "云端默认" }),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                when {
-                    loading && models.isEmpty() -> Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(vertical = 12.dp)
-                    ) {
-                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.width(8.dp))
-                        Text("正在从云端获取模型…", style = MaterialTheme.typography.bodySmall)
-                    }
-
-                    models.isEmpty() -> Text(
-                        "暂时没有拿到模型列表，可以直接在下方填写模型 ID，或点「重新加载」。",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-
-                    else -> LazyColumn(
-                        modifier = Modifier.heightIn(max = 260.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        items(models, key = { it.id }) { model ->
-                            val active = model.id == selected
+                // 类型只在草稿态可改：会话一旦建出来，两套历史就对不上了，
+                // 强行切换会出现「前半段在云端、后半段在本机」的缝合会话。
+                if (canSwitchKind) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(
+                            cn.cloudbuddy.app.data.AppSettings.ENGINE_WB to "云端",
+                            cn.cloudbuddy.app.data.AppSettings.ENGINE_CUSTOM to "本机 API"
+                        ).forEach { (value, label) ->
+                            val active = kind == value
                             Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = if (active) MaterialTheme.colorScheme.primaryContainer
+                                shape = RoundedCornerShape(50),
+                                color = if (active) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.surfaceVariant,
-                                modifier = Modifier.fillMaxWidth().clickable { onSelect(model.id) }
+                                modifier = Modifier.clickable { if (!active) onSwitchKind(value) }
                             ) {
-                                Column(modifier = Modifier.padding(10.dp)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            model.name,
-                                            style = MaterialTheme.typography.titleMedium,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                        model.credits?.let {
+                                Text(
+                                    label,
+                                    modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (active) MaterialTheme.colorScheme.onPrimary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+                Text(
+                    if (local) {
+                        "配置：" + endpointHint.ifBlank { "未填接口地址" }
+                    } else {
+                        "云端会话只能用云端模型，选择会同步到账号（网页端也能看到）"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (local) {
+                    when {
+                        loading && customModels.isEmpty() -> Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(vertical = 12.dp)
+                        ) {
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                            Text("正在拉取模型列表…", style = MaterialTheme.typography.bodySmall)
+                        }
+
+                        customModels.isEmpty() -> Column(
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        ) {
+                            Text(
+                                "还没有可用的本机模型。去设置里「拉取」一次端点清单，" +
+                                    "勾几个加进「我的模型」，这里就能直接点选。",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            TextButton(onClick = onOpenSettings) { Text("去设置里添加") }
+                        }
+
+                        else -> LazyColumn(
+                            modifier = Modifier.heightIn(max = 260.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            items(customModels, key = { it.id }) { m ->
+                                val active = m.id == selected
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = if (active) MaterialTheme.colorScheme.primaryContainer
+                                    else MaterialTheme.colorScheme.surfaceVariant,
+                                    modifier = Modifier.fillMaxWidth().clickable { onSelect(m.id) }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            // 显示名是用户自己起的（「DeepSeek 便宜那个」），
+                                            // 比裸 ID 好认；ID 保留成小字，出问题时对得上日志。
+                                            Text(m.title, style = MaterialTheme.typography.titleMedium)
+                                            if (m.title != m.id) {
+                                                Text(
+                                                    m.id,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1
+                                                )
+                                            }
+                                        }
+                                        if (m.reasoning) {
                                             Text(
-                                                "x$it",
+                                                "思考",
                                                 style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                color = MaterialTheme.colorScheme.tertiary
+                                            )
+                                            Spacer(Modifier.width(8.dp))
+                                        }
+                                        if (active) {
+                                            Text(
+                                                "使用中",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.primary
                                             )
                                         }
                                     }
-                                    Text(
-                                        model.id,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    model.description?.let {
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    when {
+                        loading && models.isEmpty() -> Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(vertical = 12.dp)
+                        ) {
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                            Text("正在从云端获取模型…", style = MaterialTheme.typography.bodySmall)
+                        }
+
+                        models.isEmpty() -> Text(
+                            "暂时没有拿到模型列表，点下面的「重新加载」再试一次。",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+
+                        else -> LazyColumn(
+                            modifier = Modifier.heightIn(max = 260.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            items(models, key = { it.id }) { model ->
+                                val active = model.id == selected
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = if (active) MaterialTheme.colorScheme.primaryContainer
+                                    else MaterialTheme.colorScheme.surfaceVariant,
+                                    modifier = Modifier.fillMaxWidth().clickable { onSelect(model.id) }
+                                ) {
+                                    Column(modifier = Modifier.padding(10.dp)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                model.name,
+                                                style = MaterialTheme.typography.titleMedium,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            model.credits?.let {
+                                                Text(
+                                                    "x$it",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
                                         Text(
-                                            it,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis
+                                            model.id,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
+                                        model.description?.let {
+                                            Text(
+                                                it,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -934,28 +1111,15 @@ fun ModelDialog(
                         )
                     }
                 }
-                Text(
-                    "云端未列出模型时，可手动填写模型 ID（切换结果会即时提示）",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = custom,
-                        onValueChange = { custom = it },
-                        label = { Text("模型 ID") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    TextButton(
-                        enabled = custom.isNotBlank(),
-                        onClick = { onSelect(custom.trim()) }
-                    ) { Text("使用") }
-                }
             }
         },
-        confirmButton = { TextButton(onClick = onRefresh) { Text("重新加载") } },
+        confirmButton = {
+            // 本机的模型清单在设置页维护（那里才有填写与拉取的上下文），
+            // 弹窗里只负责「点一个用哪个」。
+            TextButton(onClick = if (local) onOpenSettings else onRefresh) {
+                Text(if (local) "去设置里拉取" else "重新加载")
+            }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
     )
 }

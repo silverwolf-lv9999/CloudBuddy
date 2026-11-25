@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -84,7 +85,8 @@ fun WorkspaceScreen(
     workspace: WorkspaceState,
     repo: BuddyRepository,
     onPreview: (conversationId: String, path: String, name: String) -> Unit,
-    onOpenSession: () -> Unit
+    onOpenSession: () -> Unit,
+    onOpenTerminal: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -202,6 +204,11 @@ fun WorkspaceScreen(
                     }
                 },
                 actions = {
+                    // 文件看到一半想确认"这东西到底是啥"，直接开终端敲一条命令，
+                    // 比退出去找聊天页快得多。
+                    IconButton(onClick = onOpenTerminal) {
+                        Icon(Icons.Filled.Terminal, "命令行窗口")
+                    }
                     IconButton(onClick = {
                         conversationId?.let { repo.scopeLoad(it, workspace.path) }
                     }) { Icon(Icons.Filled.Refresh, "刷新") }

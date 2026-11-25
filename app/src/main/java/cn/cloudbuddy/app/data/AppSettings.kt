@@ -29,6 +29,9 @@ class AppSettings(context: Context) {
     /** 本机 MCP 服务器表（随会话下发，见 [McpStore] 的说明）。 */
     val mcp = McpStore(prefs)
 
+    /** 自定义模型模式的对话历史（云端记录里没有这部分，只能本地存）。 */
+    val agentMemory = AgentMemoryStore(prefs)
+
     init {
         migrateSingleAccountIfNeeded()
         cookies.switchTo(cookieSlotFor(activeAccountId))
@@ -184,6 +187,276 @@ class AppSettings(context: Context) {
     var selectedModel: String
         get() = prefs.getString("model", "").orEmpty()
         set(value) = prefs.edit().putString("model", value.trim()).apply()
+
+    // ---- 自定义模型（OpenAI 兼容端点）----
+    //
+    // 这两套是并列的，不是替换：ENGINE_WB 走原有云端会话协议（扣积分），
+    // ENGINE_CUSTOM 走本机 Koog agent + 用户自己的 API Key（不扣积分、不产生会话记录）。
+    // 默认保持 ENGINE_WB，保证升级后行为与之前完全一致。
+
+    /** 当前推理引擎，见 [ENGINE_WB] / [ENGINE_CUSTOM]。 */
+    var engineMode: String
+        get() = prefs.getString("engine_mode", ENGINE_WB).orEmpty().ifBlank { ENGINE_WB }
+        set(value) = prefs.edit().putString("engine_mode", value).apply()
+
+    /** 自定义模型的 baseUrl，如 https://api.deepseek.com 。 */
+    var customBaseUrl: String
+        get() = prefs.getString("custom_base_url", "").orEmpty()
+        set(value) = prefs.edit().putString("custom_base_url", value.trim()).apply()
+
+    /**
+     * 自定义模型的 API Key。
+     *
+     * 只落本机 SharedPreferences，与账号 cookie 同级别；不上传、不写日志、
+     * 不进 /workspace（那里和云端 agent 共享，见沙箱安全须知）。
+     */
+    var customApiKey: String
+        get() = prefs.getString("custom_api_key", "").orEmpty()
+        set(value) = prefs.edit().putString("custom_api_key", value.trim()).apply()
+
+    /** 自定义模型的模型 ID，如 deepseek-chat 。 */
+    var customModelId: String
+        get() = prefs.getString("custom_model_id", "").orEmpty()
+        set(value) = prefs.edit().putString("custom_model_id", value.trim()).apply()
+
+    /** 采样温度。编码任务偏低更稳，默认 0.3。 */
+    var customTemperature: Float
+        get() = prefs.getFloat("custom_temperature", 0.3f)
+        set(value) = prefs.edit().putFloat("custom_temperature", value.coerceIn(0f, 2f)).apply()
+
+    /** 单轮最多迭代次数（推理 + 工具调用算一轮）。 */
+    var customMaxIterations: Int
+        get() = prefs.getInt("custom_max_iter", 40)
+        set(value) = prefs.edit().putInt("custom_max_iter", value.coerceIn(1, 200)).apply()
+
+    /**
+     * 自定义系统提示词。空表示用内置默认（见 SessionAgent 里的 DEFAULT_SYSTEM_PROMPT）。
+     *
+     * 全局而不是按会话：这是「这个模型该怎么说话、按什么规矩干活」的设定，
+     * 跟着账号走更符合直觉；按会话另设一套的话，用户根本记不住哪条是哪套。
+     */
+    var customSystemPrompt: String
+        get() = prefs.getString("custom_system_prompt", "").orEmpty()
+        set(value) = prefs.edit().putString("custom_system_prompt", value).apply()
+
+    /**
+     * 用户自己维护的模型清单（不是 `GET /models` 的原始回包）。
+     *
+     * 拉取只是**候选池**：端点返回几十个模型，全塞进选择器里没人找得到，而且
+     * 重新拉一次就会把用户改过的显示名、思考参数冲掉。所以分成两层：
+     * 候选池（[AppUiState] 里的 customCandidates，只在内存）和
+     * 这份「我的模型」。开源客户端（RikkaHub）也是这么分的。
+     *
+     * 存成 JSON 数组而不是 StringSet：列表顺序有意义（各家都把默认模型放前面），
+     * StringSet 会把它打乱。旧版本存纯 ID 字符串数组，见 [CustomModel.decode] 的兼容。
+     */
+    var customModels: List<CustomModel>
+        get() = CustomModel.decode(prefs.getString("custom_models", ""))
+        set(value) = prefs.edit().putString("custom_models", CustomModel.encode(value)).apply()
+
+    /** 按 ID 找一条模型配置；没配置过返回 null。 */
+    fun customModelEntry(id: String): CustomModel? =
+        customModels.firstOrNull { it.id == id }
+
+    /**
+     * 加入模型（已存在则跳过）。
+     *
+     * 返回真正新增的条数：调用方据此判断要不要顺手把当前模型也设过去。
+     */
+    fun addCustomModels(added: List<CustomModel>): Int {
+        val current = customModels.toMutableList()
+        val known = current.map { it.id }.toMutableSet()
+        var count = 0
+        added.forEach { m ->
+            if (m.id.isNotBlank() && known.add(m.id)) {
+                current.add(m)
+                count++
+            }
+        }
+        if (count > 0) customModels = current
+        return count
+    }
+
+    fun removeCustomModel(id: String) {
+        val next = customModels.filterNot { it.id == id }
+        customModels = next
+        // 删掉的正好是当前模型：回落到剩下的第一个，别留一个指向不存在模型的 ID。
+        if (customModelId == id) customModelId = next.firstOrNull()?.id.orEmpty()
+    }
+
+    /** 覆盖某条模型（显示名、能力、参数）。ID 变了等于换模型，按旧 ID 匹配以免改丢。 */
+    fun updateCustomModel(originalId: String, model: CustomModel) {
+        val next = customModels.map { if (it.id == originalId) model else it }
+        customModels = next
+        if (customModelId == originalId) customModelId = model.id
+    }
+
+    /**
+     * 思考参数的写法（见 [ThinkingStyle]）。
+     *
+     * 默认 `auto`：按接口地址猜。猜错只会「没生效」，不会报错，用户可以在设置页改；
+     * 而默认死写一种的话，一半的端点会直接不思考。
+     */
+    var customThinkingStyle: String
+        get() = prefs.getString("custom_thinking_style", ThinkingStyle.AUTO.key).orEmpty()
+            .ifBlank { ThinkingStyle.AUTO.key }
+        set(value) = prefs.edit().putString("custom_thinking_style", value).apply()
+
+    /**
+     * 思考强度（见 [ThinkingEffort]）。默认「中」。
+     *
+     * 默认不是「关闭」：Koog 组装请求时不会带任何思考字段，很多端点（通义、部分自建
+     * vLLM）默认就是关的，用户看到的是「模型不思考、直接瞎答」。这条默认值就是为了
+     * 让新装的客户端开箱就会先想一步。
+     */
+    var customThinkingEffort: String
+        get() = prefs.getString("custom_thinking_effort", ThinkingEffort.MEDIUM.key).orEmpty()
+            .ifBlank { ThinkingEffort.MEDIUM.key }
+        set(value) = prefs.edit().putString("custom_thinking_effort", value).apply()
+
+    /**
+     * 终端字号（sp）。
+     *
+     * 手机上 12sp 的等宽字已经偏小，但命令输出本来就密——默认别太大，
+     * 让需要的人自己调。存偏好而不是每次重置：调字号的人下次还会想调。
+     */
+    var terminalFontSp: Int
+        get() = prefs.getInt("terminal_font_sp", 14)
+        set(value) = prefs.edit().putInt("terminal_font_sp", value.coerceIn(10, 20)).apply()
+
+    /** 回放给模型的历史轮数上限。 */
+    var customContextTurns: Int
+        get() = prefs.getInt("custom_context_turns", 10)
+        set(value) = prefs.edit().putInt("custom_context_turns", value.coerceIn(1, 50)).apply()
+
+    /**
+     * 某条本机会话实际该用的模型 ID。
+     *
+     * 与会话级的云端模型是**两套命名空间**：本机会话的模型 ID 是用户自己端点上的
+     * （`deepseek-chat`），云端那套（`hy4-preview`）在这条会话里根本不存在。
+     * 所以这里绝不回落到 [selectedModel]——那是云端默认模型，拿它去请求第三方接口
+     * 只会得到一句 404 或模型不存在。
+     */
+    fun customModelFor(conversationId: String?): String {
+        if (conversationId.isNullOrBlank()) return customModelId
+        return accountValue(MODEL_KEY_PREFIX + conversationId).ifBlank { customModelId }
+    }
+
+    /**
+     * 组装成 [CustomModelConfig]；未配置完整时 [CustomModelConfig.usable] 为 false。
+     *
+     * 顺序是「全局默认 + 该模型的覆盖」：某个模型单独设了思考强度或系统提示词，
+     * 只在这一条上生效，换回别的模型立刻回到全局那套。
+     */
+    fun customModel(conversationId: String? = null): CustomModelConfig {
+        val modelId = customModelFor(conversationId)
+        val entry = customModelEntry(modelId)
+        return CustomModelConfig(
+            baseUrl = customBaseUrl,
+            apiKey = customApiKey,
+            modelId = modelId,
+            temperature = customTemperature.toDouble(),
+            maxIterations = customMaxIterations,
+            contextTurns = entry?.contextTurns?.takeIf { it > 0 } ?: customContextTurns,
+            systemPrompt = entry?.systemPrompt?.takeIf { it.isNotBlank() } ?: customSystemPrompt,
+            thinkingStyle = customThinkingStyle,
+            thinkingEffort = entry?.thinkingEffort?.takeIf { it.isNotBlank() } ?: customThinkingEffort,
+        )
+    }
+
+    /**
+     * 标记某个会话「用过自定义模型」。
+     *
+     * 这类会话的对话记录只在本机（推理跑在手机上，云端看不到这些消息），
+     * 所以重新打开时不能靠 ACP 回放——那条会话在云端是空的，
+     * 必须换成读 [agentMemory]。
+     */
+    fun markCustomConversation(id: String) {
+        if (id.isBlank()) return
+        // getStringSet 返回的集合不可直接改，必须复制一份再写回。
+        val cur = prefs.getStringSet(KEY_CUSTOM_CONVS, emptySet()).orEmpty().toMutableSet()
+        if (cur.add(id)) prefs.edit().putStringSet(KEY_CUSTOM_CONVS, cur).apply()
+    }
+
+    fun isCustomConversation(id: String): Boolean =
+        prefs.getStringSet(KEY_CUSTOM_CONVS, emptySet()).orEmpty().contains(id)
+
+    fun unmarkCustomConversation(id: String) {
+        val cur = prefs.getStringSet(KEY_CUSTOM_CONVS, emptySet()).orEmpty().toMutableSet()
+        if (cur.remove(id)) prefs.edit().putStringSet(KEY_CUSTOM_CONVS, cur).apply()
+    }
+
+    // ---------- 会话级模型 / 引擎 ----------
+    //
+    // 官方是「每个会话各自选模型」，客户端原来只有一个全局 selectedModel，
+    // 切会话就把模型带过去了：A 会话选 deepseek、切到 B 会话仍然显示 deepseek，
+    // 但 B 在云端跑的还是它自己的模型，界面与现实脱节。
+    //
+    // 这里的规则：
+    // - 会话有过显式选择 → 用会话自己的；
+    // - 没选过 → 回落到全局（全局此时是「新会话的默认值」）。
+    // 键带账号前缀：会话 id 属于某个账号，换账号不该互相看见。
+
+    fun modelFor(conversationId: String?): String {
+        if (conversationId.isNullOrBlank()) return selectedModel
+        return accountValue(MODEL_KEY_PREFIX + conversationId).ifBlank { selectedModel }
+    }
+
+    fun setModelFor(conversationId: String, model: String) {
+        if (conversationId.isBlank()) return
+        setAccountValue(MODEL_KEY_PREFIX + conversationId, model.trim())
+    }
+
+    /** 这条会话有没有显式选过模型（没有的话第一次打开时会被固化，之后就固定下来）。 */
+    fun hasModelFor(conversationId: String): Boolean =
+        accountValue(MODEL_KEY_PREFIX + conversationId).isNotBlank()
+
+    /**
+     * 会话当前用哪个引擎（[ENGINE_WB] / [ENGINE_CUSTOM]）。
+     *
+     * 与 [engineMode] 的关系同模型：会话显式选过就听会话的，否则跟随全局默认。
+     */
+    fun engineFor(conversationId: String?): String {
+        if (conversationId.isNullOrBlank()) return engineMode
+        val saved = accountValue(ENGINE_KEY_PREFIX + conversationId)
+        return if (saved == ENGINE_WB || saved == ENGINE_CUSTOM) saved else engineMode
+    }
+
+    fun setEngineFor(conversationId: String, engine: String) {
+        if (conversationId.isBlank()) return
+        setAccountValue(ENGINE_KEY_PREFIX + conversationId, engine)
+    }
+
+    /**
+     * 这条会话归谁（[ENGINE_WB] / [ENGINE_CUSTOM]）。
+     *
+     * **没存过的一律算云端**：升级上来的老会话根本没有归属记录，
+     * 若回落到全局 `engineMode`，用户把默认引擎改成自定义之后，
+     * 几十条老会话会被集体误判成本地——它们的对话其实都在云端。
+     */
+    fun kindOf(conversationId: String?): String {
+        if (conversationId.isNullOrBlank()) return engineMode
+        if (!hasEngineFor(conversationId)) return ENGINE_WB
+        return engineFor(conversationId)
+    }
+
+    /** 是不是本地（自定义 API）会话。 */
+    fun isLocal(conversationId: String?): Boolean = kindOf(conversationId) == ENGINE_CUSTOM
+
+    fun hasEngineFor(conversationId: String): Boolean {
+        val saved = accountValue(ENGINE_KEY_PREFIX + conversationId)
+        return saved == ENGINE_WB || saved == ENGINE_CUSTOM
+    }
+
+    /** 会话被删除时把它的模型/引擎选择一起清掉，别留垃圾。 */
+    fun clearConversationPrefs(conversationId: String) {
+        if (conversationId.isBlank()) return
+        prefs.edit()
+            .remove(accountKey(MODEL_KEY_PREFIX + conversationId))
+            .remove(accountKey(ENGINE_KEY_PREFIX + conversationId))
+            .apply()
+        unmarkCustomConversation(conversationId)
+    }
 
     var themeMode: String
         get() = prefs.getString("theme_mode", THEME_SYSTEM).orEmpty()
@@ -353,12 +626,24 @@ class AppSettings(context: Context) {
         const val THEME_LIGHT = "light"
         const val THEME_DARK = "dark"
 
+        /** 推理引擎：走云端会话协议（默认，扣积分）。 */
+        const val ENGINE_WB = "wb"
+
+        /** 推理引擎：本机 agent + 用户自带的 OpenAI 兼容 API（不扣积分）。 */
+        const val ENGINE_CUSTOM = "custom"
+
         const val DEFAULT_USER_AGENT =
             "Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/UQ1A.240205.002) " +
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
 
         private const val KEY_ACCOUNTS = "accounts_v2"
         private const val KEY_ACTIVE = "active_account"
+
+        /** 用过自定义模型的会话 id 集合。 */
+        private const val KEY_CUSTOM_CONVS = "custom_conversations"
+
+        private const val MODEL_KEY_PREFIX = "conv_model:"
+        private const val ENGINE_KEY_PREFIX = "conv_engine:"
 
         /** 还没建账号时（登录过程中）临时写进这个槽，登录成功后随账号一起被接管。 */
         private const val GUEST_SLOT = "guest"

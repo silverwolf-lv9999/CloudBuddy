@@ -1,10 +1,6 @@
 package cn.cloudbuddy.app.ui.screens
 
-import android.content.Context
-import android.content.Intent
-import android.net.Uri
-import android.widget.Toast
-import androidx.compose.foundation.background
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,38 +15,24 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
-import androidx.compose.material.icons.filled.Cloud
-import androidx.compose.material.icons.filled.DarkMode
-import androidx.compose.material.icons.filled.ExitToApp
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Extension
-import androidx.compose.material.icons.filled.Hub
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.SwapHoriz
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -62,64 +44,81 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cn.cloudbuddy.app.BuildConfig
+import cn.cloudbuddy.app.data.Account
 import cn.cloudbuddy.app.data.AppSettings
 import cn.cloudbuddy.app.data.AppUiState
-import cn.cloudbuddy.app.data.Account
-import cn.cloudbuddy.app.ui.components.ConnectorCard
-import cn.cloudbuddy.app.ui.components.McpCard
-import cn.cloudbuddy.app.ui.components.SkillsCard
 import cn.cloudbuddy.app.data.BuddyRepository
 import cn.cloudbuddy.app.data.FoldMode
-import cn.cloudbuddy.app.data.ReleaseInfo
-import cn.cloudbuddy.app.data.UpdateChecker
-import kotlinx.coroutines.Dispatchers
+import cn.cloudbuddy.app.ui.screens.settings.AboutSettingsPage
+import cn.cloudbuddy.app.ui.screens.settings.AccountSettingsPage
+import cn.cloudbuddy.app.ui.screens.settings.AppearanceSettingsPage
+import cn.cloudbuddy.app.ui.screens.settings.CheckinButton
+import cn.cloudbuddy.app.ui.screens.settings.CustomApiSettingsPage
+import cn.cloudbuddy.app.ui.screens.settings.Divider
+import cn.cloudbuddy.app.ui.screens.settings.ExtensionsSettingsPage
+import cn.cloudbuddy.app.ui.screens.settings.checkinHint
+import cn.cloudbuddy.app.ui.screens.settings.SettingCard
+import cn.cloudbuddy.app.ui.screens.settings.SettingsEntryRow
+import cn.cloudbuddy.app.ui.screens.settings.title
+import cn.cloudbuddy.app.ui.screens.settings.balanceText
+import cn.cloudbuddy.app.ui.screens.settings.customApiSummary
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * 设置的二级页。
+ *
+ * 之前所有设置挤在一页里（九个分组、一千多行），换主题要滚过模型参数、签到、
+ * MCP 列表才能找到。现在按「用户想干什么」拆开：首页只留入口和最关键的一行摘要，
+ * 具体项进各自的页。分组没有按代码模块分，是为了让「改外观」这事最多两跳。
+ */
+private sealed interface SettingsPage {
+    data object Home : SettingsPage
+    data object Account : SettingsPage
+    data object CustomApi : SettingsPage
+    data object Appearance : SettingsPage
+    data object Extensions : SettingsPage
+    data object About : SettingsPage
+}
+
 @Composable
 fun SettingsScreen(
     ui: AppUiState,
     repo: BuddyRepository,
     onSignOut: () -> Unit
 ) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var themeMode by remember { mutableStateOf(repo.settings.themeMode) }
-    var dynamic by remember { mutableStateOf(repo.settings.dynamicColor) }
-    var showThoughts by remember { mutableStateOf(repo.settings.showThoughts) }
-    var enterSend by remember { mutableStateOf(repo.settings.enterSend) }
-    var pendingDelete by remember { mutableStateOf<Account?>(null) }
-    var historyTurns by remember { mutableStateOf(repo.settings.historyTurns) }
-    var historyTimeout by remember { mutableStateOf(repo.settings.historyTimeoutSec) }
-    var updateState by remember { mutableStateOf<UpdateCheck>(UpdateCheck.Idle) }
+    var page by remember { mutableStateOf<SettingsPage>(SettingsPage.Home) }
 
-    /**
-     * 检查更新。四种结果必须分开呈现：把「网络失败」显示成「已是最新」，
-     * 等于骗用户说当前版本不用升。
-     */
-    fun checkUpdate() {
-        if (updateState is UpdateCheck.Checking) return
-        updateState = UpdateCheck.Checking
-        scope.launch {
-            updateState = try {
-                val info = withContext(Dispatchers.IO) { UpdateChecker.fetchLatest() }
-                when {
-                    info == null -> UpdateCheck.UpToDate
-                    UpdateChecker.isNewer(info.version, BuildConfig.VERSION_NAME) ->
-                        UpdateCheck.Available(info)
-                    else -> UpdateCheck.UpToDate
-                }
-            } catch (e: Exception) {
-                UpdateCheck.Failed(e.message ?: "网络不可用")
-            }
-        }
+    // 二级页内按返回键回首页，而不是直接把整个设置 tab 退出——用户的心智是
+    // 「退一层」，不是「关掉设置」。
+    BackHandler(enabled = page != SettingsPage.Home) { page = SettingsPage.Home }
+
+    when (page) {
+        SettingsPage.Home -> SettingsHome(
+            ui = ui,
+            repo = repo,
+            onSignOut = onSignOut,
+            onOpen = { page = it }
+        )
+
+        SettingsPage.Account -> AccountSettingsPage(ui, repo) { page = SettingsPage.Home }
+        SettingsPage.CustomApi -> CustomApiSettingsPage(ui, repo) { page = SettingsPage.Home }
+        SettingsPage.Appearance -> AppearanceSettingsPage(ui, repo) { page = SettingsPage.Home }
+        SettingsPage.Extensions -> ExtensionsSettingsPage(ui, repo) { page = SettingsPage.Home }
+        SettingsPage.About -> AboutSettingsPage(repo) { page = SettingsPage.Home }
     }
+}
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SettingsHome(
+    ui: AppUiState,
+    repo: BuddyRepository,
+    onSignOut: () -> Unit,
+    onOpen: (SettingsPage) -> Unit
+) {
+    // 首页要显示积分，进来就刷一次；签到状态也是同一批接口，顺带更新。
     LaunchedEffect(Unit) {
         repo.refreshUsage()
         repo.refreshCheckin()
@@ -139,355 +138,66 @@ fun SettingsScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            title("账号与额度", Icons.Filled.AccountCircle)
+
+            // 账号、积分、签到合成一栏：它们本来就是同一件事——「我的账号还剩多少」。
+            // 卡片只放摘要和每天要点的签到，套餐明细与账号管理在二级页；账号行本身就是
+            // 那个入口（尾部箭头），不再另起一行「账号与额度」——那会和组标题同名。
             item {
-                Card(
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surface) {
-                            Box(Modifier.size(46.dp), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Filled.AccountCircle, null, tint = MaterialTheme.colorScheme.primary)
-                            }
-                        }
-                        Spacer(Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                ui.account.nickname.ifBlank { repo.settings.nickname.ifBlank { "WorkBuddy 账号" } },
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text(
-                                // 顶部账号卡和下面账号列表必须是同一套脱敏规则：
-                                // 之前这里直接贴完整手机号，下面却显示 189****4407，同一串数字两种样。
-                                Account.maskHint(repo.settings.accountHint).ifBlank { "已登录" },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
-                            )
-                        }
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
-                            modifier = Modifier.clickable {
-                                scope.launch { repo.refreshAccount(); repo.refreshUsage() }
-                            }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Filled.Refresh, null, Modifier.size(13.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("刷新", style = MaterialTheme.typography.labelSmall)
-                            }
-                        }
-                    }
+                SettingCard {
+                    AccountHeaderRow(
+                        ui = ui,
+                        repo = repo,
+                        onOpen = { onOpen(SettingsPage.Account) }
+                    )
+                    Divider()
+                    CreditRow(ui = ui, repo = repo)
                 }
             }
 
-            item { SectionTitle("账号", Icons.Filled.Person) }
+            title("推理", Icons.Filled.Psychology)
             item {
                 SettingCard {
-                    ui.accounts.forEach { account ->
-                        AccountRow(
-                            account = account,
-                            active = account.id == ui.activeAccountId,
-                            onSwitch = { repo.switchAccount(account.id) },
-                            onDelete = { pendingDelete = account }
-                        )
-                        Divider()
-                    }
-                    SettingRow(
-                        title = "添加账号",
-                        subtitle = "登录另一个账号；两个账号的登录态各自保留，切换不用重新收验证码",
-                        trailing = {
-                            IconButton(onClick = { repo.addAccount() }) {
-                                Icon(
-                                    Icons.Filled.Add,
-                                    "添加账号",
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
+                    // 引擎选择和端点配置是同一件事的两面：一个"用哪套"、一个"怎么连"。
+                    // 拆成两个二级页时，推理页里又有"去配置端点"的入口，点进去还是这堆东西。
+                    SettingsEntryRow(
+                        title = "模型与推理",
+                        subtitle = engineSummary(repo) + " · " + customApiSummary(repo, ui),
+                        onClick = { onOpen(SettingsPage.CustomApi) }
                     )
                 }
             }
 
-            item { SectionTitle("积分与签到", Icons.Filled.Star) }
+            title("界面", Icons.Filled.Palette)
             item {
                 SettingCard {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("积分余额", style = MaterialTheme.typography.titleMedium)
-                                Text(
-                                    balanceText(ui),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            CheckinButton(
-                                loading = ui.checkinLoading,
-                                checkedIn = ui.checkin?.todayCheckedIn == true,
-                                onClick = { repo.claimCheckin() }
-                            )
-                        }
-                        checkinHint(ui)?.let { hint ->
-                            Text(
-                                hint,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        ui.checkinError?.let { message ->
-                            Text(
-                                message,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                        }
-                        if (ui.usage.isNotEmpty()) {
-                            Divider()
-                            ui.usage.take(3).forEach { pack ->
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        pack.name,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    Text(
-                                        "${pack.left.toInt()} / ${pack.total.toInt()}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            item { SectionTitle("云端环境", Icons.Filled.Cloud) }
-            item {
-                SettingCard {
-                    SettingRow(
-                        title = "服务站点",
-                        subtitle = repo.settings.baseUrl,
-                        trailing = { Text("官方", style = MaterialTheme.typography.labelSmall) }
-                    )
-                    Divider()
-                    SettingRow(
-                        title = "当前模型",
-                        subtitle = ui.selectedModel.ifBlank { AppSettings.DEFAULT_MODEL },
-                        trailing = { Text("${ui.models.size} 个可选", style = MaterialTheme.typography.labelSmall) }
-                    )
-                    Divider()
-                    SettingRow(
-                        title = "会话执行位置",
-                        subtitle = "官方云端沙箱（/workspace），不在本机执行",
-                        trailing = {
-                            Text(
-                                "云沙箱",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
+                    SettingsEntryRow(
+                        title = "外观与对话",
+                        subtitle = themeSummary(repo) + " · " + foldSummary(ui.foldMode),
+                        onClick = { onOpen(SettingsPage.Appearance) }
                     )
                 }
             }
 
-            item { SectionTitle("外观", Icons.Filled.Palette) }
+            title("扩展", Icons.Filled.Extension)
             item {
                 SettingCard {
-                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("主题", style = MaterialTheme.typography.titleMedium)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(
-                                AppSettings.THEME_SYSTEM to "跟随系统",
-                                AppSettings.THEME_LIGHT to "浅色",
-                                AppSettings.THEME_DARK to "深色"
-                            ).forEach { (value, label) ->
-                                val active = themeMode == value
-                                Surface(
-                                    shape = RoundedCornerShape(50),
-                                    color = if (active) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.surfaceVariant,
-                                    modifier = Modifier.clickable {
-                                        themeMode = value
-                                        repo.settings.themeMode = value
-                                        (context.applicationContext as? cn.cloudbuddy.app.BuddyApp)?.applyTheme()
-                                    }
-                                ) {
-                                    Text(
-                                        label,
-                                        modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = if (active) MaterialTheme.colorScheme.onPrimary
-                                        else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    Divider()
-                    SettingRow(
-                        title = "动态取色",
-                        subtitle = "跟随系统壁纸生成配色（Android 12+）",
-                        trailing = {
-                            Switch(checked = dynamic, onCheckedChange = {
-                                dynamic = it
-                                repo.settings.dynamicColor = it
-                                (context.applicationContext as? cn.cloudbuddy.app.BuddyApp)?.applyTheme()
-                            })
-                        }
+                    SettingsEntryRow(
+                        title = "技能与扩展",
+                        subtitle = extensionsSummary(ui),
+                        onClick = { onOpen(SettingsPage.Extensions) }
                     )
                 }
             }
 
-            item { SectionTitle("对话", Icons.Filled.Tune) }
+            title("其他", Icons.Filled.Info)
             item {
                 SettingCard {
-                    ChipSetting(
-                        title = "折叠方式",
-                        subtitle = "整轮折叠：除最终回答外全收起；只折过程：正文保留，思考与工具调用收成一条",
-                        options = listOf(
-                            FoldMode.WHOLE.key to "整轮折叠",
-                            FoldMode.BODY.key to "只折思考与工具"
-                        ),
-                        selected = ui.foldMode.key
-                    ) { repo.setFoldMode(FoldMode.of(it)) }
-                    Divider()
-                    SettingRow(
-                        title = "折叠中间步骤",
-                        subtitle = "只保留提问与最终回答；之后新产生的步骤也自动折叠",
-                        trailing = {
-                            Switch(
-                                checked = ui.stepsCollapsed,
-                                onCheckedChange = { repo.setCollapseSteps(it) }
-                            )
-                        }
+                    SettingsEntryRow(
+                        title = "关于与更新",
+                        subtitle = "版本 ${BuildConfig.VERSION_NAME} · 第三方客户端",
+                        onClick = { onOpen(SettingsPage.About) }
                     )
-                    Divider()
-                    SettingRow(
-                        title = "展开思考过程",
-                        subtitle = "默认把模型的思考分片折叠起来",
-                        trailing = {
-                            Switch(checked = showThoughts, onCheckedChange = {
-                                showThoughts = it
-                                repo.settings.showThoughts = it
-                            })
-                        }
-                    )
-                    Divider()
-                    SettingRow(
-                        title = "回车发送消息",
-                        subtitle = if (enterSend) "回车直接发送" else "回车换行；发送请点右下角按钮",
-                        trailing = {
-                            Switch(checked = enterSend, onCheckedChange = {
-                                enterSend = it
-                                repo.settings.enterSend = it
-                            })
-                        }
-                    )
-                    Divider()
-                    ChipSetting(
-                        title = "一次渲染多少轮对话",
-                        subtitle = "只渲染最近若干轮，更早的往上翻再加载；长对话打开更快",
-                        options = listOf(10 to "10 轮", 20 to "20 轮", 50 to "50 轮", 0 to "全部"),
-                        selected = historyTurns
-                    ) {
-                        historyTurns = it
-                        repo.settings.historyTurns = it
-                    }
-                    Divider()
-                    ChipSetting(
-                        title = "历史加载超时",
-                        subtitle = "对话越长云端回放越慢；超时只会少显示早期内容，不影响继续对话",
-                        options = listOf(60 to "60 秒", 120 to "120 秒", 180 to "180 秒", 300 to "300 秒"),
-                        selected = historyTimeout
-                    ) {
-                        historyTimeout = it
-                        repo.settings.historyTimeoutSec = it
-                    }
-                }
-            }
-
-            item { SectionTitle("技能", Icons.Filled.Extension) }
-            item { SkillsCard(ui, repo) }
-
-            item { SectionTitle("MCP 服务器", Icons.Filled.Hub) }
-            item { ConnectorCard(ui, repo) }
-            item { McpCard(ui, repo) }
-
-            item { SectionTitle("关于", Icons.Filled.Info) }
-            item {
-                SettingCard {
-                    Column {
-                        Column(
-                            modifier = Modifier.padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text("云伴 WorkBuddy", style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                "版本 ${BuildConfig.VERSION_NAME} · 第三方客户端",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                "本客户端直接对接 WorkBuddy 官方云端会话协议（console 接口 + ACP 事件流 + 沙箱文件网关），" +
-                                    "任务在官方云端沙箱内执行，产物保存在沙箱 /workspace 中，" +
-                                    "不会把模型能力反向代理成本地 API。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Divider()
-                        AboutRow(
-                            title = "检查更新",
-                            subtitle = when (val s = updateState) {
-                                UpdateCheck.Idle -> "从 GitHub Releases 获取最新版本"
-                                UpdateCheck.Checking -> "正在连接 GitHub…"
-                                UpdateCheck.UpToDate -> "当前 ${BuildConfig.VERSION_NAME} 已是最新"
-                                is UpdateCheck.Available -> "发现新版本 ${s.info.version}，点击查看"
-                                is UpdateCheck.Failed -> "检查失败：${s.message}"
-                            },
-                            trailing = when (val s = updateState) {
-                                UpdateCheck.Idle -> "检查"
-                                UpdateCheck.Checking -> "…"
-                                UpdateCheck.UpToDate -> "已是最新"
-                                is UpdateCheck.Available -> "v${s.info.version}"
-                                is UpdateCheck.Failed -> "重试"
-                            },
-                            accent = updateState is UpdateCheck.Available,
-                            onClick = {
-                                val current = updateState
-                                if (current is UpdateCheck.Available) {
-                                    openUrl(context, current.info.apkUrl ?: current.info.pageUrl)
-                                } else {
-                                    checkUpdate()
-                                }
-                            }
-                        )
-                        Divider()
-                        AboutRow(
-                            title = "GitHub 仓库",
-                            subtitle = UpdateChecker.REPO_SLUG,
-                            trailing = "打开",
-                            onClick = { openUrl(context, UpdateChecker.REPO_URL) }
-                        )
-                        Divider()
-                        AboutRow(
-                            title = "提交反馈",
-                            subtitle = "遇到问题或有想法？在 GitHub Issues 里告诉我们",
-                            trailing = "打开",
-                            onClick = { openUrl(context, "https://github.com/${UpdateChecker.REPO_SLUG}/issues") }
-                        )
-                    }
                 }
             }
 
@@ -504,7 +214,7 @@ fun SettingsScreen(
                         modifier = Modifier.padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Filled.ExitToApp, null, Modifier.size(18.dp))
+                        Icon(Icons.AutoMirrored.Filled.ExitToApp, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(10.dp))
                         Text("退出登录", style = MaterialTheme.typography.titleMedium)
                     }
@@ -514,325 +224,115 @@ fun SettingsScreen(
             item { Spacer(Modifier.height(24.dp)) }
         }
     }
-
-    pendingDelete?.let { victim ->
-        AlertDialog(
-            onDismissRequest = { pendingDelete = null },
-            title = { Text("删除账号") },
-            text = {
-                Text(
-                    "将从本机删除「${victim.title}」的登录态，云端会话不受影响。" +
-                        "下次使用需要重新收验证码登录。"
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    pendingDelete = null
-                    repo.removeAccount(victim.id)
-                }) { Text("删除") }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("取消") }
-            }
-        )
-    }
-
-    (updateState as? UpdateCheck.Available)?.let { available ->
-        AlertDialog(
-            onDismissRequest = { updateState = UpdateCheck.UpToDate },
-            title = { Text("发现新版本 ${available.info.version}") },
-            text = {
-                Text(
-                    available.info.notes.ifBlank { "前往 GitHub Releases 下载新版安装包。" },
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 12,
-                    overflow = TextOverflow.Ellipsis
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        openUrl(context, available.info.apkUrl ?: available.info.pageUrl)
-                        updateState = UpdateCheck.UpToDate
-                    }
-                ) { Text("去下载") }
-            },
-            dismissButton = {
-                TextButton(onClick = { updateState = UpdateCheck.UpToDate }) { Text("稍后") }
-            }
-        )
-    }
 }
 
-/** 关于板块里的一行：标题 + 说明 + 右侧状态文字，整行可点。 */
+/** 账号与额度栏的头部：整行点进二级页，中间是昵称与脱敏手机号，右侧刷新。 */
 @Composable
-private fun AboutRow(
-    title: String,
-    subtitle: String,
-    trailing: String,
-    accent: Boolean = false,
-    onClick: () -> Unit
-) {
+private fun AccountHeaderRow(ui: AppUiState, repo: BuddyRepository, onOpen: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    val name = ui.account.nickname.ifBlank {
+        repo.settings.nickname.ifBlank { "WorkBuddy 账号" }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .clickable(onClick = onOpen)
+            .padding(start = 14.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleSmall)
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        Spacer(Modifier.width(10.dp))
-        Text(
-            trailing,
-            style = MaterialTheme.typography.labelLarge,
-            color = if (accent) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
-
-/** 检查更新的界面状态。Failed 与 UpToDate 必须分开，否则网络不通会被显示成「已是最新」。 */
-private sealed interface UpdateCheck {
-    data object Idle : UpdateCheck
-    data object Checking : UpdateCheck
-    data object UpToDate : UpdateCheck
-    data class Available(val info: ReleaseInfo) : UpdateCheck
-    data class Failed(val message: String) : UpdateCheck
-}
-
-/** 用系统浏览器打开链接；没有可用应用时提示，而不是静默失败。 */
-private fun openUrl(context: Context, url: String) {
-    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    runCatching { context.startActivity(intent) }
-        .onFailure {
-            Toast.makeText(context, "没有可以打开链接的应用", Toast.LENGTH_SHORT).show()
-        }
-}
-
-@Composable
-private fun SectionTitle(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(start = 4.dp, top = 8.dp)
-    ) {
-        Icon(icon, null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.primary)
-        Spacer(Modifier.width(6.dp))
-        Text(text, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-    }
-}
-
-@Composable
-private fun SettingCard(content: @Composable () -> Unit) {
-    Card(
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column { content() }
-    }
-}
-
-/** 账号列表里的一行：头像首字 + 名字 + 手机号，右侧是「当前」标记或切换/删除。 */
-@Composable
-private fun AccountRow(
-    account: Account,
-    active: Boolean,
-    onSwitch: () -> Unit,
-    onDelete: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(enabled = !active, onClick = onSwitch)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceVariant) {
-            Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) {
+        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
+            Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
                 Text(
-                    account.title.take(1),
+                    name.take(1),
                     style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
             }
         }
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(account.title, style = MaterialTheme.typography.titleMedium)
-            if (account.subtitle.isNotBlank()) {
-                Text(
-                    account.subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-        if (active) {
+            Text(name, style = MaterialTheme.typography.titleMedium)
             Text(
-                "当前",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary
-            )
-        } else {
-            IconButton(onClick = onSwitch) {
-                Icon(Icons.Filled.SwapHoriz, "切换到该账号", Modifier.size(18.dp))
-            }
-        }
-        IconButton(onClick = onDelete) {
-            Icon(
-                Icons.Filled.Delete,
-                "删除账号",
-                Modifier.size(18.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-private fun SettingRow(
-    title: String,
-    subtitle: String,
-    trailing: @Composable () -> Unit = {}
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 13.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Text(
-                subtitle,
+                // 脱敏规则与账号页保持一致：同一串手机号不能两个样。
+                Account.maskHint(repo.settings.accountHint).ifBlank { "已登录" },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        Spacer(Modifier.width(10.dp))
-        trailing()
-    }
-}
-
-/** 一行标题 + 副标题 + 一排可选项（用于「渲染多少轮」「超时多少秒」）。 */
-@Composable
-private fun ChipSetting(
-    title: String,
-    subtitle: String,
-    options: List<Pair<Int, String>>,
-    selected: Int,
-    onSelect: (Int) -> Unit
-) = Chips(title, subtitle, options, selected, onSelect)
-
-/** 字符串取值的同款选项行（折叠方式这种非数值设置用）。 */
-@Composable
-private fun ChipSetting(
-    title: String,
-    subtitle: String,
-    options: List<Pair<String, String>>,
-    selected: String,
-    onSelect: (String) -> Unit
-) = Chips(title, subtitle, options, selected, onSelect)
-
-@Composable
-private fun <T> Chips(
-    title: String,
-    subtitle: String,
-    options: List<Pair<T, String>>,
-    selected: T,
-    onSelect: (T) -> Unit
-) {
-    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-        Column {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+        // 一次把三样都刷了：昵称、积分、签到状态本来就是同一批接口。
+        IconButton(onClick = {
+            scope.launch { repo.refreshAccount(); repo.refreshUsage(); repo.refreshCheckin() }
+        }) {
+            Icon(Icons.Filled.Refresh, "刷新账号与积分", Modifier.size(18.dp))
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            options.forEach { (value, label) ->
-                val active = selected == value
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = if (active) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.surfaceVariant,
-                    modifier = Modifier.clickable { onSelect(value) }
-                ) {
-                    Text(
-                        label,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (active) MaterialTheme.colorScheme.onPrimary
-                        else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun Divider() {    Box(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 14.dp)
-            .height(1.dp)
-            .background(MaterialTheme.colorScheme.outlineVariant)
-    )
-}
-
-@Composable
-private fun CheckinButton(loading: Boolean, checkedIn: Boolean, onClick: () -> Unit) {
-    val enabled = !loading && !checkedIn
-    Surface(
-        shape = RoundedCornerShape(50),
-        color = if (enabled) MaterialTheme.colorScheme.primary
-        else MaterialTheme.colorScheme.surfaceVariant,
-        modifier = Modifier.clickable(enabled = enabled, onClick = onClick)
-    ) {
-        Text(
-            text = when {
-                loading -> "处理中…"
-                checkedIn -> "今日已签到"
-                else -> "签到"
-            },
-            style = MaterialTheme.typography.labelMedium,
-            color = if (enabled) MaterialTheme.colorScheme.onPrimary
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+        Icon(
+            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            modifier = Modifier.size(20.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
 
-/** 余额文案：有等级时一起展示，避免再多一行。 */
-private fun balanceText(ui: AppUiState): String {
-    val growth = ui.growth ?: return "正在获取…"
-    val level = if (growth.level > 0) {
-        " · Lv.${growth.level}" + if (growth.levelName.isNotBlank()) " ${growth.levelName}" else ""
-    } else {
-        ""
+/** 积分余额 + 连续签到 + 签到按钮。放在首页而不是二级页——这是天天要点的东西。 */
+@Composable
+private fun CreditRow(ui: AppUiState, repo: BuddyRepository) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                "积分余额",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(balanceText(ui), style = MaterialTheme.typography.titleMedium)
+            checkinHint(ui)?.let { hint ->
+                Text(
+                    hint,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            // 签到失败必须说出来：点了没反应比报错更让人困惑。
+            ui.checkinError?.let { message ->
+                Text(
+                    message,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+        }
+        Spacer(Modifier.width(10.dp))
+        CheckinButton(
+            loading = ui.checkinLoading,
+            checkedIn = ui.checkin?.todayCheckedIn == true,
+            onClick = { repo.claimCheckin() }
+        )
     }
-    return "${growth.balance} 积分$level"
 }
 
-/** 签到副标题：连续天数 / 今日所得 / 可得积分。 */
-private fun checkinHint(ui: AppUiState): String? {
-    val info = ui.checkin ?: return null
+/** 首页那一行里的「走哪套引擎」。 */
+private fun engineSummary(repo: BuddyRepository): String =
+    if (repo.settings.engineMode == AppSettings.ENGINE_WB) "云端模型" else "自定义 API"
+
+private fun themeSummary(repo: BuddyRepository): String = when (repo.settings.themeMode) {
+    AppSettings.THEME_LIGHT -> "浅色主题"
+    AppSettings.THEME_DARK -> "深色主题"
+    else -> "跟随系统主题"
+}
+
+private fun foldSummary(mode: FoldMode): String = when (mode) {
+    FoldMode.BODY -> "只折思考与工具"
+    else -> "整轮折叠"
+}
+
+private fun extensionsSummary(ui: AppUiState): String {
     val parts = buildList {
-        if (info.streakDays > 0) add("连续签到 ${info.streakDays} 天")
-        if (info.todayCheckedIn) {
-            if (info.todayCredit > 0) add("今日 +${info.todayCredit}")
-        } else if (info.dailyCredit > 0) {
-            add("签到可得 ${info.dailyCredit}")
-        }
-        if (!info.active) add("签到活动未开启")
+        if (ui.skills.isNotEmpty()) add("${ui.skills.size} 个技能")
+        if (ui.mcpServers.isNotEmpty()) add("${ui.mcpServers.size} 个 MCP 服务器")
+        if (ui.connectors.isNotEmpty()) add("${ui.connectors.size} 个连接器")
     }
-    return parts.joinToString(" · ").takeIf { it.isNotBlank() }
+    return if (parts.isEmpty()) "技能、连接器与 MCP 服务器" else parts.joinToString(" · ")
 }

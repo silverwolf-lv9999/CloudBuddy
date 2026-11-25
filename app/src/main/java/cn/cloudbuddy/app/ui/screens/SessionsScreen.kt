@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -79,7 +80,14 @@ fun SessionsScreen(
     /** 顶部副标题里的余额提示（如「128 积分」），为空则不显示。 */
     balanceLabel: String = "",
     /** 启动时连不上服务器：空列表不代表会话没了，别让用户以为记录丢了。 */
-    offline: Boolean = false
+    offline: Boolean = false,
+    /**
+     * 属于「本机 API」的会话 id。
+     *
+     * 两套会话并存但互不相通：云端会话扣积分、在服务端跑；本机会话用用户自己的
+     * Key、推理在手机上。列表里不标出来，用户根本分不清哪条是哪条。
+     */
+    localIds: Set<String> = emptySet()
 ) {
     var query by remember { mutableStateOf("") }
     var searching by remember { mutableStateOf(false) }
@@ -195,6 +203,7 @@ fun SessionsScreen(
                     items(filtered, key = { it.id }) { conversation ->
                         ConversationCard(
                             conversation = conversation,
+                            local = conversation.id in localIds,
                             onOpen = { onOpen(conversation.id) },
                             onRename = { renameTarget = conversation },
                             onDelete = { deleteTarget = conversation },
@@ -243,6 +252,7 @@ fun SessionsScreen(
 @Composable
 private fun ConversationCard(
     conversation: Conversation,
+    local: Boolean,
     onOpen: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
@@ -258,9 +268,10 @@ private fun ConversationCard(
         Column(modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 13.dp, bottom = 13.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    Icons.Filled.AutoAwesome,
+                    if (local) Icons.Filled.Terminal else Icons.Filled.AutoAwesome,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
+                    tint = if (local) MaterialTheme.colorScheme.tertiary
+                    else MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(17.dp)
                 )
                 Spacer(Modifier.width(8.dp))
@@ -307,6 +318,20 @@ private fun ConversationCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                // 类型标签放在状态角标前面：一眼扫下来先分「哪套」，再看「在干嘛」。
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = if (local) MaterialTheme.colorScheme.tertiaryContainer
+                    else MaterialTheme.colorScheme.secondaryContainer
+                ) {
+                    Text(
+                        if (local) "本机" else "云端",
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (local) MaterialTheme.colorScheme.onTertiaryContainer
+                        else MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                }
                 StatePill(conversation.state)
                 if (conversation.artifacts.isNotEmpty()) {
                     Row(verticalAlignment = Alignment.CenterVertically) {

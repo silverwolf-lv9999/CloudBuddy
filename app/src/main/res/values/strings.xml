@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">云伴 WorkBuddy</string>
+    <!-- 与原版（cn.cloudbuddy.app）共存安装，桌面图标要能一眼分开，所以名字带 Plus。 -->
+    <string name="app_name">云伴 Plus</string>
 </resources>

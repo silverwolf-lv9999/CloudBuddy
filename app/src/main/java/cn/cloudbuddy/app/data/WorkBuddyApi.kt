@@ -115,15 +115,33 @@ class WorkBuddyApi(private val settings: AppSettings, private val http: CloudHtt
         return (0 until array.length()).mapNotNull { i -> parseConversation(array.optJSONObject(i)) }
     }
 
-    suspend fun createConversation(prompt: String, model: String): Pair<String, CloudSession?> {
+    /**
+     * 建会话（同时分配沙箱）。
+     *
+     * [model] 传 null 表示**不绑定任何 WB 模型**：实测服务端不校验这个字段，
+     * 缺省时回包 `model: null`，沙箱照常分配。自定义引擎正是要这个语义——
+     * 会话只是沙箱的载体，推理发生在客户端，不该在云端挂一个用不到的模型。
+     */
+    suspend fun createConversation(prompt: String, model: String? = null): Pair<String, CloudSession?> {
         val plugins = JSONArray().put(JSONObject().put("name", "weixinpay").put("marketplace", "codebuddy-builtin"))
-        val body = JSONObject()
-            .put("prompt", prompt.take(100))
-            .put("model", model)
-            .put("plugins", plugins)
-        val data = http.data(http.call("POST", "/console/as/conversations/", body))
+        val body = JSONObject().put("plugins", plugins)
+        // 空 prompt 时**整个字段都不发**：带上 `prompt: ""` 服务端会当成一次真实提问开跑，
+        // 而这条会话根本没挂模型（自定义引擎只要沙箱），于是它永远停在「运行中」。
+        // 自定义会话走的就是这条路（见 Repository.createCustomConversation）。
+        if (prompt.isNotBlank()) body.put("prompt", prompt.take(100))
+        if (!model.isNullOrBlank()) body.put("model", model)
+        val data = runCatching { http.data(http.call("POST", "/console/as/conversations/", body)) }
+            .getOrElse { failure ->
+                // 少数服务端版本可能要求这个字段必须存在。退回空串——会多一个空轮次，
+                // 但至少会话能建出来（上层建完还会补一次 cancel 回收）。
+                if (prompt.isNotBlank()) throw failure
+                body.put("prompt", "")
+                http.data(http.call("POST", "/console/as/conversations/", body))
+            }
         val id = data.optString("id").ifBlank { data.optString("conversationId") }
         if (id.isBlank()) throw CloudException("创建会话失败：响应缺少会话 ID")
+        // 创建响应里就内联了完整 session（link/token/cwd/e2bDataEndpoint），
+        // 直接用它，省掉一次 GET /session 往返。
         return id to parseSession(id, data.optJSONObject("session"))
     }
 
