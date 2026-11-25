@@ -2342,3 +2342,35 @@ IDLE（`turnActive` 时降级返回），**没挡 DONE**——所以即使这轮
 
 ## 测试
 - 编译/单测/lint 全绿；full debug 包 wip3 出到 dist 供真机验证。
+
+# 1.6.0 追加 · 模型级能力设置（工具调用 / 读图，照 RikkaHub ModelAbility/Modality）
+
+## 现象（用户反馈）
+「每个模型自己的设置也没抄好：能否工具调用、能否读图，这些都需要设置。」
+
+## RikkaHub 的形状
+Model 编辑卡：modelId / displayName / ModelType(CHAT/IMAGE/EMBEDDING) /
+inputModalities(TEXT,IMAGE) / outputModalities / abilities(TOOL,REASONING) /
+contextLength / customHeaders / customBodies / 内置工具。
+
+## 我们的对应实现（引擎只做 Chat Completions，跳过类型与内置工具）
+1. `CustomModel` 加 `tools: Boolean = true`（能力 TOOL）、`vision: Boolean = false`
+   （输入模态 IMAGE）。encode 只在偏离默认值时落盘，旧数据解析天然取默认。
+   `guessVision(id)`：`-vl` / vision / glm-4v / 4o / omni / gemini / claude 猜 true
+   （宁可漏判：没标读图的发图走沙箱兜底，标错的端点直接报错）。
+2. `CustomModelConfig` 加 enableTools / enableVision，`customModel()` 按模型条目带出。
+3. 引擎生效：
+   - `enableTools=false` → 工具表整表不下发（SessionAgent）。不支持 function calling
+     的端点收到 tools 会 400 或编造工具名，纯聊天模型也不该被引诱。
+   - `ChatMsg.User` 加 `images`：非空时 content 变 `[{type:text},{type:image_url}]`
+     数组（OpenAI 兼容标准形状）。`sendCustom` 里读图开着的模型把 image/* 附件转
+     data URL 直发；没开的保持旧路径（图片在沙箱，模型按路径用工具读）。
+     历史轮不回放图片，长期引用的图片证据走沙箱文件。
+4. 模型编辑卡（提供商详情页展开区）加「能力」区：工具调用 / 读图两个开关；
+   模型行副标题加「读图」「无工具」标签（照 RikkaHub 模型卡的能力标签）。
+5. 顺手删了 ChatStream 里类内重复的 toJson 死代码（真正生效的在 ChatRequest）。
+
+## 测试
+- ChatStreamTest +3：多模态 content 数组形状、无图保持纯文本、关工具不下发 tools；
+- CustomModelTest +2：tools/vision 往返、guessVision；
+- full/base 编译、单测、lint 全绿。

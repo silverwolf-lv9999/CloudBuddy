@@ -78,7 +78,7 @@ class SessionAgent(
      * 与旧 Koog 版的语义对齐：重试、中断留痕、失败落盘都在 [send]；
      * 这里只负责单次（可能多步的）执行。
      */
-    override suspend fun send(userText: String): AgentReply {
+    override suspend fun send(userText: String, imageUrls: List<String>): AgentReply {
         if (!config.usable) {
             return AgentReply("自定义模型未配置完整：需要接口地址、API Key 与模型 ID。请到「设置 → 自定义模型」补齐。")
         }
@@ -100,7 +100,7 @@ class SessionAgent(
         var lastError: Exception? = null
         while (attempt <= MAX_RETRIES) {
             try {
-                return runOnce(userText)
+                return runOnce(userText, imageUrls)
             } catch (e: CancellationException) {
                 // 用户点停止：不是错误，原样往上抛让上层安静收尾。
                 // 但要留一条痕迹：重进这个会话时得能看出这轮是被中断的，而不是凭空少一段。
@@ -126,15 +126,21 @@ class SessionAgent(
     }
 
     /** 真正跑一轮；异常交由 [send] 决定是否重试。 */
-    private suspend fun runOnce(userText: String): AgentReply {
+    private suspend fun runOnce(userText: String, imageUrls: List<String> = emptyList()): AgentReply {
         val client = llm.getOrCreate { OpenAiStreamClient() }
 
         // 工具表 = 沙箱工具 + 技能读取 + MCP 远端工具，全部适配成自研 ChatTool。
         // MCP 是外部依赖，连不上只是少一批工具，不能让整轮对话失败（见 [ensureMcp]）。
+        // 模型设置了「不能工具调用」时整表不下发：不支持 function calling 的
+        // 端点收到 tools 会直接 400，纯聊天模型也不该被引诱去编工具名。
         val registry = tools.registry() +
             (if (activeSkills.isEmpty() || skills == null) ToolRegistry.EMPTY else LocalSkillTools(skills).registry()) +
             ensureMcp()
-        val chatTools = registry.tools.map { it.asChatTool() }
+        val chatTools = if (config.enableTools) {
+            registry.tools.map { it.asChatTool() }
+        } else {
+            emptyList()
+        }
         val toolMap = chatTools.associateBy { it.name }
 
         // 消息表：系统提示 + 历史（回放窗口）+ 本轮输入。
@@ -160,7 +166,9 @@ class SessionAgent(
         val input = config.userPrefix.takeIf { it.isNotBlank() }
             ?.let { "$it\n\n$userText" }
             ?: userText
-        messages.add(ChatMsg.User(input))
+        // 图片只在当前轮直发（读图模型的多模态消息）；历史轮不回放图片，
+        // 需要长期引用的图片证据走沙箱文件，模型可以按路径再读。
+        messages.add(ChatMsg.User(input, imageUrls))
 
         val maxIterations = config.maxIterations.coerceIn(1, 200)
         var iterations = 0

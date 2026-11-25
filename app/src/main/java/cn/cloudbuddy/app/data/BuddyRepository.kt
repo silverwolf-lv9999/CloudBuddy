@@ -1423,7 +1423,15 @@ class BuddyRepository(val settings: AppSettings) {
      */
     fun addCustomModels(ids: List<String>, providerId: String = "") {
         val fresh = ids.filter { it.isNotBlank() }
-            .map { CustomModel(id = it, providerId = providerId, reasoning = CustomModel.guessReasoning(it)) }
+            .map {
+                CustomModel(
+                    id = it,
+                    providerId = providerId,
+                    reasoning = CustomModel.guessReasoning(it),
+                    // 工具调用默认开（OpenAI 兼容端点的常态），读图按 ID 猜初值。
+                    vision = CustomModel.guessVision(it),
+                )
+            }
         if (settings.addCustomModels(fresh) == 0) return
         // 之前一个模型都没有：顺手把第一个设成当前，省得用户再点一次。
         if (settings.customModelId.isBlank()) settings.customModelId = fresh.first().selKey
@@ -2098,7 +2106,18 @@ class BuddyRepository(val settings: AppSettings) {
                         }
                     },
                 )
-                val reply = agent.send(ask)
+                // 该模型开了「读图」时，图片附件以多模态消息（image_url，data URL）
+                // 直发给模型——它看得见图本身；没开的话保持旧路径：图片只在沙箱里，
+                // 模型按路径用工具读（读图开关的语义就在这一行分岔）。
+                val directImages = if (turnCfg.enableVision) {
+                    attachments.filter { it.mimeType.startsWith("image/") }.map { a ->
+                        "data:" + a.mimeType + ";base64," +
+                            android.util.Base64.encodeToString(a.bytes, android.util.Base64.NO_WRAP)
+                    }
+                } else {
+                    emptyList()
+                }
+                val reply = agent.send(ask, directImages)
                 flushThought(id)
                 finishToolPlaceholder(id)
                 if (answerMsg != null) {

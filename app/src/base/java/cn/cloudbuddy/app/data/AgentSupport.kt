@@ -30,7 +30,7 @@ private const val CORE_NOTICE =
 private object CoreAgentRuntime : AgentRuntime {
 
     private val unavailable = object : AgentSession {
-        override suspend fun send(userText: String): AgentReply = AgentReply(CORE_NOTICE)
+        override suspend fun send(userText: String, imageUrls: List<String>): AgentReply = AgentReply(CORE_NOTICE)
     }
 
     override fun get(

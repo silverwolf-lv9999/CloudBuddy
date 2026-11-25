@@ -1,6 +1,9 @@
 package cn.cloudbuddy.app.data
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.mockwebserver.MockResponse
@@ -143,5 +146,50 @@ class ChatStreamTest {
         assertEquals(true, obj["stream"]!!.jsonPrimitive.content.toBoolean())
         val messages = obj["messages"]!!.let { it as kotlinx.serialization.json.JsonArray }
         assertEquals(2, messages.size)
+    }
+
+    @Test
+    fun `读图消息走多模态 content 数组`() = runBlocking {
+        server.enqueue(sse("""{"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}"""))
+        OpenAiStreamClient().use {
+            it.stream(
+                cfg(),
+                listOf(
+                    ChatMsg.User("这是什么", listOf("data:image/png;base64,aGVsbG8=", "https://x.com/a.jpg")),
+                ),
+                emptyList(),
+            )
+        }
+        val obj = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        val content = obj["messages"]!!
+            .let { it as JsonArray }[0].jsonObject["content"]!!
+            .let { it as JsonArray }
+        assertEquals("text", content[0].jsonObject["type"]!!.jsonPrimitive.content)
+        assertEquals("这是什么", content[0].jsonObject["text"]!!.jsonPrimitive.content)
+        assertEquals("image_url", content[1].jsonObject["type"]!!.jsonPrimitive.content)
+        assertEquals(
+            "data:image/png;base64,aGVsbG8=",
+            content[1].jsonObject["image_url"]!!.jsonObject["url"]!!.jsonPrimitive.content
+        )
+        assertEquals("image_url", content[2].jsonObject["type"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `无图消息保持纯文本 content`() = runBlocking {
+        server.enqueue(sse("""{"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}"""))
+        OpenAiStreamClient().use { it.stream(cfg(), listOf(ChatMsg.User("hi")), emptyList()) }
+        val obj = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        val content = (obj["messages"] as JsonArray)[0].jsonObject["content"]
+        assertTrue(content is JsonPrimitive)
+    }
+
+    @Test
+    fun `关闭工具调用时不下发 tools 字段`() = runBlocking {
+        server.enqueue(sse("""{"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}"""))
+        val c = cfg().copy(enableTools = false)
+        OpenAiStreamClient().use { it.stream(c, listOf(ChatMsg.User("hi")), emptyList()) }
+        val obj = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        assertTrue(obj["tools"] == null)
+        assertTrue(obj["tool_choice"] == null)
     }
 }

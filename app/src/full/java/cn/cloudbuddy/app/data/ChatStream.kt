@@ -20,6 +20,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -50,7 +51,13 @@ import kotlinx.serialization.json.putJsonObject
 /** 发给服务端的一条消息（Chat Completions 形状）。 */
 sealed interface ChatMsg {
     data class System(val content: String) : ChatMsg
-    data class User(val content: String) : ChatMsg
+
+    /**
+     * 用户消息。[images] 非空时走多模态形状：content 变成
+     * `[{type:text},{type:image_url}]` 数组，图片是 data URL（base64）
+     * 或 http(s) 直链——读图模型直发，文本模型仍只有文本部分。
+     */
+    data class User(val content: String, val images: List<String> = emptyList()) : ChatMsg
 
     /**
      * assistant 消息。[toolCalls] 非空表示这是一条「要求调工具」的中间消息：
@@ -212,36 +219,6 @@ class OpenAiStreamClient : java.io.Closeable {
         tools: List<ChatTool>,
     ): String = ChatRequest.build(config, messages, tools)
 
-    private fun ChatMsg.toJson(): JsonObject = when (this) {
-        is ChatMsg.System -> buildJsonObject {
-            put("role", "system"); put("content", content)
-        }
-        is ChatMsg.User -> buildJsonObject {
-            put("role", "user"); put("content", content)
-        }
-        is ChatMsg.Assistant -> buildJsonObject {
-            put("role", "assistant")
-            put("content", content)
-            if (toolCalls.isNotEmpty()) {
-                put("tool_calls", JsonArray(toolCalls.map { c ->
-                    buildJsonObject {
-                        put("id", c.id)
-                        put("type", "function")
-                        put("function", buildJsonObject {
-                            put("name", c.name)
-                            put("arguments", c.arguments.ifBlank { "{}" })
-                        })
-                    }
-                }))
-            }
-        }
-        is ChatMsg.ToolResult -> buildJsonObject {
-            put("role", "tool")
-            put("tool_call_id", toolCallId)
-            put("content", content)
-        }
-    }
-
     /** delta 里的字段可能缺失或为 null；只接受真正的字符串基本量。 */
     private val JsonElement?.jsonPrimitiveOrNull: JsonPrimitive?
         get() = this as? JsonPrimitive
@@ -316,7 +293,25 @@ internal object ChatRequest {
             put("role", "system"); put("content", content)
         }
         is ChatMsg.User -> buildJsonObject {
-            put("role", "user"); put("content", content)
+            put("role", "user")
+            if (images.isEmpty()) {
+                put("content", content)
+            } else {
+                // 多模态：文本 + 每张图一个 image_url part（OpenAI 兼容标准形状，
+                // DeepSeek / 通义 / 中转站的读图模型都认）。data URL 或 http 直链都放 url。
+                put("content", buildJsonArray {
+                    add(buildJsonObject {
+                        put("type", "text")
+                        put("text", content)
+                    })
+                    images.forEach { url ->
+                        add(buildJsonObject {
+                            put("type", "image_url")
+                            put("image_url", buildJsonObject { put("url", url) })
+                        })
+                    }
+                })
+            }
         }
         is ChatMsg.Assistant -> buildJsonObject {
             put("role", "assistant")

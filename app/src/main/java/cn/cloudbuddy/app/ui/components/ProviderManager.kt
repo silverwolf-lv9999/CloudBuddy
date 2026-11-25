@@ -792,7 +792,9 @@ private fun ModelRow(
                     Text(
                         buildString {
                             if (model.title != model.id) append(model.id + " · ")
+                            if (model.vision) append("读图 · ")
                             if (model.reasoning) append("思考 · ")
+                            if (!model.tools) append("无工具 · ")
                             if (model.customized) append("已自定义")
                         }.trimEnd('·', ' '),
                         style = MaterialTheme.typography.labelSmall,
@@ -844,6 +846,38 @@ private fun ModelRow(
                         Switch(
                             checked = model.reasoning,
                             onCheckedChange = { onUpdate(model.copy(reasoning = it)) }
+                        )
+                    }
+
+                    // 能力开关（照 RikkaHub 的 ModelAbility / Modality 编辑）。
+                    // 加入模型时按 ID 猜的初值只求个大概，这里才是权威：猜错随时改。
+                    Text("能力", style = MaterialTheme.typography.bodySmall)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("工具调用", style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                "关掉后引擎不下发 tools——不支持 function calling 的端点/纯聊天模型用",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = model.tools,
+                            onCheckedChange = { onUpdate(model.copy(tools = it)) }
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("读图（视觉）", style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                "开着：聊天里的图片直接发给模型；关着：图片只在沙箱里，模型用工具按路径读",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = model.vision,
+                            onCheckedChange = { onUpdate(model.copy(vision = it)) }
                         )
                     }
 

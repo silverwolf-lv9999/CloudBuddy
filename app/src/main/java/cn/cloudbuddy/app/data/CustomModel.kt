@@ -29,6 +29,18 @@ data class CustomModel(
     val systemPrompt: String = "",
     /** 该模型回放的历史轮数；0 表示跟随全局。 */
     val contextTurns: Int = 0,
+    /**
+     * 能否工具调用（照 RikkaHub 的 ModelAbility.TOOL）。
+     * 关掉后引擎不下发 tools 字段——不支持 function calling 的端点/纯聊天模型
+     * 用它，否则有些服务端会直接 400 或凭空编造工具名。
+     */
+    val tools: Boolean = true,
+    /**
+     * 能否读图（照 RikkaHub 的 Modality.IMAGE 输入）。
+     * 开着：聊天里发的图片以 image_url 多模态消息直发给模型；
+     * 关着：图片保持旧路径——放进沙箱，模型用工具按路径读。
+     */
+    val vision: Boolean = false,
 ) {
     /** 界面上真正显示的名字。 */
     val title: String get() = name.trim().ifBlank { id }
@@ -43,7 +55,7 @@ data class CustomModel(
     /** 有没有任何覆盖项——列表里据此标一个「已自定义」。 */
     val customized: Boolean
         get() = name.isNotBlank() || reasoning || thinkingEffort.isNotBlank() ||
-            systemPrompt.isNotBlank() || contextTurns > 0
+            systemPrompt.isNotBlank() || contextTurns > 0 || !tools || vision
 
     /** 按空格分词、全部命中的关键词筛选（与 RikkaHub 的 filterByKeywords 同规则）。 */
     fun matches(keywords: List<String>): Boolean = keywords.all {
@@ -63,10 +75,25 @@ data class CustomModel(
             return REASONING_HINTS.any { key.contains(it) }
         }
 
+        /**
+         * 猜测能否读图。同样宁可漏判：没标读图的模型发了图走沙箱路径兜底，
+         * 标错的会让不支持图片的端点直接报错。
+         * 线索是各家多模态命名的公约数：`-vl`（Qwen-VL/GLM-4V）、vision、
+         * `4o`（gpt-4o）、omni、gemini / claude（全线多模态）。
+         */
+        fun guessVision(id: String): Boolean {
+            val key = id.lowercase()
+            return VISION_HINTS.any { key.contains(it) }
+        }
+
         private val REASONING_HINTS = listOf(
             "reasoner", "reasoning", "thinking", "-think", "qwq",
             "deepseek-r", "-r1", "/r1", "magistral",
             "o1-", "o1", "o3-", "o3", "o4-mini",
+        )
+
+        private val VISION_HINTS = listOf(
+            "-vl", "vision", "glm-4v", "4o", "omni", "gemini", "claude",
         )
 
         /** 关键词筛选，空查询返回原列表。 */
@@ -76,24 +103,27 @@ data class CustomModel(
             return models.filter { it.matches(keywords) }
         }
 
-        fun encode(models: List<CustomModel>): String {
-            val array = JSONArray()
-            models.forEach { m ->
-                if (m.id.isBlank()) return@forEach
-                array.put(
-                    JSONObject().apply {
-                        put("id", m.id)
-                        if (m.providerId.isNotBlank()) put("p", m.providerId)
-                        if (m.name.isNotBlank()) put("name", m.name)
-                        if (m.reasoning) put("reasoning", true)
-                        if (m.thinkingEffort.isNotBlank()) put("effort", m.thinkingEffort)
-                        if (m.systemPrompt.isNotBlank()) put("prompt", m.systemPrompt)
-                        if (m.contextTurns > 0) put("turns", m.contextTurns)
-                    }
-                )
-            }
-            return array.toString()
+    fun encode(models: List<CustomModel>): String {
+        val array = JSONArray()
+        models.forEach { m ->
+            if (m.id.isBlank()) return@forEach
+            array.put(
+                JSONObject().apply {
+                    put("id", m.id)
+                    if (m.providerId.isNotBlank()) put("p", m.providerId)
+                    if (m.name.isNotBlank()) put("name", m.name)
+                    if (m.reasoning) put("reasoning", true)
+                    if (m.thinkingEffort.isNotBlank()) put("effort", m.thinkingEffort)
+                    if (m.systemPrompt.isNotBlank()) put("prompt", m.systemPrompt)
+                    if (m.contextTurns > 0) put("turns", m.contextTurns)
+                    // 只在偏离默认值时落盘：旧数据解析自然得到 true/false 的默认
+                    if (!m.tools) put("tools", false)
+                    if (m.vision) put("vision", true)
+                }
+            )
         }
+        return array.toString()
+    }
 
         /**
          * 解析，兼容旧格式。
@@ -118,6 +148,8 @@ data class CustomModel(
                             thinkingEffort = item.optString("effort").trim(),
                             systemPrompt = item.optString("prompt"),
                             contextTurns = item.optInt("turns", 0).coerceAtLeast(0),
+                            tools = item.optBoolean("tools", true),
+                            vision = item.optBoolean("vision", false),
                         )
                     }
 

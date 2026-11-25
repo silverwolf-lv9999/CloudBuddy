@@ -36,6 +36,10 @@ data class CustomModelConfig(
     val chatPathOverride: String = "",
     /** 提供商的自定义请求头，逐条加在 Authorization 之外。 */
     val extraHeaders: Map<String, String> = emptyMap(),
+    /** 该模型能否工具调用（见 [CustomModel.tools]）。false 时引擎不下发 tools。 */
+    val enableTools: Boolean = true,
+    /** 该模型能否读图（见 [CustomModel.vision]）。true 时图片以 image_url 直发。 */
+    val enableVision: Boolean = false,
 ) {
     val usable: Boolean get() = baseUrl.isNotBlank() && apiKey.isNotBlank() && modelId.isNotBlank()
 
@@ -205,7 +209,14 @@ data class SandboxToolEvent(
  * 拿到的必须已经是另一份——这里不再暴露 endpoint/token，避免上层拿错沙箱。
  */
 interface AgentSession {
-    suspend fun send(userText: String): AgentReply
+    /**
+     * 跑一轮对话。
+     *
+     * [imageUrls] 是随这轮问题直发给模型的图片（data URL 或 http 直链），
+     * 只有「读图」开着（[CustomModel.vision]）才非空；历史轮不回放图片，
+     * 图片证据需要长期保留时走沙箱文件路径。
+     */
+    suspend fun send(userText: String, imageUrls: List<String> = emptyList()): AgentReply
 }
 
 /**

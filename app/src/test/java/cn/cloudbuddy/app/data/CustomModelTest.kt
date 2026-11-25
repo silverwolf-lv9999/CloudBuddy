@@ -86,6 +86,28 @@ class CustomModelTest {
     }
 
     @Test
+    fun `能力开关 tools vision 往返保留`() {
+        val source = CustomModel("gpt-4o", tools = false, vision = true)
+        val back = CustomModel.decode(CustomModel.encode(listOf(source))).single()
+        assertEquals(source, back)
+        // 只在偏离默认值时落盘：默认值写进 JSON 会拖累旧版本解析
+        val encoded = CustomModel.encode(listOf(CustomModel("m")))
+        assertFalse(encoded.contains("tools"))
+        assertFalse(encoded.contains("vision"))
+    }
+
+    @Test
+    fun `读图模型按 ID 猜测`() {
+        assertTrue(CustomModel.guessVision("qwen-vl-max"))
+        assertTrue(CustomModel.guessVision("gpt-4o"))
+        assertTrue(CustomModel.guessVision("glm-4v-flash"))
+        assertTrue(CustomModel.guessVision("gemini-2.0-flash"))
+        assertTrue(CustomModel.guessVision("claude-sonnet-4"))
+        assertFalse(CustomModel.guessVision("deepseek-chat"))
+        assertFalse(CustomModel.guessVision("deepseek-reasoner"))
+    }
+
+    @Test
     fun `关键词筛选要求全部命中且不分大小写`() {
         val list = listOf(
             CustomModel("deepseek-chat", "便宜"),

@@ -459,6 +459,9 @@ class AppSettings(context: Context) {
             // 路径与自定义请求头是提供商级配置：同一个端点上的所有模型共用。
             chatPathOverride = provider?.chatPath.orEmpty(),
             extraHeaders = provider?.headers ?: emptyMap(),
+            // 能力开关是模型级的：能不能调工具、能不能读图，每个模型各一份。
+            enableTools = entry?.tools ?: true,
+            enableVision = entry?.vision ?: false,
         )
     }
 
