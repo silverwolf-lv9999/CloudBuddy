@@ -6,21 +6,34 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -30,8 +43,6 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -47,7 +58,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.cloudbuddy.app.data.AppSettings
@@ -66,13 +83,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // 回前台立刻对一次账：切出去这段时间云端可能已经把任务跑完了，
-        // 回来还挂着「进行中」的旧角标最让人困惑。
         (application as BuddyApp).repository.setForeground(true)
     }
 
     override fun onPause() {
-        // 后台停掉对账轮询：不跑网络、不重建连接，省电省流量。
         (application as BuddyApp).repository.setForeground(false)
         super.onPause()
     }
@@ -116,8 +130,6 @@ private fun AppRoot(repo: BuddyRepository) {
 
     var tab by remember { mutableStateOf(Tab.SESSIONS) }
     var preview by remember { mutableStateOf<PreviewTarget?>(null) }
-    // 命令行窗口是盖在上面的一层：它在两种引擎下都能用（沙箱是同一个），
-    // 所以不做成 Tab，免得用户以为"只有自定义模式才有终端"。
     var showTerminal by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -132,7 +144,6 @@ private fun AppRoot(repo: BuddyRepository) {
                 LoginScreen(
                     repo = repo,
                     onLoggedIn = { tab = Tab.SESSIONS },
-                    // 有别的账号可回就显示返回：从「添加账号」进来的用户不该被困住。
                     onCancel = ui.accounts
                         .firstOrNull { it.id != ui.activeAccountId }
                         ?.let { { repo.removeAccount(ui.activeAccountId) } }
@@ -200,22 +211,56 @@ private fun AppRoot(repo: BuddyRepository) {
                                 onOpenSettings = { tab = Tab.SETTINGS }
                             )
                         } else {
+                            // 结构照搬 KernelSU（manager/.../ui/MainActivity.kt）：
+                            // 悬浮栏放进 Scaffold 的 bottomBar，内容通过 innerPadding 自动避让，
+                            // 不再用 Box 叠一层——叠层会挡住内容底部的按钮（新建会话 FAB 就是被它压住的）。
+                            // 另外补一条 KernelSU 没有的：列表下滑时收起悬浮栏，上滑或触顶时再浮出。
+                            var barVisible by remember { mutableStateOf(true) }
+                            val connection = remember {
+                                object : NestedScrollConnection {
+                                    override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                                        if (source == NestedScrollSource.UserInput) {
+                                            if (available.y < -2f) barVisible = false
+                                            else if (available.y > 2f) barVisible = true
+                                        }
+                                        return Offset.Zero
+                                    }
+                                }
+                            }
                             Scaffold(
+                                containerColor = MaterialTheme.colorScheme.background,
                                 bottomBar = {
-                                    NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                                        Tab.entries.forEach { item ->
-                                            NavigationBarItem(
-                                                selected = tab == item,
-                                                onClick = { tab = item },
-                                                icon = { Icon(item.icon, item.label) },
-                                                label = { Text(item.label) }
+                                    Box(Modifier.fillMaxWidth()) {
+                                        AnimatedVisibility(
+                                            visible = barVisible,
+                                            enter = slideInVertically { it } + fadeIn(),
+                                            exit = slideOutVertically { it } + fadeOut(),
+                                            modifier = Modifier.align(Alignment.BottomCenter)
+                                        ) {
+                                            FloatingTabBar(
+                                                currentTab = currentTab,
+                                                onTabSelected = { tab = it }
                                             )
                                         }
                                     }
-                                },
-                                containerColor = MaterialTheme.colorScheme.background
-                            ) { padding ->
-                                Box(Modifier.fillMaxSize().padding(padding)) {
+                                }
+                            ) { innerPadding ->
+                                // 胶囊可见时 bottomBar 高度已含底部留白；收起后 bottomBar
+                                // 高度归零，若只用 innerPadding，内容和 FAB 会落到系统导航栏
+                                // 下面。取两者的较大值，收起状态仍保留 navigationBars 的避让。
+                                val navInset = WindowInsets.navigationBars
+                                    .asPaddingValues()
+                                    .calculateBottomPadding()
+                                val contentBottom = maxOf(
+                                    innerPadding.calculateBottomPadding(),
+                                    navInset
+                                )
+                                Box(
+                                    Modifier
+                                        .fillMaxSize()
+                                        .nestedScroll(connection)
+                                        .padding(bottom = contentBottom)
+                                ) {
                                     when (currentTab) {
                                         Tab.SESSIONS -> SessionsScreen(
                                             conversations = ui.conversations,
@@ -232,8 +277,6 @@ private fun AppRoot(repo: BuddyRepository) {
                                             onResetRun = { repo.forceResetConversation(it) },
                                             balanceLabel = ui.growth?.let { "${it.balance} 积分" }.orEmpty(),
                                             offline = ui.offline,
-                                            // 归属存在本机偏好里（云端没有这个概念），按会话 id 逐个判。
-                                            // 键在 conversations 上：列表一刷新就重算，不额外收一次状态。
                                             localIds = remember(ui.conversations) {
                                                 ui.conversations
                                                     .filter { repo.settings.isLocal(it.id) }
@@ -276,15 +319,13 @@ private fun AppRoot(repo: BuddyRepository) {
                                 repo.closeConversation()
                                 scope.launch { repo.refreshConversations() }
                             }
-
                             else -> tab = Tab.SESSIONS
                         }
                     }
                 }
             }
         }
-        // 统一提示层：此前 ChatScreen 分支没有 SnackbarHost，模型切换结果等事件
-        // 在聊天页完全看不到，用户会以为「选了没生效」。
+
         SnackbarHost(
             hostState = snackbar,
             modifier = Modifier
@@ -292,6 +333,84 @@ private fun AppRoot(repo: BuddyRepository) {
                 .navigationBarsPadding()
                 .padding(start = 16.dp, end = 16.dp, bottom = 72.dp)
         )
+    }
+}
+
+/**
+ * 悬浮胶囊导航栏。结构照搬 KernelSU
+ * （manager/.../ui/component/bottombar/BottomBarMiuix.kt 的 FloatingBottomBar 分支），
+ * 底部留白按本应用需要收紧：
+ * - 胶囊总高 64dp，内部 padding 4dp（内容 56dp）
+ * - 左右各留 28dp，底部按导航栏 inset 决定（有 inset 时 8dp + inset，否则 12dp）
+ * - 宽度按内容 intrinsic 收缩，不铺满整行
+ */
+@Composable
+private fun FloatingTabBar(
+    currentTab: Tab,
+    onTabSelected: (Tab) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    // 应用是 edge-to-edge，胶囊必须自己避开系统导航栏：有 inset 时只额外留 8dp，
+    // 没有 inset 时留 12dp。不要再放大这个值，否则胶囊下方会出现一截同色空白。
+    val navInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val bottomPadding = if (navInset != 0.dp) 8.dp + navInset else 12.dp
+
+    Box(
+        modifier = modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            modifier = Modifier
+                .padding(start = 28.dp, end = 28.dp, bottom = bottomPadding),
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.92f),
+            tonalElevation = 3.dp,
+            shadowElevation = 8.dp
+        ) {
+            Row(
+                modifier = Modifier
+                    .height(64.dp)
+                    .padding(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Tab.entries.forEach { item ->
+                    val selected = currentTab == item
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .defaultMinSize(minWidth = 76.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (selected) MaterialTheme.colorScheme.primaryContainer
+                                else Color.Transparent
+                            )
+                            .clickable { onTabSelected(item) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(1.dp, Alignment.CenterVertically),
+                            modifier = Modifier.padding(horizontal = 12.dp)
+                        ) {
+                            Icon(
+                                item.icon,
+                                contentDescription = item.label,
+                                tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Text(
+                                item.label,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

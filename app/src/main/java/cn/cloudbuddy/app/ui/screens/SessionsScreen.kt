@@ -1,28 +1,27 @@
 package cn.cloudbuddy.app.ui.screens
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
@@ -32,12 +31,14 @@ import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -53,18 +54,19 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cn.cloudbuddy.app.data.Conversation
 import cn.cloudbuddy.app.data.TurnState
-import cn.cloudbuddy.app.ui.components.StatePill
+import cn.cloudbuddy.app.ui.theme.extendColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun SessionsScreen(
     conversations: List<Conversation>,
@@ -80,16 +82,10 @@ fun SessionsScreen(
     balanceLabel: String = "",
     /** 启动时连不上服务器：空列表不代表会话没了，别让用户以为记录丢了。 */
     offline: Boolean = false,
-    /**
-     * 属于「本机 API」的会话 id。
-     *
-     * 两套会话并存但互不相通：云端会话扣积分、在服务端跑；本机会话用用户自己的
-     * Key、推理在手机上。列表里不标出来，用户根本分不清哪条是哪条。
-     */
+    /** 本机（自定义引擎）会话的 id 集合，列表项上给它们换成 Terminal 图标。 */
     localIds: Set<String> = emptySet()
 ) {
     var query by remember { mutableStateOf("") }
-    var searching by remember { mutableStateOf(false) }
     var refreshing by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<Conversation?>(null) }
     var deleteTarget by remember { mutableStateOf<Conversation?>(null) }
@@ -111,23 +107,40 @@ fun SessionsScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text("云端会话", style = MaterialTheme.typography.titleLarge)
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
-                            listOf(
-                                nickname.ifBlank { "WorkBuddy" },
-                                "云沙箱",
-                                balanceLabel
-                            ).filter { it.isNotBlank() }.joinToString(" · "),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            "会话",
+                            style = MaterialTheme.typography.headlineSmall
                         )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            if (offline) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.extendColors.warningContainer,
+                                    contentColor = MaterialTheme.extendColors.onWarningContainer
+                                ) {
+                                    Text(
+                                        "离线",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                            Text(
+                                listOf(
+                                    nickname.ifBlank { "WorkBuddy" },
+                                    balanceLabel
+                                ).filter { it.isNotBlank() }.joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 },
                 actions = {
-                    IconButton(onClick = { searching = !searching }) {
-                        Icon(Icons.Filled.Search, contentDescription = "搜索")
-                    }
                     IconButton(
                         onClick = {
                             scope.launch {
@@ -140,43 +153,63 @@ fun SessionsScreen(
                         Icon(Icons.Filled.Refresh, contentDescription = "刷新")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                modifier = Modifier.statusBarsPadding()
             )
         },
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = onNew,
                 icon = { Icon(Icons.Filled.Add, null) },
-                text = { Text("新建会话") }
+                text = { Text("新会话", style = MaterialTheme.typography.labelLarge) },
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+                shape = MaterialTheme.shapes.largeIncreased
             )
         },
-        containerColor = MaterialTheme.colorScheme.background
+        containerColor = MaterialTheme.colorScheme.background,
+        // 这里嵌在 MainActivity 外层 Scaffold 的内容区里，底部避让已经由外层 bottomBar
+        // 的 innerPadding 完成。默认的 ScaffoldDefaults.contentWindowInsets 会再扣一次
+        // navigationBars，和外层胶囊高度叠在一起，表现为胶囊上方多出一截同色空白。
+        contentWindowInsets = WindowInsets(0, 0, 0, 0)
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
-            if (searching) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    placeholder = { Text("搜索会话标题") },
-                    leadingIcon = { Icon(Icons.Filled.Search, null, Modifier.size(18.dp)) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp)
-                )
-            }
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text("搜索会话标题") },
+                leadingIcon = { Icon(Icons.Filled.Search, null, Modifier.size(20.dp)) },
+                singleLine = true,
+                shape = CircleShape,
+                colors = OutlinedTextFieldDefaults.colors(
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    unfocusedBorderColor = Color.Transparent,
+                    focusedBorderColor = Color.Transparent
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+            )
 
             if (filtered.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                         modifier = Modifier.padding(32.dp)
                     ) {
-                        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
-                            Box(Modifier.size(56.dp), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Filled.Cloud, null, tint = MaterialTheme.colorScheme.primary)
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Box(Modifier.size(72.dp), contentAlignment = Alignment.Center) {
+                                Icon(
+                                    Icons.Filled.AutoAwesome,
+                                    null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(34.dp)
+                                )
                             }
                         }
                         Text(
@@ -196,13 +229,15 @@ fun SessionsScreen(
                 }
             } else {
                 LazyColumn(
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
+                    // 胶囊已经被外层 Scaffold 的 bottomBar 高度避让掉了，这里只留一点点
+                    // 呼吸空间；再垫 24dp 会在胶囊上方形成一块明显的同色空白。
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(filtered, key = { it.id }) { conversation ->
                         ConversationCard(
                             conversation = conversation,
-                            local = conversation.id in localIds,
+                            isLocal = conversation.id in localIds,
                             onOpen = { onOpen(conversation.id) },
                             onRename = { renameTarget = conversation },
                             onDelete = { deleteTarget = conversation },
@@ -220,7 +255,12 @@ fun SessionsScreen(
             onDismissRequest = { renameTarget = null },
             title = { Text("重命名会话") },
             text = {
-                OutlinedTextField(value = title, onValueChange = { title = it }, singleLine = true)
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.largeIncreased
+                )
             },
             confirmButton = {
                 TextButton(onClick = {
@@ -248,10 +288,11 @@ fun SessionsScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun ConversationCard(
     conversation: Conversation,
-    local: Boolean,
+    isLocal: Boolean,
     onOpen: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
@@ -259,101 +300,158 @@ private fun ConversationCard(
 ) {
     var menu by remember { mutableStateOf(false) }
     Surface(
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp,
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen)
+        onClick = onOpen,
+        shape = MaterialTheme.shapes.largeIncreased,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 13.dp, bottom = 13.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    if (local) Icons.Filled.Terminal else Icons.Filled.AutoAwesome,
-                    contentDescription = null,
-                    tint = if (local) MaterialTheme.colorScheme.tertiary
-                    else MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(17.dp)
-                )
-                Spacer(Modifier.width(8.dp))
+        Row(
+            modifier = Modifier.padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primaryContainer,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        if (isLocal) Icons.Filled.Terminal else Icons.Filled.AutoAwesome,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = conversation.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
+                    style = MaterialTheme.typography.titleSmallEmphasized,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
-                Box {
-                    IconButton(onClick = { menu = true }) {
-                        Icon(Icons.Filled.MoreVert, "更多", Modifier.size(18.dp))
+                Spacer(Modifier.height(3.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    when (conversation.state) {
+                        TurnState.RUNNING, TurnState.WAITING -> {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.extendColors.successContainer,
+                                contentColor = MaterialTheme.extendColors.onSuccessContainer
+                            ) {
+                                Text(
+                                    "运行中",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+
+                        TurnState.FAILED -> {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.errorContainer,
+                                contentColor = MaterialTheme.colorScheme.onErrorContainer
+                            ) {
+                                Text(
+                                    "失败",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+
+                        else -> Unit
                     }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(
-                            text = { Text("重命名") },
-                            leadingIcon = { Icon(Icons.Filled.Edit, null, Modifier.size(18.dp)) },
-                            onClick = { menu = false; onRename() }
+                    if (conversation.preview.isNotBlank()) {
+                        Text(
+                            conversation.preview,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
                         )
-                        // 只在「显示运行中」时出现：这就是用户被锁住的那种会话，
-                        // 给他一条不必新建会话的自救路。
-                        if (conversation.state == TurnState.RUNNING ||
-                            conversation.state == TurnState.WAITING
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("解除卡住的运行状态") },
-                                leadingIcon = {
-                                    Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp))
-                                },
-                                onClick = { menu = false; onResetRun() }
+                    } else {
+                        if (conversation.artifacts.isNotEmpty()) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Filled.Folder,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(12.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.width(3.dp))
+                                Text(
+                                    "${conversation.artifacts.size} 个产物",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        conversation.model?.takeIf { it.isNotBlank() }?.let { model ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Filled.Description,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(12.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.width(3.dp))
+                                Text(
+                                    model,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                        if (conversation.updatedAt > 0) {
+                            Text(
+                                relativeTime(conversation.updatedAt),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        DropdownMenuItem(
-                            text = { Text("删除") },
-                            leadingIcon = { Icon(Icons.Filled.Delete, null, Modifier.size(18.dp)) },
-                            onClick = { menu = false; onDelete() }
-                        )
                     }
                 }
             }
-            Spacer(Modifier.height(8.dp))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                // 类型标签放在状态角标前面：一眼扫下来先分「哪套」，再看「在干嘛」。
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = if (local) MaterialTheme.colorScheme.tertiaryContainer
-                    else MaterialTheme.colorScheme.secondaryContainer
-                ) {
-                    Text(
-                        if (local) "本机" else "云端",
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (local) MaterialTheme.colorScheme.onTertiaryContainer
-                        else MaterialTheme.colorScheme.onSecondaryContainer
-                    )
+            Box {
+                IconButton(onClick = { menu = true }) {
+                    Icon(Icons.Filled.MoreVert, "更多", Modifier.size(18.dp))
                 }
-                StatePill(conversation.state)
-                if (conversation.artifacts.isNotEmpty()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Filled.Folder,
-                            contentDescription = null,
-                            modifier = Modifier.size(12.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.width(3.dp))
-                        Text(
-                            "${conversation.artifacts.size} 个产物",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                DropdownMenu(
+                    expanded = menu,
+                    onDismissRequest = { menu = false },
+                    shape = MaterialTheme.shapes.largeIncreased
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("重命名") },
+                        leadingIcon = { Icon(Icons.Filled.Edit, null, Modifier.size(18.dp)) },
+                        onClick = { menu = false; onRename() }
+                    )
+                    // 只在「显示运行中」时出现：这就是用户被锁住的那种会话，
+                    // 给他一条不必新建会话的自救路。
+                    if (conversation.state == TurnState.RUNNING ||
+                        conversation.state == TurnState.WAITING
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("解除卡住的运行状态") },
+                            leadingIcon = {
+                                Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp))
+                            },
+                            onClick = { menu = false; onResetRun() }
                         )
                     }
-                }
-                Spacer(Modifier.weight(1f))
-                if (conversation.updatedAt > 0) {
-                    Text(
-                        relativeTime(conversation.updatedAt),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    DropdownMenuItem(
+                        text = { Text("删除") },
+                        leadingIcon = { Icon(Icons.Filled.Delete, null, Modifier.size(18.dp)) },
+                        onClick = { menu = false; onDelete() }
                     )
                 }
             }

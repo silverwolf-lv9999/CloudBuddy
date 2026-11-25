@@ -633,6 +633,63 @@ class AppSettings(context: Context) {
     fun setWorkspacePath(conversationId: String, path: String) =
         prefs.edit().putString("workspace:$conversationId", path).apply()
 
+    // ---------- 消息本地缓存 ----------
+
+    /**
+     * 读取缓存的消息列表。
+     *
+     * 打开会话时先显示缓存（立即有内容），后台再从云端拉最新。
+     */
+    fun loadMessageCache(conversationId: String): List<ChatMessage> {
+        val raw = prefs.getString(msgCacheKey(conversationId), null) ?: return emptyList()
+        return runCatching {
+            val array = org.json.JSONArray(raw)
+            (0 until array.length()).mapNotNull { i ->
+                val obj = array.optJSONObject(i) ?: return@mapNotNull null
+                ChatMessage(
+                    id = obj.optString("id"),
+                    role = ChatRole.valueOf(obj.optString("role")),
+                    text = obj.optString("text"),
+                    toolState = ToolState.valueOf(obj.optString("toolState", "NONE")),
+                    streaming = false,
+                    turn = obj.optInt("turn"),
+                    toolName = obj.optString("toolName").takeIf { it.isNotBlank() },
+                    toolInput = obj.optString("toolInput").takeIf { it.isNotBlank() },
+                    toolOutput = obj.optString("toolOutput").takeIf { it.isNotBlank() }
+                )
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    /**
+     * 保存消息到缓存。
+     *
+     * 只保留最近 [MSG_CACHE_LIMIT] 条，防止 SharedPreferences 无限膨胀。
+     */
+    fun saveMessageCache(conversationId: String, messages: List<ChatMessage>) {
+        val toSave = messages.takeLast(MSG_CACHE_LIMIT)
+        val array = org.json.JSONArray()
+        toSave.forEach { msg ->
+            val obj = org.json.JSONObject().apply {
+                put("id", msg.id)
+                put("role", msg.role.name)
+                put("text", msg.text.take(MSG_FIELD_MAX))
+                put("toolState", msg.toolState.name)
+                put("turn", msg.turn)
+                msg.toolName?.let { put("toolName", it) }
+                msg.toolInput?.let { put("toolInput", it.take(MSG_FIELD_MAX)) }
+                msg.toolOutput?.let { put("toolOutput", it.take(MSG_FIELD_MAX)) }
+            }
+            array.put(obj)
+        }
+        prefs.edit().putString(msgCacheKey(conversationId), array.toString()).apply()
+    }
+
+    /** 清除某个会话的消息缓存。 */
+    fun clearMessageCache(conversationId: String) {
+        prefs.edit().remove(msgCacheKey(conversationId)).apply()
+    }
+
     /** 网关签发的 session 会与登录时的 UA 绑定，登录与业务请求必须共用同一个值。 */
     val userAgent: String get() = DEFAULT_USER_AGENT
 
@@ -670,6 +727,10 @@ class AppSettings(context: Context) {
     // ---------- 内部 ----------
 
     private fun accountKey(name: String): String = "a:${activeAccountId}:$name"
+
+    /** 消息缓存按账号 + 会话隔离：同一个会话 id 在不同账号下不是同一份内容。 */
+    private fun msgCacheKey(conversationId: String): String =
+        KEY_MSG_CACHE_PREFIX + activeAccountId + ":" + conversationId
 
     private fun cookieSlotFor(accountId: String): String = accountId.ifBlank { GUEST_SLOT }
 
@@ -748,5 +809,19 @@ class AppSettings(context: Context) {
 
         /** 还没建账号时（登录过程中）临时写进这个槽，登录成功后随账号一起被接管。 */
         private const val GUEST_SLOT = "guest"
+
+        /** 消息缓存 key 前缀，按会话 ID 隔离。 */
+        private const val KEY_MSG_CACHE_PREFIX = "msg_cache_v1:"
+
+        /** 每个会话最多缓存的消息条数，防止无限膨胀。 */
+        private const val MSG_CACHE_LIMIT = 200
+
+        /**
+         * 单条消息单个字段的缓存上限。
+         *
+         * 工具输出可能有几 MB（`cat` 大文件），原样序列化进 SharedPreferences
+         * 会让每次落盘都变成一次大 JSON 写入，重新打开时解析也慢。
+         */
+        private const val MSG_FIELD_MAX = 16_000
     }
 }

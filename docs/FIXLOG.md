@@ -10,7 +10,76 @@
 
 ---
 
-## 1.4.12（同步上游；一份代码出三个包）
+# 1.5.5 · 折叠条按轮次展开、去掉返回时的加载闪烁
+
+## 背景
+1.5.4 的包经 dex 校验确实已包含「工具卡默认折叠」「删除顶部进度条」「底部 inset 只扣一次」
+三处改动；但用户仍看到旧表现，实测发现是拿旧包在测。同时复盘代码还有两个真问题：
+
+1. `ChatScreen` 的折叠条默认展开判断用的是全局 `state == RUNNING`，
+   于是任意一轮在跑时，所有历史折叠条都被强行展开，观感就是「每一个都张开了」。
+2. `publishReplayProgress` 每次进度上报都强制 `loadingConversation = true`，
+   即使已有缓存并已上屏，返回会话仍会闪一下「正在载入」。
+
+## 改法
+1. 折叠条只在「自己就是当前最后一轮，且正在跑」时默认展开；历史轮次一律跟随全局折叠开关。
+2. `openConversation` 与 `publishReplayProgress` 都改成「有消息就不进入加载态」，
+   加载态只用于首屏无缓存的场景。
+3. 撤回 1.5.4 里两处不当改动：把胶囊底部留白恢复为 `8dp + 导航栏 inset`（edge-to-edge 下必须避让），
+   删掉那层透明的渐变占位。
+
+
+
+## 背景
+用户装了 1.5.3 后连报四条：
+1. 主界面悬浮导航栏没收起时，下面有一大块空白，应该只剩导航栏；
+2. 聊天页顶栏应该只有按钮，为什么下面还有一条挡视线的灰带；
+3. 工具调用应该默认折叠，为什么每个都露出三行预览、写「展开剩余 N 行」；
+4. 已经加了消息缓存，为什么每次重进对话还要加载好几秒。
+
+## 根因
+### 1. 底部空白：双层 Scaffold 各扣了一次导航栏 inset
+`SessionsScreen` 自带的 `Scaffold` 没设 `contentWindowInsets`，默认会消费 `systemBars`，
+再扣一次 `navigationBars`；外层 `MainActivity` 的 `bottomBar` 已经用胶囊高度避让过一次。
+两者叠加，胶囊上方多出 48+24dp 同色空白。另 `LazyColumn` 的 `bottom = 24.dp` 也是重复留白。
+旁证：同级的 `WorkspaceScreen` / `SettingsScreen` / `FilePreviewScreen` 早就写了
+`contentWindowInsets = WindowInsets(0, 0, 0, 0)`，唯独 `SessionsScreen` 漏了。
+
+### 2. 顶栏下的灰条：`LinearProgressIndicator` 的浅灰 track
+它 `fillMaxWidth()`、紧贴标题胶囊下沿，`trackColor = surfaceContainerHighest`，
+在浅色主题是 `#E3E1E9`，视觉上就是一条挡内容的灰条。另外顶栏是透明的，
+列表滚到上沿时卡片会被硬切成一条横边。
+
+### 3. 工具卡「只折叠六行」：预览与折叠是两个概念
+`preview = if (expanded) output else lines.take(3)`。所谓折叠其实是「显示前 3 行」，
+再加一句「展开剩余 N 行」。用户要的是默认一行不显示。
+
+### 4. 重进仍慢：缓存只在 `activeId` 匹配时写
+`publish()` 的缓存写入有 `if (current.activeId != id) return` 前置闸门，
+用户一退出（`closeConversation` 把 `activeId` 置空）就再也写不进最后一段。
+另外 `loadMessageCache` 的 200 条 JSON 解析跑在主线程（调用方是
+`rememberCoroutineScope`，Main）。
+
+## 改法
+1. `SessionsScreen` 加 `contentWindowInsets = WindowInsets(0, 0, 0, 0)`，列表底部 24dp → 8dp；
+   外层内容区取 `maxOf(innerPadding.bottom, navigationBars inset)` 作为底部避让，
+   保证胶囊收起后内容不会落到系统导航栏底下。
+2. 删掉 `LinearProgressIndicator`，加载态改到顶栏副标题（`同步云端历史…`），零额外高度；
+   列表上沿加 18dp 背景色竖向渐变，虚化滚动产生的硬边。
+3. `ToolCallCard` 折叠态不渲染任何输入/输出，只留一个「展开输出 · N 行」入口；
+   标题行整行可点，展开后才是输入 + 全量输出 + 「收起」。
+4. `openConversation` 读缓存改 `withContext(Dispatchers.IO)`；`closeConversation` 退出前补写一次；
+   `publish()` 的实时写缓存按 1.5s 节流 + 收尾强制写；缓存单字段截断到 16000 字符。
+
+## 验证（1.5.4）
+- CI 编译 + 单测 + lint 全绿，产物见 Release。
+- **未做真机验证**：底部留白与顶栏观感、工具卡点开的交互、重进会话的实际耗时，
+  都需要装包后在真机上复核；其中「大退重进仍要等数秒」是 `session/load` 全量回放
+  的协议成本，缓存只能消除白屏，不能缩短回放本身。
+
+---
+
+# 1.4.12（同步上游；一份代码出三个包）
 
 > 版本号说明：`origin/main` 停在 1.4.11 / 35，所以本版接着是 **1.4.12 / 36**。
 > 中途的 1.5.0–1.7.0 是本地测试线，从未对外发布，那些号不占位，内容全部并入本版。

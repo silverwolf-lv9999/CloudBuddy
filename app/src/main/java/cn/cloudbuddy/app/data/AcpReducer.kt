@@ -351,10 +351,18 @@ class AcpReducer(private val sessionId: String, private val conversationId: Stri
                 if (finished && ask?.requestId != null && ask?.requestId == id) ask = null
             }
 
+            // 提取工具输入/输出，用于美化显示。
+            val rawInput = update.optJSONObject("rawInput") ?: update.optJSONObject("args")
+            val toolInput = formatToolInput(rawInput, update)
+            val rawOutput = update.optJSONObject("rawOutput")
+            val contentOutput = update.opt("content")
+            val toolOutput = formatToolOutput(rawOutput, contentOutput)
+
             val index = toolIndex[id]
-            val previous = index?.let { messages.getOrNull(it)?.text?.substringBefore('\n') }
-            if (title.isNotBlank() || previous != null) {
-                val label = title.ifBlank { previous.orEmpty() }
+            val previous = index?.let { messages.getOrNull(it) }
+            val previousTitle = previous?.text?.substringBefore('\n')
+            if (title.isNotBlank() || previousTitle != null) {
+                val label = title.ifBlank { previousTitle.orEmpty() }
                 val toolState = when {
                     status == "completed" || status == "executed" -> ToolState.DONE
                     status == "failed" -> ToolState.FAILED
@@ -367,7 +375,10 @@ class AcpReducer(private val sessionId: String, private val conversationId: Stri
                     role = ChatRole.TOOL,
                     text = label,
                     toolState = toolState,
-                    turn = turnSeq.coerceAtLeast(0)
+                    turn = turnSeq.coerceAtLeast(0),
+                    toolName = toolName.takeIf { it.isNotBlank() },
+                    toolInput = toolInput.takeIf { it.isNotBlank() } ?: previous?.toolInput,
+                    toolOutput = toolOutput.takeIf { it.isNotBlank() } ?: previous?.toolOutput
                 )
                 if (index != null && index < messages.size) messages[index] = message
                 else {
@@ -379,6 +390,117 @@ class AcpReducer(private val sessionId: String, private val conversationId: Stri
             return true
         }
         return false
+    }
+
+    /**
+     * 把 rawInput / args 整理成一行可读的「输入」摘要。
+     *
+     * 优先取最常见的字段：终端命令（command / cmd / script）、文件路径（path / file）、
+     * 目标（url / query）。都没有时退化为整段 JSON 的短摘要。
+     */
+    private fun formatToolInput(raw: JSONObject?, update: JSONObject): String {
+        if (raw == null) return ""
+        val command = sequenceOf(
+            raw.optString("command"),
+            raw.optString("cmd"),
+            raw.optString("script"),
+            raw.optString("shell_command")
+        ).firstOrNull { it.isNotBlank() }
+        if (command != null) return command.trim()
+        val path = sequenceOf(
+            raw.optString("path"),
+            raw.optString("file"),
+            raw.optString("filePath"),
+            raw.optString("file_path")
+        ).firstOrNull { it.isNotBlank() }
+        if (path != null) return path.trim()
+        val target = sequenceOf(
+            raw.optString("url"),
+            raw.optString("query"),
+            raw.optString("pattern"),
+            raw.optString("content")
+        ).firstOrNull { it.isNotBlank() }
+        if (target != null) return target.trim().lineSequence().firstOrNull().orEmpty()
+        // 不显示原始 JSON，提取文本字段
+        return extractTextFromJson(raw).take(200)
+    }
+
+    /**
+     * 把 rawOutput / content 整理成按换行分隔的可读文本。
+     *
+     * 优先取 rawOutput 里的文本字段；都没有时尝试从 JSON 里递归提取所有文本值，
+     * 再不行就返回空串（不显示原始 JSON，用户看不懂）。
+     */
+    private fun formatToolOutput(rawOutput: JSONObject?, content: Any?): String {
+        if (rawOutput != null) {
+            val text = sequenceOf(
+                rawOutput.optString("text"),
+                rawOutput.optString("output"),
+                rawOutput.optString("stdout"),
+                rawOutput.optString("result"),
+                rawOutput.optString("content")
+            ).firstOrNull { it.isNotBlank() }
+            if (text != null) return text.trim()
+            return extractTextFromJson(rawOutput).take(800)
+        }
+        return when (content) {
+            is String -> content.trim()
+            is JSONObject -> {
+                val text = sequenceOf(
+                    content.optString("text"),
+                    content.optString("output"),
+                    content.optString("stdout"),
+                    content.optString("result")
+                ).firstOrNull { it.isNotBlank() }
+                text ?: extractTextFromJson(content).take(800)
+            }
+            is JSONArray -> {
+                (0 until content.length()).joinToString("\n") { i ->
+                    val item = content.opt(i)
+                    when (item) {
+                        is JSONObject -> sequenceOf(
+                            item.optString("text"),
+                            item.optString("output"),
+                            item.optString("stdout"),
+                            item.optString("result")
+                        ).firstOrNull { it.isNotBlank() } ?: extractTextFromJson(item)
+                        else -> item?.toString().orEmpty()
+                    }
+                }.trim()
+            }
+            else -> ""
+        }
+    }
+
+    /** 递归从 JSON 对象里收集所有字符串值，按 key 拼成 key: value 的列表。 */
+    private fun extractTextFromJson(node: Any?, prefix: String = "", depth: Int = 0): String {
+        if (depth > 3) return ""
+        return when (node) {
+            is JSONObject -> {
+                val sb = StringBuilder()
+                node.keys().forEach { key ->
+                    val value = node.opt(key)
+                    val text = when (value) {
+                        is String -> value
+                        is JSONObject -> extractTextFromJson(value, "$prefix$key.", depth + 1)
+                        is JSONArray -> extractTextFromJson(value, "$prefix$key", depth + 1)
+                        else -> value?.toString().orEmpty()
+                    }
+                    if (text.isNotBlank()) {
+                        if (sb.isNotEmpty()) sb.append("\n")
+                        sb.append("$prefix$key: $text")
+                    }
+                }
+                sb.toString()
+            }
+            is JSONArray -> {
+                (0 until node.length()).joinToString("\n") { i ->
+                    extractTextFromJson(node.opt(i), prefix, depth + 1)
+                }
+            }
+            is String -> node
+            else -> node?.toString().orEmpty()
+        }
     }
 
     @Synchronized

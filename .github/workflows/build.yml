@@ -1,0 +1,63 @@
+name: build
+
+# 仅编译 + 单测 + lint，不签名不发版，用于验证代码正确性。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Gradle 依赖与构建缓存：第二次起不再重新下 AGP/Kotlin/Compose 全套。
+      - name: 缓存 Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.gradle/build-cache
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/**', 'gradle.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: 准备 Android SDK
+        run: |
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$sdk/platforms/android-35" ]; then
+            echo "::error::runner 上 SDK 不完整"
+            exit 1
+          fi
+          echo "ANDROID_SDK_ROOT=$sdk" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$sdk" >> "$GITHUB_ENV"
+
+      - name: 写 local.properties
+        run: echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+
+      - name: 编译 + 单测 + lint
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleFullDebug :app:testFullDebugUnitTest :app:lintFullDebug \
+            --build-cache --configuration-cache 2>&1 | tail -80
+          status=${PIPESTATUS[0]}
+          if [ $status -ne 0 ]; then
+            echo "::error::构建失败（exit $status）"
+            exit $status
+          fi

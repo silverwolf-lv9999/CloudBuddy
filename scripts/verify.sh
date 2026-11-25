@@ -83,7 +83,7 @@ for ed in "${EDITIONS[@]}"; do
 done
 
 echo "==> 编译 / 单测 / lint"
-"$GRADLE" "${TASKS[@]}" $OFFLINE -q
+"$GRADLE" "${TASKS[@]}" $OFFLINE --build-cache --configuration-cache -q
 
 echo "==> 单测统计"
 # 注意：grep 没匹配到会返回 1，配合 set -o pipefail 会直接中断脚本，

@@ -44,12 +44,12 @@ class AccountTest {
     }
 
     @Test
-    fun `fold mode parses unknown values as whole turn`() {
+    fun `fold mode parses values correctly`() {
         assertEquals(FoldMode.BODY, FoldMode.of("body"))
         assertEquals(FoldMode.WHOLE, FoldMode.of("whole"))
-        assertEquals(FoldMode.WHOLE, FoldMode.of(""))
-        assertEquals(FoldMode.WHOLE, FoldMode.of(null))
-        // 旧版本没这个字段时读到的就是默认值，不能因为空串就退化成「只折过程」
-        assertEquals(FoldMode.WHOLE, FoldMode.of(FoldMode.DEFAULT))
+        // 默认（空串 / null / 未知值）都是 BODY：思考块按正文分段
+        assertEquals(FoldMode.BODY, FoldMode.of(""))
+        assertEquals(FoldMode.BODY, FoldMode.of(null))
+        assertEquals(FoldMode.BODY, FoldMode.of(FoldMode.DEFAULT))
     }
 }

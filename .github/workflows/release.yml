@@ -99,11 +99,36 @@ jobs:
             exit "$status"
           fi
 
-      - name: 留存产物
+      # 三个包各自一个 artifact：下载时只取需要的那个，不用把整包 zip 全下来。
+      - name: 归集产物
+        run: |
+          mkdir -p out/base out/full out/plus
+          cp dist/CloudBuddy-*-base-release.apk out/base/
+          cp dist/CloudBuddy-*-plus-release.apk out/plus/
+          for f in dist/CloudBuddy-*-release.apk; do
+            case "$f" in
+              *-base-release.apk|*-plus-release.apk) ;;
+              *) cp "$f" out/full/ ;;
+            esac
+          done
+
+      - name: 留存基础版
         uses: actions/upload-artifact@v4
         with:
-          name: cloudbuddy-apk
-          path: dist/CloudBuddy-*-release.apk
+          name: CloudBuddy-base
+          path: out/base/*.apk
+
+      - name: 留存完整版
+        uses: actions/upload-artifact@v4
+        with:
+          name: CloudBuddy-full
+          path: out/full/*.apk
+
+      - name: 留存共存版
+        uses: actions/upload-artifact@v4
+        with:
+          name: CloudBuddy-plus
+          path: out/plus/*.apk
 
       - name: 发布 Release
         if: startsWith(github.ref, 'refs/tags/v')

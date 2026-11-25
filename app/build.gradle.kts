@@ -35,9 +35,9 @@ android {
         applicationId = "cn.cloudbuddy.app"
         minSdk = 26
         targetSdk = 35
-        // 1.5.1：修本机会话残留云端同步通道导致的历史消息覆盖（FIXLOG 1.5.1）。
-        versionCode = 38
-        versionName = "1.5.1"
+        // 1.5.5：本机重写 UI 后的版本号；上游 1.5.1 的本机会话修复已并入。
+        versionCode = 41
+        versionName = "1.5.5"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -61,9 +61,16 @@ android {
             resValue("string", "app_name", "云伴调试")
         }
         release {
-            isMinifyEnabled = false
+            // R8 全量优化：压缩、混淆、瘦身。合并上游引入 Koog agent 后包体从 11MB 涨到 16MB，
+            // 不开 minify 就是原样打包。full mode 能进一步去掉未使用的 Kotlin 元数据与反射表。
+            isMinifyEnabled = true
+            isShrinkResources = true
+            isDebuggable = false
             signingConfig = if (hasReleaseKey) signingConfigs.getByName("release") else null
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 
@@ -125,6 +132,16 @@ android {
         jvmTarget = "17"
     }
 
+    // 全局打开 M3 Expressive OptIn，避免每个 Composable 文件都加 @OptIn
+    tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+        compilerOptions {
+            freeCompilerArgs.addAll(
+                "-opt-in=androidx.compose.material3.ExperimentalMaterial3ExpressiveApi",
+                "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
+            )
+        }
+    }
+
     buildFeatures {
         compose = true
         buildConfig = true
@@ -142,12 +159,13 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
 
-    val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
+    val composeBom = platform("androidx.compose:compose-bom:2025.04.01")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.foundation:foundation")
-    implementation("androidx.compose.material3:material3")
+    // material3 1.4.x 提供完整 MaterialExpressiveTheme / MaterialShapes / MotionScheme / 大圆角 shapes / Emphasized typography
+    implementation("androidx.compose.material3:material3:1.4.0-alpha17")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.animation:animation")
 
