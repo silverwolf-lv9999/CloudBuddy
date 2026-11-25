@@ -2374,3 +2374,47 @@ contextLength / customHeaders / customBodies / 内置工具。
 - ChatStreamTest +3：多模态 content 数组形状、无图保持纯文本、关工具不下发 tools；
 - CustomModelTest +2：tools/vision 往返、guessVision；
 - full/base 编译、单测、lint 全绿。
+
+# 1.6.0 追加 · 品牌图标与模型目录自动判断（照 RikkaHub 的 AutoAIIcon / ModelsDevCatalog）
+
+## 现象（用户反馈）
+「图标也能抄一下，而且它好像还有自动判断一些模型设置的功能。」
+
+## RikkaHub 的机制（源码确认）
+1. 图标两条线：模型按名称正则匹配 lobehub 品牌图标集（computeAIIconByName），
+   提供商按 baseUrl host 取 favicone.com 的站点 favicon（Favicon 组件）。
+2. 自动判断：内置 models.dev（https://models.dev/api.json，1 万余条模型记录）
+   快照 + 远程更新（ModelsDevUpdater），按完整 id / 去前缀 / canonical id 多键索引、
+   多数投票合并，提供输入模态 / 工具 / 思考 / 上下文长度；查不到再走内置 token 规则。
+
+## 许可处理
+RikkaHub 本体是 AGPL-3.0，不能复制代码；改为自己实现同机制。资产来自
+lobehub icons（MIT，unpkg @lobehub/icons-static-svg）与 models.dev 公开 API。
+
+## 实现
+1. **数据层 `ModelRegistry`**（object）：
+   - assets 内置 `models_dev_slim.json` 快照（5481 键 / 217KB，投票合并 + 压平后的
+     索引，格式 `键 -> [读图入,读图出,工具,思考,上下文K]`）；
+   - `find(id)` 查找键逐级放宽：完整 id → 去 `:` 渠道后缀（OpenRouter `:free`）→
+     去提供商前缀 → 再去后缀；大小写不敏感；
+   - `buildFromApiJson(raw)` 纯函数：在线拉 api.json（6.7MB）→ 同规则投票合并 →
+     生成快照文本，`installRaw` 热替换 + 落 `filesDir/models_dev_slim.json`
+     （下次启动优先于 assets）；repo `refreshModelCatalog()` 24h 节流、静默失败，
+     进提供商详情页时触发。
+2. **图标 `ui/components/BrandIcon.kt`**：
+   - `BrandIcons.key(text)`：36 个品牌键的正则匹配（模型 ID / 提供商名 / 域名通吃，
+     具体品牌先于泛匹配），单测覆盖常见模型与中文名；
+   - `BrandIcon`：命中显示 lobehub 图标 PNG（36 个，96px，assets 内联进
+     drawable-nodpi），否则字母头像（首字母 + 哈希底色）；
+   - `ProviderIcon`：favicone.com 按 host 取站点真实 logo（内存缓存按 host，
+     失败/超时回落 BrandIcon）——列表卡、详情页名称字段都在用。
+3. **生效点**：提供商列表卡 + 详情页名称字段（ProviderIcon）、已加入模型行
+   （BrandIcon + 目录查到的上下文长度标签「200K」）、远端选择弹窗行（BrandIcon）、
+   聊天页模型选择器（BrandIcon 28dp）；`addCustomModels` 的能力初值改为
+   **目录优先、启发式兜底**（tools/vision/reasoning 三项都查目录）。
+
+## 测试
+- ModelRegistryTest 4 条：快照解析查找、查找键放宽（前缀/:free 后缀）、
+  投票合并（2/3 多数、上下文取唯一记录）、坏数据静默拒绝；
+- BrandIconsTest 4 条：常见模型 ID、中文提供商名、未命中 null、具体品牌优先；
+- full/base 编译、单测、lint 全绿。

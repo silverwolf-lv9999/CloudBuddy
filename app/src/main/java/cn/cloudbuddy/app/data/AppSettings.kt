@@ -47,6 +47,17 @@ class AppSettings(context: Context) {
      */
     val sessionStore = SessionStore(java.io.File(context.applicationContext.filesDir, "sessions"))
 
+    /** 模型能力目录的本地缓存（远程刷新后落这里，见 [ModelRegistry]）。 */
+    val modelCatalogFile = java.io.File(context.applicationContext.filesDir, "models_dev_slim.json")
+
+    init {
+        // 模型能力目录（models.dev 快照）：远程刷新过的文件优先，没有再落回 assets 快照。
+        // 加载失败只影响「自动判断模型设置」，不影响其他功能，静默即可。
+        runCatching {
+            ModelRegistry.install(context.assets, modelCatalogFile.takeIf { it.isFile }?.readText())
+        }
+    }
+
     /**
      * 自定义模型模式的对话历史。
      *

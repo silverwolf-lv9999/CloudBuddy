@@ -1148,6 +1148,11 @@ private fun ModelOption(
             modifier = Modifier.padding(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            cn.cloudbuddy.app.ui.components.BrandIcon(
+                name = m.id,
+                size = 28.dp,
+                modifier = Modifier.padding(end = 10.dp)
+            )
             Column(modifier = Modifier.weight(1f)) {
                 // 显示名是用户自己起的（「DeepSeek 便宜那个」），
                 // 比裸 ID 好认；ID 与提供商保留成小字，出问题时对得上日志。

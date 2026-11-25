@@ -56,6 +56,7 @@ import cn.cloudbuddy.app.data.CustomModel
 import cn.cloudbuddy.app.data.CustomModelCatalog
 import cn.cloudbuddy.app.data.EndpointResolver
 import cn.cloudbuddy.app.data.LlmProvider
+import cn.cloudbuddy.app.data.ModelRegistry
 import cn.cloudbuddy.app.data.ThinkingEffort
 
 /**
@@ -116,6 +117,14 @@ fun ProviderManager(
                         modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        // 站点图标（favicone.com 按 host 取真实 logo，照 RikkaHub 的 Favicon），
+                        // 拉不到回落品牌图标 / 字母头像。
+                        ProviderIcon(
+                            providerName = p.label,
+                            baseUrl = p.baseUrl,
+                            size = 36.dp,
+                            modifier = Modifier.padding(end = 10.dp)
+                        )
                         Column(
                             modifier = Modifier.weight(1f),
                             verticalArrangement = Arrangement.spacedBy(2.dp)
@@ -339,6 +348,13 @@ fun ProviderDetailPage(
             label = { Text("名称") },
             placeholder = { Text("DeepSeek 官方 / 某某中转") },
             singleLine = true,
+            leadingIcon = {
+                ProviderIcon(
+                    providerName = provider.name,
+                    baseUrl = provider.baseUrl,
+                    size = 26.dp
+                )
+            },
             modifier = Modifier.fillMaxWidth()
         )
         SecretField(
@@ -659,6 +675,8 @@ private fun RemoteModelPicker(
                                         }
                                         .padding(vertical = 4.dp)
                                 ) {
+                                    BrandIcon(name = id, size = 18.dp)
+                                    Spacer(Modifier.width(8.dp))
                                     Icon(
                                         if (checked) Icons.Filled.Check else Icons.Filled.Add,
                                         contentDescription = if (checked) "已加入" else "加入",
@@ -767,6 +785,8 @@ private fun ModelRow(
     ) {
         Column(modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // 品牌图标（照 RikkaHub 的 AutoAIIcon：按模型名正则匹配品牌图标）
+                BrandIcon(name = model.id, size = 22.dp, modifier = Modifier.padding(end = 8.dp))
                 Column(
                     modifier = Modifier.weight(1f).clickable { onSelect() },
                     verticalArrangement = Arrangement.spacedBy(2.dp)
@@ -792,6 +812,9 @@ private fun ModelRow(
                     Text(
                         buildString {
                             if (model.title != model.id) append(model.id + " · ")
+                            // 目录里查到的上下文长度（models.dev），一眼看出模型规格
+                            ModelRegistry.find(model.id)?.contextLength?.takeIf { it >= 1000 }
+                                ?.let { append("${it / 1000}K · ") }
                             if (model.vision) append("读图 · ")
                             if (model.reasoning) append("思考 · ")
                             if (!model.tools) append("无工具 · ")

@@ -1424,12 +1424,16 @@ class BuddyRepository(val settings: AppSettings) {
     fun addCustomModels(ids: List<String>, providerId: String = "") {
         val fresh = ids.filter { it.isNotBlank() }
             .map {
+                // 能力初值优先查 models.dev 目录（照 RikkaHub 的 ModelRegistry.getData），
+                // 查不到再按 ID 猜。目录在 AppSettings 启动时已装载，直接查即可。
+                val info = ModelRegistry.find(it)
                 CustomModel(
                     id = it,
                     providerId = providerId,
-                    reasoning = CustomModel.guessReasoning(it),
-                    // 工具调用默认开（OpenAI 兼容端点的常态），读图按 ID 猜初值。
-                    vision = CustomModel.guessVision(it),
+                    reasoning = info?.reasoning ?: CustomModel.guessReasoning(it),
+                    // 工具调用默认开（OpenAI 兼容端点的常态），读图按目录/ID 判断。
+                    tools = info?.tools ?: true,
+                    vision = info?.visionInput ?: CustomModel.guessVision(it),
                 )
             }
         if (settings.addCustomModels(fresh) == 0) return
@@ -1448,6 +1452,42 @@ class BuddyRepository(val settings: AppSettings) {
     fun updateCustomModel(originalKey: String, model: CustomModel) {
         settings.updateCustomModel(originalKey, model)
         publishCustomModels()
+    }
+
+    /**
+     * 刷新模型能力目录（models.dev）。内置快照会滞后，新模型的能力判断靠这里更新。
+     *
+     * 静默失败：目录只是「自动判断」的辅助，拉不到不影响任何功能。同一会话内
+     * 24 小时只试一次（详情页每次进入都会调，不能每次都下 6MB）。
+     */
+    @Volatile
+    private var catalogCheckedAt: Long = 0
+
+    suspend fun refreshModelCatalog(): Boolean {
+        val now = System.currentTimeMillis()
+        if (now - catalogCheckedAt < 24 * 60 * 60 * 1000L) return false
+        catalogCheckedAt = now
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val request = okhttp3.Request.Builder()
+                    .url("https://models.dev/api.json")
+                    .header("Accept", "application/json")
+                    .build()
+                okhttp3.OkHttpClient.Builder()
+                    .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
+                    .newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) return@use false
+                        val raw = response.body?.string() ?: return@use false
+                        val slim = ModelRegistry.buildFromApiJson(raw)
+                        if (!ModelRegistry.installRaw(slim)) return@use false
+                        // 落到 filesDir，下次启动优先于 assets 快照
+                        runCatching { settings.modelCatalogFile.writeText(slim) }
+                        true
+                    }
+            }.getOrDefault(false)
+        }
     }
 
     // ---------- 提供商管理 ----------

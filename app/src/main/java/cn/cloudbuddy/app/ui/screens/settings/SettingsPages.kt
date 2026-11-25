@@ -46,6 +46,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -350,6 +351,10 @@ internal fun CustomApiSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack
     val detailProvider = ui.llmProviders.firstOrNull { it.id == detailProviderId }
     // 详情页内按返回键回列表页，而不是把整个「本机模型」页退出。
     BackHandler(enabled = detailProvider != null) { detailProviderId = null }
+    // 进详情页顺手刷新一次模型能力目录（models.dev），静默：目录只影响能力自动判断。
+    LaunchedEffect(detailProviderId != null) {
+        if (detailProviderId != null) runCatching { repo.refreshModelCatalog() }
+    }
 
     // 这一页只管**本机自定义 API** 的参数。引擎切换（新会话用云端还是本机）不在这里：
     // 它决定的是「这个 App 走哪套后端」，不是某一套后端的配置，放在首页单独一栏。
