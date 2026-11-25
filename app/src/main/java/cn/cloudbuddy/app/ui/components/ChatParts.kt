@@ -25,10 +25,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Check
@@ -40,12 +40,10 @@ import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material3.ContainedLoadingIndicator
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
@@ -67,6 +65,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cn.cloudbuddy.app.data.ChatMessage
@@ -79,8 +78,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.isActive
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CloudBuddy 聊天零件：Material 3 Expressive 风格
-// 气泡 / 思考链 / 工具行 / 状态 Pill / 输入光标
+// CloudBuddy 聊天零件：Material 3 Expressive 风格（对齐 RikkaHub）
+// 气泡 / 思考链 / 工具卡片 / 状态 Pill / 输入光标
 // ─────────────────────────────────────────────────────────────────────────────
 
 private val BubbleCorner = 24.dp
@@ -114,9 +113,7 @@ fun StatePill(state: TurnState, modifier: Modifier = Modifier) {
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             if (state == TurnState.RUNNING) {
-                ContainedLoadingIndicator(
-                    modifier = Modifier.size(12.dp)
-                )
+                ContainedLoadingIndicator(modifier = Modifier.size(12.dp))
             } else {
                 Box(Modifier.size(6.dp).background(contentColor, CircleShape))
             }
@@ -157,18 +154,15 @@ fun MessageRow(message: ChatMessage, showThoughts: Boolean) {
 
     when (message.role) {
         ChatRole.USER -> UserMessageBubble(message = message, copy = copy, longText = longText)
-
-        ChatRole.ASSISTANT -> AssistantMessageBubble(message = message, copy = copy, longText = longText)
-
+        ChatRole.ASSISTANT -> AssistantMessageContent(message = message, copy = copy, longText = longText)
         ChatRole.THOUGHT -> ThoughtRow(message.text, showThoughts, message.streaming)
-
-        ChatRole.TOOL -> ToolRow(message)
+        ChatRole.TOOL -> ToolCallCard(message)
     }
 }
 
 /**
- * 用户消息气泡：24dp 主圆角 + 6dp 尾巴角，primaryContainer，左侧留 40dp 边距。
- * 流式/加载中头像用 Cookie6Sided 旋转，平常 CircleShape。
+ * 用户消息气泡：24dp 主圆角 + 6dp 尾巴角，primaryContainer，左侧留白与 AI 回复错开。
+ * 形状与 RikkaHub 的 ChatMessageBubble(USER) 一致。
  */
 @Composable
 private fun UserMessageBubble(
@@ -182,10 +176,8 @@ private fun UserMessageBubble(
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.Top
+            horizontalArrangement = Arrangement.End
         ) {
-            // 左侧留白，让气泡不与屏幕边缘齐平
             Spacer(Modifier.width(40.dp))
             Surface(
                 color = MaterialTheme.colorScheme.primaryContainer,
@@ -213,17 +205,16 @@ private fun UserMessageBubble(
 }
 
 /**
- * AI 消息：平铺正文（无气泡、无头像），正文占满全宽。
- * 支持长按选中部分复制。
+ * AI 消息：平铺全宽（无气泡、无头像），正文走 MarkdownText，
+ * 外层 SelectionContainer 支持长按选中复制。流式时末尾显示 TypingCursor。
  */
 @Composable
-private fun AssistantMessageBubble(
+private fun AssistantMessageContent(
     message: ChatMessage,
     copy: () -> Unit,
     longText: Boolean
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
-        // 无头像，平铺正文，长按可选中
         SelectionContainer(modifier = Modifier.fillMaxWidth()) {
             MarkdownText(
                 markdown = message.text,
@@ -238,36 +229,11 @@ private fun AssistantMessageBubble(
     }
 }
 
-/**
- * 流式/加载中时的 Expressive 头像形状：Cookie6Sided 旋转动画。
- * 这是 RikkaHub 的标志性 Expressive 元素。
- */
-@Composable
-private fun rememberAvatarShape(loading: Boolean): androidx.compose.ui.graphics.Shape {
-    val infiniteTransition = rememberInfiniteTransition(label = "avatar-rotation")
-    val rotateAngle by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 3000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "avatar-angle"
-    )
-    return if (loading) {
-        MaterialShapes.Cookie6Sided.toShape(rotateAngle.toInt())
-    } else {
-        CircleShape
-    }
-}
-
 // ── 中间步骤折叠组 ─────────────────────────────────────────────────────────────
 
 /**
  * 一轮对话的「中间步骤」组：思考、工具调用、过程叙述都收在这里。
- *
- * 折叠时只占一行摘要，展开后按原顺序铺明细。
- * 默认折叠由调用方决定，正在执行的那一轮通常展开，方便看到进度。
+ * 折叠时只占一行摘要，展开后按原顺序铺明细；箭头旋转 + 高度动画。
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -291,7 +257,6 @@ fun StepsGroup(
         else -> stepsSummary(steps)
     }
     val hasThought = steps.any { it.role == ChatRole.THOUGHT }
-    // 箭头旋转 + 卡片高度动画：展开收回都有动画。
     val rotation by animateFloatAsState(targetValue = if (expanded) 180f else 0f, label = "steps-arrow")
 
     Surface(
@@ -336,9 +301,7 @@ fun StepsGroup(
                     overflow = TextOverflow.Ellipsis
                 )
                 if (running) {
-                    ContainedLoadingIndicator(
-                        modifier = Modifier.size(12.dp)
-                    )
+                    ContainedLoadingIndicator(modifier = Modifier.size(12.dp))
                 }
             }
 
@@ -352,7 +315,7 @@ fun StepsGroup(
                             // 组外壳自己有 animateContentSize：内层思考卡不再叠一层
                             // 高度动画，否则展开/收起时双层逐帧重测量，是实测的卡顿源。
                             ChatRole.THOUGHT -> ThoughtRow(step.text, showThoughts, step.streaming, animate = false)
-                            ChatRole.TOOL -> ToolRow(step)
+                            ChatRole.TOOL -> ToolCallCard(step)
                             ChatRole.ASSISTANT -> MarkdownText(
                                 markdown = step.text,
                                 baseSize = 13f,
@@ -425,6 +388,7 @@ private class ReasoningState(val scroll: ScrollState) {
  * - 生成完成：按设置决定默认展开还是收回（showThoughts），点标题随时切换；
  * - 内容走 MarkdownText，思考里的列表/代码/表格也能正常渲染。
  */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun ThoughtRow(
     text: String,
@@ -437,9 +401,6 @@ private fun ThoughtRow(
 
     // 展开态的切换只依赖 streaming/showThoughts，不再把高频变化的 text 当 key——
     // 原来每来一个分片就取消重启这个协程，是流式期的主要卡顿源之一。
-    //
-    // 两种状态都要跟着设置走。以前 else 分支只处理 Preview，历史/已完成的
-    // 思考卡初始就是 Collapsed，设置里的「展开思考过程」对它们毫无效果。
     LaunchedEffect(streaming, showThoughts) {
         if (streaming) {
             if (!state.expandState.expanded) {
@@ -480,23 +441,24 @@ private fun ThoughtRow(
             onExpandedChange = { state.onExpandedChange(it, streaming) },
             icon = chainStepIcon(Icons.Filled.Psychology, MaterialTheme.colorScheme.secondary),
             label = {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
                     Text(
                         "深度思考",
-                        style = MaterialTheme.typography.titleSmall,
+                        style = MaterialTheme.typography.titleSmallEmphasized,
                         color = MaterialTheme.colorScheme.secondary
                     )
                     if (streaming) {
-                        ContainedLoadingIndicator(
-                            modifier = Modifier.size(11.dp)
-                        )
+                        ContainedLoadingIndicator(modifier = Modifier.size(11.dp))
                     }
                 }
             },
             extra = { ThinkingSeconds(streaming) },
             contentVisible = state.expandState != ReasoningCardState.Collapsed,
             content = {
-                ReasoningContent(text, state.expandState, scroll, streaming)
+                ReasoningContent(text, state.expandState, scroll)
             },
         )
     }
@@ -507,7 +469,6 @@ private fun ReasoningContent(
     text: String,
     expandState: ReasoningCardState,
     scroll: ScrollState,
-    streaming: Boolean,
 ) {
     val preview = expandState == ReasoningCardState.Preview
     Column(
@@ -568,19 +529,21 @@ private fun ThinkingSeconds(streaming: Boolean) {
     }
 }
 
-// ── 工具调用行 ────────────────────────────────────────────────────────────────
+// ── 工具调用卡片 ──────────────────────────────────────────────────────────────
 
 /**
- * 工具调用卡片：标题行 + 可选的命令/输入 + 可选的格式化输出。
+ * 工具调用卡片：标题行（图标 + 名称 + 状态）+ 可选的命令/输入（monospace 高亮块）
+ * + 可选的格式化输出（默认折叠，点击展开）。
  *
  * 不原始输出 JSON；命令类工具显示命令本身，输出按换行整理后展示。
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun ToolRow(message: ChatMessage) {
+private fun ToolCallCard(message: ChatMessage) {
+    val ext = MaterialTheme.extendColors
     val tint = when (message.toolState) {
         ToolState.RUNNING -> MaterialTheme.colorScheme.primary
-        ToolState.DONE -> MaterialTheme.extendColors.success
+        ToolState.DONE -> ext.success
         ToolState.FAILED -> MaterialTheme.colorScheme.error
         ToolState.NONE -> MaterialTheme.colorScheme.onSurfaceVariant
     }
@@ -590,87 +553,90 @@ private fun ToolRow(message: ChatMessage) {
 
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerLow,
-        shape = MaterialTheme.shapes.medium,
+        shape = MaterialTheme.shapes.largeIncreased,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(10.dp)) {
-            // 标题行：图标 + 名称 + 状态
+        Column(modifier = Modifier.padding(12.dp)) {
+            // 标题行：图标 + 名称 + 状态指示
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Icon(
                     Icons.Filled.Build,
                     contentDescription = null,
-                    modifier = Modifier.size(13.dp),
+                    modifier = Modifier.size(14.dp),
                     tint = tint
                 )
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = message.toolName ?: message.text.lineSequence().firstOrNull().orEmpty().ifBlank { "调用工具" },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = message.toolName
+                            ?: message.text.lineSequence().firstOrNull().orEmpty().ifBlank { "调用工具" },
+                        style = MaterialTheme.typography.titleSmallEmphasized,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     if (message.text.isNotBlank() && message.toolName != null && message.text != message.toolName) {
                         Text(
                             text = message.text,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
                 when (message.toolState) {
-                    ToolState.RUNNING -> ContainedLoadingIndicator(modifier = Modifier.size(10.dp))
-                    ToolState.DONE -> Icon(Icons.Filled.Check, null, Modifier.size(12.dp), tint = tint)
-                    ToolState.FAILED -> Icon(Icons.Filled.Close, null, Modifier.size(12.dp), tint = tint)
+                    ToolState.RUNNING -> ContainedLoadingIndicator(modifier = Modifier.size(12.dp))
+                    ToolState.DONE -> Icon(Icons.Filled.Check, null, Modifier.size(14.dp), tint = tint)
+                    ToolState.FAILED -> Icon(Icons.Filled.Close, null, Modifier.size(14.dp), tint = tint)
                     ToolState.NONE -> Unit
                 }
             }
 
-            // 命令/输入（终端命令等）
+            // 命令/输入：monospace 高亮块
             if (hasInput) {
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(8.dp))
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceContainerHighest,
                     shape = MaterialTheme.shapes.small
                 ) {
                     Text(
                         text = message.toolInput!!,
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                        ),
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                     )
                 }
             }
 
-            // 输出（可展开/收起）
+            // 输出：默认折叠，点击展开
             if (hasOutput) {
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(8.dp))
                 val output = message.toolOutput!!
                 val lines = output.lines()
                 val preview = if (expanded) output else lines.take(3).joinToString("\n")
-                Text(
-                    text = preview,
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                    ),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 2.dp)
-                )
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.6f),
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = preview,
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
                 if (lines.size > 3) {
                     TextButton(
                         onClick = { expanded = !expanded },
-                        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp)
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
                     ) {
                         Text(
-                            if (expanded) "收起" else "展开 ${lines.size - 3} 行",
+                            if (expanded) "收起" else "展开剩余 ${lines.size - 3} 行",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary
                         )

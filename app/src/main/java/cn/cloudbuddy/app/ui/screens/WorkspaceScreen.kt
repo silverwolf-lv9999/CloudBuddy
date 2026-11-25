@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -219,7 +220,8 @@ fun WorkspaceScreen(
                         }) { Icon(Icons.Filled.Refresh, "刷新") }
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                modifier = Modifier.statusBarsPadding()
             )
         },
         floatingActionButton = {
@@ -232,7 +234,8 @@ fun WorkspaceScreen(
                 )
             }
         },
-        containerColor = MaterialTheme.colorScheme.background
+        containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0)
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
             if (conversationId == null) {
@@ -392,7 +395,7 @@ fun WorkspaceScreen(
                 }
 
                 else -> LazyColumn(
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 100.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(workspace.entries, key = { it.path }, contentType = { entry ->

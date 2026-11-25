@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
@@ -121,17 +122,19 @@ fun SettingsScreen(
                 title = {
                     Text(
                         "设置",
-                        style = MaterialTheme.typography.titleLargeEmphasized
+                        style = MaterialTheme.typography.headlineSmall
                     )
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                modifier = Modifier.statusBarsPadding()
             )
         },
-        containerColor = MaterialTheme.colorScheme.background
+        containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0)
     ) { padding ->
         LazyColumn(
             modifier = Modifier.padding(padding).fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // ── 顶部账号卡 ────────────────────────────────────────────────
@@ -623,6 +626,24 @@ fun SettingsScreen(
                             )
                         }
                     }
+                    GroupDivider()
+                    GroupRow(onClick = {
+                        openUrl(context, "https://github.com/${UpdateChecker.REPO_SLUG}/blob/master/LICENSE")
+                    }) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            GroupTextColumn(
+                                title = "开源许可",
+                                subtitle = "查看 License",
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                "打开",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
             }
 
@@ -655,8 +676,6 @@ fun SettingsScreen(
                     }
                 }
             }
-
-            item { Spacer(Modifier.height(24.dp)) }
         }
     }
 

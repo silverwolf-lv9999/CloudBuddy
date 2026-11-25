@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -144,10 +145,12 @@ fun FilePreviewScreen(
                         else Icon(Icons.Filled.Download, "下载")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                modifier = Modifier.statusBarsPadding()
             )
         },
-        containerColor = MaterialTheme.colorScheme.background
+        containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0)
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
             notice?.let {

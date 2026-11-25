@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -28,7 +29,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -82,6 +82,7 @@ fun LoginScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding()
             .imePadding()
     ) {
         Column(
@@ -263,9 +264,8 @@ fun LoginScreen(
 
             Spacer(Modifier.height(12.dp))
 
-            OutlinedButton(
+            TextButton(
                 onClick = { showServer = !showServer },
-                shape = MaterialTheme.shapes.largeIncreased,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Icon(Icons.Filled.Dns, null, Modifier.size(16.dp))

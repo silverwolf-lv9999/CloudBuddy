@@ -1,6 +1,5 @@
 package cn.cloudbuddy.app.ui.screens
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -26,16 +26,18 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -78,7 +80,9 @@ fun SessionsScreen(
     /** 顶部副标题里的余额提示（如「128 积分」），为空则不显示。 */
     balanceLabel: String = "",
     /** 启动时连不上服务器：空列表不代表会话没了，别让用户以为记录丢了。 */
-    offline: Boolean = false
+    offline: Boolean = false,
+    /** 本机（自定义引擎）会话的 id 集合，列表项上给它们换成 Terminal 图标。 */
+    localIds: Set<String> = emptySet()
 ) {
     var query by remember { mutableStateOf("") }
     var refreshing by remember { mutableStateOf(false) }
@@ -104,7 +108,7 @@ fun SessionsScreen(
                 title = {
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
-                            "云端会话",
+                            "会话",
                             style = MaterialTheme.typography.headlineSmall
                         )
                         Row(
@@ -127,7 +131,6 @@ fun SessionsScreen(
                             Text(
                                 listOf(
                                     nickname.ifBlank { "WorkBuddy" },
-                                    "云沙箱",
                                     balanceLabel
                                 ).filter { it.isNotBlank() }.joinToString(" · "),
                                 style = MaterialTheme.typography.bodySmall,
@@ -149,7 +152,8 @@ fun SessionsScreen(
                         Icon(Icons.Filled.Refresh, contentDescription = "刷新")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                modifier = Modifier.statusBarsPadding()
             )
         },
         floatingActionButton = {
@@ -172,11 +176,11 @@ fun SessionsScreen(
                 leadingIcon = { Icon(Icons.Filled.Search, null, Modifier.size(20.dp)) },
                 singleLine = true,
                 shape = CircleShape,
-                colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                colors = OutlinedTextFieldDefaults.colors(
                     unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                     focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                     unfocusedBorderColor = Color.Transparent,
-                    focusedBorderColor = MaterialTheme.colorScheme.primary
+                    focusedBorderColor = Color.Transparent
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -220,12 +224,13 @@ fun SessionsScreen(
                 }
             } else {
                 LazyColumn(
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 96.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 100.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(filtered, key = { it.id }) { conversation ->
                         ConversationCard(
                             conversation = conversation,
+                            isLocal = conversation.id in localIds,
                             onOpen = { onOpen(conversation.id) },
                             onRename = { renameTarget = conversation },
                             onDelete = { deleteTarget = conversation },
@@ -276,10 +281,11 @@ fun SessionsScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun ConversationCard(
     conversation: Conversation,
+    isLocal: Boolean,
     onOpen: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
@@ -287,11 +293,10 @@ private fun ConversationCard(
 ) {
     var menu by remember { mutableStateOf(false) }
     Surface(
+        onClick = onOpen,
         shape = MaterialTheme.shapes.largeIncreased,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onOpen)
+        modifier = Modifier.fillMaxWidth()
     ) {
         Row(
             modifier = Modifier.padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
@@ -304,7 +309,7 @@ private fun ConversationCard(
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
-                        Icons.Filled.AutoAwesome,
+                        if (isLocal) Icons.Filled.Terminal else Icons.Filled.AutoAwesome,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(20.dp)
@@ -355,46 +360,57 @@ private fun ConversationCard(
 
                         else -> Unit
                     }
-                    if (conversation.artifacts.isNotEmpty()) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Filled.Folder,
-                                contentDescription = null,
-                                modifier = Modifier.size(12.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(Modifier.width(3.dp))
+                    if (conversation.preview.isNotBlank()) {
+                        Text(
+                            conversation.preview,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                    } else {
+                        if (conversation.artifacts.isNotEmpty()) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Filled.Folder,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(12.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.width(3.dp))
+                                Text(
+                                    "${conversation.artifacts.size} 个产物",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        conversation.model?.takeIf { it.isNotBlank() }?.let { model ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Filled.Description,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(12.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.width(3.dp))
+                                Text(
+                                    model,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                        if (conversation.updatedAt > 0) {
                             Text(
-                                "${conversation.artifacts.size} 个产物",
+                                relativeTime(conversation.updatedAt),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                    }
-                    conversation.model?.takeIf { it.isNotBlank() }?.let { model ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Filled.Description,
-                                contentDescription = null,
-                                modifier = Modifier.size(12.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(Modifier.width(3.dp))
-                            Text(
-                                model,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                    if (conversation.updatedAt > 0) {
-                        Text(
-                            relativeTime(conversation.updatedAt),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
                 }
             }

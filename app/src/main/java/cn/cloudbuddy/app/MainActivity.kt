@@ -11,16 +11,19 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -30,8 +33,6 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -47,6 +48,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -66,13 +68,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // 回前台立刻对一次账：切出去这段时间云端可能已经把任务跑完了，
-        // 回来还挂着「进行中」的旧角标最让人困惑。
         (application as BuddyApp).repository.setForeground(true)
     }
 
     override fun onPause() {
-        // 后台停掉对账轮询：不跑网络、不重建连接，省电省流量。
         (application as BuddyApp).repository.setForeground(false)
         super.onPause()
     }
@@ -116,8 +115,6 @@ private fun AppRoot(repo: BuddyRepository) {
 
     var tab by remember { mutableStateOf(Tab.SESSIONS) }
     var preview by remember { mutableStateOf<PreviewTarget?>(null) }
-    // 命令行窗口是盖在上面的一层：它在两种引擎下都能用（沙箱是同一个），
-    // 所以不做成 Tab，免得用户以为"只有自定义模式才有终端"。
     var showTerminal by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -132,7 +129,6 @@ private fun AppRoot(repo: BuddyRepository) {
                 LoginScreen(
                     repo = repo,
                     onLoggedIn = { tab = Tab.SESSIONS },
-                    // 有别的账号可回就显示返回：从「添加账号」进来的用户不该被困住。
                     onCancel = ui.accounts
                         .firstOrNull { it.id != ui.activeAccountId }
                         ?.let { { repo.removeAccount(ui.activeAccountId) } }
@@ -200,72 +196,62 @@ private fun AppRoot(repo: BuddyRepository) {
                                 onOpenSettings = { tab = Tab.SETTINGS }
                             )
                         } else {
-                            Scaffold(
-                                bottomBar = {
-                                    NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                                        Tab.entries.forEach { item ->
-                                            NavigationBarItem(
-                                                selected = tab == item,
-                                                onClick = { tab = item },
-                                                icon = { Icon(item.icon, item.label) },
-                                                label = { Text(item.label) }
-                                            )
+                            // 全屏内容 + 底部悬浮胶囊导航
+                            Box(Modifier.fillMaxSize()) {
+                                when (currentTab) {
+                                    Tab.SESSIONS -> SessionsScreen(
+                                        conversations = ui.conversations,
+                                        nickname = ui.account.nickname.ifBlank { repo.settings.nickname },
+                                        onOpen = { id -> scope.launch { repo.openConversation(id) } },
+                                        onNew = {
+                                            preview = null
+                                            tab = Tab.SESSIONS
+                                            repo.startNew()
+                                        },
+                                        onRefresh = { repo.refreshConversations() },
+                                        onDelete = { repo.deleteConversation(it) },
+                                        onRename = { id, title -> repo.renameConversation(id, title) },
+                                        onResetRun = { repo.forceResetConversation(it) },
+                                        balanceLabel = ui.growth?.let { "${it.balance} 积分" }.orEmpty(),
+                                        offline = ui.offline,
+                                        localIds = remember(ui.conversations) {
+                                            ui.conversations
+                                                .filter { repo.settings.isLocal(it.id) }
+                                                .map { it.id }
+                                                .toSet()
                                         }
-                                    }
-                                },
-                                containerColor = MaterialTheme.colorScheme.background
-                            ) { padding ->
-                                Box(Modifier.fillMaxSize().padding(padding)) {
-                                    when (currentTab) {
-                                        Tab.SESSIONS -> SessionsScreen(
-                                            conversations = ui.conversations,
-                                            nickname = ui.account.nickname.ifBlank { repo.settings.nickname },
-                                            onOpen = { id -> scope.launch { repo.openConversation(id) } },
-                                            onNew = {
-                                                preview = null
-                                                tab = Tab.SESSIONS
-                                                repo.startNew()
-                                            },
-                                            onRefresh = { repo.refreshConversations() },
-                                            onDelete = { repo.deleteConversation(it) },
-                                            onRename = { id, title -> repo.renameConversation(id, title) },
-                                            onResetRun = { repo.forceResetConversation(it) },
-                                            balanceLabel = ui.growth?.let { "${it.balance} 积分" }.orEmpty(),
-                                            offline = ui.offline,
-                                            // 归属存在本机偏好里（云端没有这个概念），按会话 id 逐个判。
-                                            // 键在 conversations 上：列表一刷新就重算，不额外收一次状态。
-                                            localIds = remember(ui.conversations) {
-                                                ui.conversations
-                                                    .filter { repo.settings.isLocal(it.id) }
-                                                    .map { it.id }
-                                                    .toSet()
-                                            }
-                                        )
+                                    )
 
-                                        Tab.WORKSPACE -> WorkspaceScreen(
-                                            ui = ui,
-                                            workspace = workspace,
-                                            repo = repo,
-                                            onPreview = { conversation, path, name ->
-                                                preview = PreviewTarget(conversation, path, name)
-                                            },
-                                            onOpenSession = {
-                                                tab = Tab.SESSIONS
-                                                scope.launch { snackbar.showSnackbar("先进入一个会话，再回到工作区") }
-                                            },
-                                            onOpenTerminal = {
-                                                repo.openTerminal(workspace.conversationId)
-                                                showTerminal = true
-                                            }
-                                        )
+                                    Tab.WORKSPACE -> WorkspaceScreen(
+                                        ui = ui,
+                                        workspace = workspace,
+                                        repo = repo,
+                                        onPreview = { conversation, path, name ->
+                                            preview = PreviewTarget(conversation, path, name)
+                                        },
+                                        onOpenSession = {
+                                            tab = Tab.SESSIONS
+                                            scope.launch { snackbar.showSnackbar("先进入一个会话，再回到工作区") }
+                                        },
+                                        onOpenTerminal = {
+                                            repo.openTerminal(workspace.conversationId)
+                                            showTerminal = true
+                                        }
+                                    )
 
-                                        Tab.SETTINGS -> SettingsScreen(
-                                            ui = ui,
-                                            repo = repo,
-                                            onSignOut = { tab = Tab.SESSIONS }
-                                        )
-                                    }
+                                    Tab.SETTINGS -> SettingsScreen(
+                                        ui = ui,
+                                        repo = repo,
+                                        onSignOut = { tab = Tab.SESSIONS }
+                                    )
                                 }
+
+                                // 苹果风格悬浮胶囊导航栏
+                                FloatingTabBar(
+                                    currentTab = currentTab,
+                                    onTabSelected = { tab = it },
+                                    modifier = Modifier.align(Alignment.BottomCenter)
+                                )
                             }
                         }
                     }
@@ -276,15 +262,13 @@ private fun AppRoot(repo: BuddyRepository) {
                                 repo.closeConversation()
                                 scope.launch { repo.refreshConversations() }
                             }
-
                             else -> tab = Tab.SESSIONS
                         }
                     }
                 }
             }
         }
-        // 统一提示层：此前 ChatScreen 分支没有 SnackbarHost，模型切换结果等事件
-        // 在聊天页完全看不到，用户会以为「选了没生效」。
+
         SnackbarHost(
             hostState = snackbar,
             modifier = Modifier
@@ -292,6 +276,66 @@ private fun AppRoot(repo: BuddyRepository) {
                 .navigationBarsPadding()
                 .padding(start = 16.dp, end = 16.dp, bottom = 72.dp)
         )
+    }
+}
+
+/**
+ * 苹果风格悬浮胶囊导航栏。
+ *
+ * 特征：悬浮在内容上方，胶囊形半透明背景，图标+文字横排，选中项高亮。
+ */
+@Composable
+private fun FloatingTabBar(
+    currentTab: Tab,
+    onTabSelected: (Tab) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier
+            .padding(bottom = 32.dp)
+            .navigationBarsPadding(),
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.92f),
+        tonalElevation = 3.dp,
+        shadowElevation = 8.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Tab.entries.forEach { item ->
+                val selected = currentTab == item
+                Surface(
+                    onClick = { onTabSelected(item) },
+                    shape = CircleShape,
+                    color = if (selected) MaterialTheme.colorScheme.primaryContainer
+                    else MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0f),
+                    modifier = Modifier.clip(CircleShape)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            item.icon,
+                            contentDescription = item.label,
+                            tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        if (selected) {
+                            Text(
+                                item.label,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

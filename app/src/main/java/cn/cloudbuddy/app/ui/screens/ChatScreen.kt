@@ -50,8 +50,8 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.UnfoldLess
 import androidx.compose.material.icons.filled.UnfoldMore
 import androidx.compose.material3.AlertDialog
@@ -111,7 +111,6 @@ import cn.cloudbuddy.app.ui.components.StatePill
 import cn.cloudbuddy.app.ui.components.StepsGroup
 import cn.cloudbuddy.app.ui.components.windowTimeline
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -217,7 +216,7 @@ fun ChatScreen(
                         ) {
                             Text(
                                 ui.activeTitle.ifBlank { if (ui.draft) "新会话" else "云端会话" },
-                                style = MaterialTheme.typography.titleSmall,
+                                style = MaterialTheme.typography.titleSmallEmphasized,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -264,12 +263,10 @@ fun ChatScreen(
                                         trailingIcon = {
                                             Switch(
                                                 checked = ui.stepsCollapsed,
-                                                // 点击交给整行处理，避免 Switch 与菜单项各触发一次。
                                                 onCheckedChange = null,
                                                 modifier = Modifier.scale(0.8f)
                                             )
                                         },
-                                        // 菜单不关：用户要能立刻看到开关的变化，而不是点完就消失。
                                         onClick = { repo.setCollapseSteps(!ui.stepsCollapsed) }
                                     )
                                     DropdownMenuItem(
@@ -353,8 +350,8 @@ fun ChatScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
-                        CircularProgressIndicator(Modifier.size(26.dp), strokeWidth = 2.4.dp)
-                        Spacer(Modifier.height(12.dp))
+                        ContainedLoadingIndicator(Modifier.size(40.dp))
+                        Spacer(Modifier.height(16.dp))
                         Text(
                             if (ui.historyProgress > 0) "正在载入历史记录" else "正在连接云端沙箱…",
                             style = MaterialTheme.typography.bodySmall,
@@ -392,7 +389,11 @@ fun ChatScreen(
                             }
                         }
                         Spacer(Modifier.height(16.dp))
-                        Text("在云端沙箱里开始任务", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "在云端沙箱里开始任务",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
                         Spacer(Modifier.height(6.dp))
                         Text(
                             "任务在官方云端环境执行，产出的文件会出现在沙箱 /workspace 里，" +
@@ -421,7 +422,6 @@ fun ChatScreen(
                             }
                         }
                         items(timeline, key = { it.key }, contentType = { item ->
-                            // 同类项（都是折叠组 / 都是消息）复用同一套组合缓存，滑动更省。
                             if (item is ChatItem.Steps) "steps" else "single"
                         }) { item ->
                             when (item) {
@@ -431,7 +431,6 @@ fun ChatScreen(
                                 )
 
                                 is ChatItem.Steps -> {
-                                    // 没手动点过的条目跟随全局开关；手动展开只对本次会话的该条有效。
                                     val expanded = ui.stepsExpanded[item.key] ?: !ui.stepsCollapsed
                                     StepsGroup(
                                         steps = item.steps,
@@ -454,10 +453,7 @@ fun ChatScreen(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.Center
                                 ) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(20.dp),
-                                        strokeWidth = 2.dp
-                                    )
+                                    ContainedLoadingIndicator(modifier = Modifier.size(24.dp))
                                 }
                             }
                         }
@@ -469,7 +465,7 @@ fun ChatScreen(
             ui.historyNotice?.let { notice ->
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    shape = MaterialTheme.shapes.large,
+                    shape = MaterialTheme.shapes.largeIncreased,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
                 ) {
                     Row(
@@ -492,7 +488,7 @@ fun ChatScreen(
             ui.error?.let { error ->
                 Surface(
                     color = MaterialTheme.colorScheme.errorContainer,
-                    shape = MaterialTheme.shapes.large,
+                    shape = MaterialTheme.shapes.largeIncreased,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
                 ) {
                     Text(
@@ -563,7 +559,7 @@ fun ChatScreen(
 @Composable
 private fun EarlierRow(hiddenTurns: Int, hiddenMessages: Int, onLoad: () -> Unit) {
     Surface(
-        shape = MaterialTheme.shapes.large,
+        shape = MaterialTheme.shapes.largeIncreased,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         modifier = Modifier.fillMaxWidth().clickable(onClick = onLoad)
     ) {
@@ -579,7 +575,11 @@ private fun EarlierRow(hiddenTurns: Int, hiddenMessages: Int, onLoad: () -> Unit
             )
             Spacer(Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text("显示更早的 ${hiddenTurns} 轮对话", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "显示更早的 ${hiddenTurns} 轮对话",
+                    style = MaterialTheme.typography.titleSmallEmphasized,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
                 Text(
                     "还有 $hiddenMessages 条消息未渲染，展开可继续往上翻",
                     style = MaterialTheme.typography.bodySmall,
@@ -593,7 +593,6 @@ private fun EarlierRow(hiddenTurns: Int, hiddenMessages: Int, onLoad: () -> Unit
 @Composable
 private fun AskCard(ask: AskQuestion, onSubmit: (AskAnswer) -> Unit) {
     val items = remember(ask) { ask.allItems }
-    // 单问单选走「点一下就答」；多问或多选必须等提交，否则勾第一个就把答案发出去了。
     val quick = items.size == 1 && !items[0].multiSelect && items[0].options.isNotEmpty()
     val picks = remember(ask) {
         mutableStateListOf<Set<Int>>().apply { repeat(items.size) { add(emptySet()) } }
@@ -615,26 +614,26 @@ private fun AskCard(ask: AskQuestion, onSubmit: (AskAnswer) -> Unit) {
 
     Surface(
         color = MaterialTheme.colorScheme.tertiaryContainer,
-        shape = MaterialTheme.shapes.extraLarge,
+        shape = MaterialTheme.shapes.extraLargeIncreased,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(
                 ask.header?.takeIf { it.isNotBlank() } ?: "云端需要你确认",
-                style = MaterialTheme.typography.titleSmall,
+                style = MaterialTheme.typography.titleSmallEmphasized,
                 color = MaterialTheme.colorScheme.onTertiaryContainer
             )
             items.forEachIndexed { index, item ->
                 Text(
                     if (items.size > 1) "${index + 1}. ${item.question}" else item.question,
-                    style = MaterialTheme.typography.bodyLarge
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
                 )
                 item.options.forEachIndexed { optionIndex, option ->
                     val selected = picks.getOrNull(index)?.contains(optionIndex) == true
                     AskOptionRow(
                         option = option,
                         selected = selected,
-                        // null 表示快路径：不画单选圈，整行就是按钮。
                         control = if (quick) null else item.multiSelect,
                         onClick = {
                             when {
@@ -648,7 +647,6 @@ private fun AskCard(ask: AskQuestion, onSubmit: (AskAnswer) -> Unit) {
                         }
                     )
                 }
-                // 选项都不合适时，用户可以自己写。
                 OutlinedTextField(
                     value = customs[index],
                     onValueChange = { customs[index] = it },
@@ -657,12 +655,10 @@ private fun AskCard(ask: AskQuestion, onSubmit: (AskAnswer) -> Unit) {
                     },
                     textStyle = MaterialTheme.typography.bodyLarge,
                     maxLines = 3,
-                    shape = MaterialTheme.shapes.large,
+                    shape = MaterialTheme.shapes.largeIncreased,
                     modifier = Modifier.fillMaxWidth()
                 )
             }
-            // 至少答一题就能提交：多问时用户可能只想回答其中一两个，
-            // 未答的在 answerText 里会写成「未选择」，不必强制每题都填。
             val ready = items.indices.any { index ->
                 picks.getOrNull(index)?.isNotEmpty() == true || customs.getOrNull(index)?.isNotBlank() == true
             }
@@ -683,14 +679,11 @@ private fun AskCard(ask: AskQuestion, onSubmit: (AskAnswer) -> Unit) {
     }
 }
 
-/**
- * 提问卡片里的一个选项。`control` 为 null 时不画选择控件（点整行即答），
- * true 画多选框，false 画单选圈。
- */
+/** 提问卡片里的一个选项。`control` 为 null 时不画选择控件（点整行即答），true 画多选框，false 画单选圈。 */
 @Composable
 private fun AskOptionRow(option: AskOption, selected: Boolean, control: Boolean?, onClick: () -> Unit) {
     Surface(
-        shape = MaterialTheme.shapes.large,
+        shape = MaterialTheme.shapes.largeIncreased,
         color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
     ) {
@@ -705,7 +698,7 @@ private fun AskOptionRow(option: AskOption, selected: Boolean, control: Boolean?
             }
             if (control != null) Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(option.label, style = MaterialTheme.typography.bodyLarge)
+                Text(option.label, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
                 option.description?.let {
                     Text(
                         it,
@@ -718,6 +711,12 @@ private fun AskOptionRow(option: AskOption, selected: Boolean, control: Boolean?
     }
 }
 
+/**
+ * 底部输入栏（对齐 RikkaHub 的 ChatInput）：
+ * - 外层大圆角 Surface（shapes.largeIncreased）+ 1dp outlineVariant 边框 + surfaceContainerHigh 背景
+ * - 内部纵向三段：附件行（可选）/ 文本输入 / 底部工具行（附件、模型选择、发送/停止）
+ */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun Composer(
     value: String,
@@ -734,7 +733,7 @@ private fun Composer(
     enterSends: Boolean = true
 ) {
     val enabled = value.isNotBlank() || attachments.isNotEmpty()
-    val containerShape = RoundedCornerShape(24.dp)
+    val containerShape = MaterialTheme.shapes.largeIncreased
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -773,7 +772,7 @@ private fun Composer(
                 if (uploading) {
                     item {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 1.6.dp)
+                            ContainedLoadingIndicator(Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
                             Text("读取文件…", style = MaterialTheme.typography.bodySmall)
                         }
@@ -782,13 +781,12 @@ private fun Composer(
             }
         }
 
-        // 抄 rikkahub 的输入容器：圆角 Surface + 细边框，输入框透明无下划线，底部一行工具按钮 + 圆形发送键。
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(containerShape),
             shape = containerShape,
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
             tonalElevation = 0.dp,
         ) {
@@ -801,7 +799,6 @@ private fun Composer(
                             color = MaterialTheme.colorScheme.onSurface
                         ),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                        // 回车发送可关：关闭后 ImeAction.Default，回车在多行输入框里就是换行。
                         keyboardOptions = KeyboardOptions(
                             imeAction = if (enterSends) ImeAction.Send else ImeAction.Default
                         ),
@@ -839,12 +836,12 @@ private fun Composer(
                     }
                     Surface(
                         shape = RoundedCornerShape(50),
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
                         modifier = Modifier.clickable(onClick = onModelClick)
                     ) {
                         Text(
                             model.ifBlank { "默认模型" },
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.labelSmall,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -860,7 +857,7 @@ private fun Composer(
                         val bg = when {
                             stop -> MaterialTheme.colorScheme.errorContainer
                             enabled -> MaterialTheme.colorScheme.primary
-                            else -> MaterialTheme.colorScheme.surfaceContainerHigh
+                            else -> MaterialTheme.colorScheme.surfaceContainerHighest
                         }
                         val fg = when {
                             stop -> MaterialTheme.colorScheme.onErrorContainer
@@ -889,6 +886,7 @@ private fun Composer(
     }
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun ModelDialog(
     models: List<cn.cloudbuddy.app.data.ModelChoice>,
@@ -930,7 +928,6 @@ fun ModelDialog(
                 .padding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // 标题行
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
@@ -945,7 +942,6 @@ fun ModelDialog(
                 }
             }
 
-            // 当前模型提示
             Text(
                 "当前：" + (models.firstOrNull { it.id == selected }?.name
                     ?: selected.ifBlank { "云端默认" }),
@@ -953,7 +949,6 @@ fun ModelDialog(
                 color = MaterialTheme.colorScheme.primary
             )
 
-            // 搜索框
             OutlinedTextField(
                 value = search,
                 onValueChange = { search = it },
@@ -970,7 +965,6 @@ fun ModelDialog(
                 leadingIcon = { Icon(Icons.Filled.Search, null, Modifier.size(20.dp)) }
             )
 
-            // 模型列表
             when {
                 loading && models.isEmpty() -> Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -1038,11 +1032,10 @@ fun ModelDialog(
                 }
             }
 
-            // 错误提示
             error?.let {
                 Surface(
                     color = MaterialTheme.colorScheme.errorContainer,
-                    shape = MaterialTheme.shapes.medium,
+                    shape = MaterialTheme.shapes.largeIncreased,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
@@ -1054,7 +1047,6 @@ fun ModelDialog(
                 }
             }
 
-            // 手动输入
             Text(
                 "云端未列出模型时，可手动填写模型 ID",
                 style = MaterialTheme.typography.bodySmall,
@@ -1079,7 +1071,6 @@ fun ModelDialog(
                 ) { Text("使用") }
             }
 
-            // 底部按钮
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End
