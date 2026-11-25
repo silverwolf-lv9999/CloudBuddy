@@ -34,7 +34,7 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
-import androidx.compose.material.icons.filled.Copy
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material3.ContainedLoadingIndicator
@@ -340,7 +340,7 @@ private fun ActionCopyIcon(onClick: () -> Unit) {
         modifier = Modifier.size(28.dp)
     ) {
         Icon(
-            Icons.Filled.Copy,
+            Icons.Filled.ContentCopy,
             contentDescription = "复制",
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(14.dp)

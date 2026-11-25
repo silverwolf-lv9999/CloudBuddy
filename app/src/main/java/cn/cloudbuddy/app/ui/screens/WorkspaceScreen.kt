@@ -87,7 +87,8 @@ fun WorkspaceScreen(
     workspace: WorkspaceState,
     repo: BuddyRepository,
     onPreview: (conversationId: String, path: String, name: String) -> Unit,
-    onOpenSession: () -> Unit
+    onOpenSession: () -> Unit,
+    onOpenTerminal: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()

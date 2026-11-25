@@ -77,7 +77,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberBottomSheetState
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -899,7 +899,7 @@ fun ModelDialog(
 ) {
     var custom by remember { mutableStateOf("") }
     var search by remember { mutableStateOf("") }
-    val sheetState = rememberBottomSheetState()
+    val sheetState = rememberModalBottomSheetState()
     val scope = rememberCoroutineScope()
 
     fun dismiss() {
