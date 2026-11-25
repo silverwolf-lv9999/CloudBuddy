@@ -486,7 +486,7 @@ fun ChatScreen(
                         .height(18.dp)
                         .background(
                             Brush.verticalGradient(
-                                listOf(MaterialTheme.colorScheme.background, Color.Transparent)
+                                listOf(Color.Transparent, Color.Transparent)
                             )
                         )
                 )

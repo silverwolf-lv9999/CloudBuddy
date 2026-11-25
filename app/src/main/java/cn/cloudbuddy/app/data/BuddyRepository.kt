@@ -1645,7 +1645,8 @@ class BuddyRepository(val settings: AppSettings) {
         _ui.value = _ui.value.copy(
             activeId = id,
             draft = false,
-            loadingConversation = true,
+            // 有缓存时不显示加载态，直接显示缓存内容；无缓存时才显示「正在加载」。
+            loadingConversation = cached.isEmpty(),
             historyProgress = 0,
             historyNotice = null,
             messages = cached,

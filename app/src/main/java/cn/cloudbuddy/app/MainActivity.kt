@@ -350,10 +350,9 @@ private fun FloatingTabBar(
     onTabSelected: (Tab) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // 有手势/三键导航栏 inset 时贴紧凑；没有 inset（沉浸式/无系统栏）时也只留
-    // 12dp 呼吸空间，不能沿用 28dp 那种大间距，否则胶囊下方会多出一截空白。
-    val navInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    val bottomPadding = if (navInset != 0.dp) 8.dp + navInset else 12.dp
+    // 底部留白由外层 Scaffold 的 bottomBar 处理，这里不再额外加 bottom padding，
+    // 否则导航栏 inset 会被扣两次，胶囊下方会多出一截空白。
+    val bottomPadding = 0.dp
 
     Box(
         modifier = modifier.fillMaxWidth(),
