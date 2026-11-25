@@ -29,8 +29,31 @@ class AppSettings(context: Context) {
     /** 本机 MCP 服务器表（随会话下发，见 [McpStore] 的说明）。 */
     val mcp = McpStore(prefs)
 
-    /** 自定义模型模式的对话历史（云端记录里没有这部分，只能本地存）。 */
-    val agentMemory = AgentMemoryStore(prefs)
+    /** 提示词片段表（编码规范、项目约定这类可复用的补充，见 [PromptPreset]）。 */
+    val prompts = PromptStore(prefs)
+
+    /**
+     * 本机技能库（`filesDir/skills`）。
+     *
+     * 和云端技能是两套：云端那批在账号里、由云端 agent 执行；这里只喂给本机会话。
+     */
+    val localSkills = LocalSkillStore(java.io.File(context.applicationContext.filesDir, "skills"), prefs)
+
+    /**
+     * 本机会话的完整消息流（思考、工具调用、回答、失败记录都在里面）。
+     *
+     * 放在 `filesDir/sessions` 下按会话一个 JSON：内容比偏好项大得多，
+     * 塞 SharedPreferences 会让每次 `apply()` 都把整份 XML 重写一遍。
+     */
+    val sessionStore = SessionStore(java.io.File(context.applicationContext.filesDir, "sessions"))
+
+    /**
+     * 自定义模型模式的对话历史。
+     *
+     * 现在它只是 [sessionStore] 的一个视图（见 [TranscriptMemory]），
+     * [AgentMemoryStore] 仅用于把老版本存在 SharedPreferences 里的历史搬过来。
+     */
+    val agentMemory: AgentMemory = TranscriptMemory(sessionStore, AgentMemoryStore(prefs))
 
     init {
         migrateSingleAccountIfNeeded()
@@ -361,6 +384,9 @@ class AppSettings(context: Context) {
             systemPrompt = entry?.systemPrompt?.takeIf { it.isNotBlank() } ?: customSystemPrompt,
             thinkingStyle = customThinkingStyle,
             thinkingEffort = entry?.thinkingEffort?.takeIf { it.isNotBlank() } ?: customThinkingEffort,
+            // 片段是全局的（不跟模型走）：一条「提交前跑测试」对哪个模型都成立，
+            // 按模型各存一份只会让用户在换模型后发现规矩莫名其妙没了。
+            presets = prompts.enabled(),
         )
     }
 

@@ -11,7 +11,7 @@ package cn.cloudbuddy.app.data
  * 或从完整版导过来的设置）。此时给出的是可读的说明，不是异常。
  */
 internal object AgentSupport {
-    fun create(exec: SandboxExec, memory: AgentMemory): AgentRuntime = CoreAgentRuntime
+    fun create(exec: SandboxExec, settings: AppSettings): AgentRuntime = CoreAgentRuntime
 }
 
 /**
@@ -39,6 +39,7 @@ private object CoreAgentRuntime : AgentRuntime {
         token: String,
         config: CustomModelConfig,
         tokenRefresher: suspend () -> String?,
+        onThought: (String) -> Unit,
         onToolEvent: (SandboxToolEvent) -> Unit,
         onExecuted: (String, Long, SandboxExec.Result) -> Unit,
     ): AgentSession = unavailable

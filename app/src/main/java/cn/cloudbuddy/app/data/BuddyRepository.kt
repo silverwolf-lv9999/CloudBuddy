@@ -114,6 +114,10 @@ data class AppUiState(
     val marketLoading: Boolean = false,
     /** 本机 MCP 服务器（随会话下发）。 */
     val mcpServers: List<McpServer> = emptyList(),
+    /** 提示词片段（编码规范、项目约定这类可复用的补充，见 [PromptPreset]）。 */
+    val promptPresets: List<PromptPreset> = emptyList(),
+    /** 本机技能（只喂本机会话，与云端技能是两套）。 */
+    val localSkills: List<LocalSkill> = emptyList(),
     /** 账号级 MCP 连接器：云端保存，和官方 App / 网页端共用同一份。 */
     val connectors: List<Connector> = emptyList(),
     val connectorsLoading: Boolean = false,
@@ -212,7 +216,7 @@ class BuddyRepository(val settings: AppSettings) {
 
     /** 自定义模型（本机 agent）的执行通道，与 ACP 完全独立。 */
     val sandboxExec = SandboxExec(http, settings)
-    private val customAgents: AgentRuntime = AgentSupport.create(sandboxExec, settings.agentMemory)
+    private val customAgents: AgentRuntime = AgentSupport.create(sandboxExec, settings)
 
     /** 自定义端点的模型清单（`GET /models`），只在设置页与模型弹窗用。 */
     private val catalog = CustomModelCatalog()
@@ -239,6 +243,14 @@ class BuddyRepository(val settings: AppSettings) {
 
     /** 每个会话当前那条 TOOL 占位消息的 id，用来把「运行中」改成「已完成」。 */
     private val toolMsgIds = ConcurrentHashMap<String, String>()
+
+    /**
+     * 本地消息 id 的序号。
+     *
+     * 只用 `System.nanoTime()` 会撞：工具调用密集时两条消息可能落在同一纳秒，
+     * 撞了之后 [finishToolPlaceholder] 会把另一条也改成「已完成」。
+     */
+    private val localMsgSeq = java.util.concurrent.atomic.AtomicLong()
 
     /**
      * 状态对账用的少量簿记。
@@ -334,6 +346,8 @@ class BuddyRepository(val settings: AppSettings) {
             accounts = settings.accounts(),
             activeAccountId = settings.activeAccountId,
             mcpServers = settings.mcp.list(),
+            promptPresets = settings.prompts.ordered(),
+            localSkills = settings.localSkills.list(),
             customModels = settings.customModels
         )
     )
@@ -925,6 +939,8 @@ class BuddyRepository(val settings: AppSettings) {
             accounts = settings.accounts(),
             activeAccountId = settings.activeAccountId,
             mcpServers = settings.mcp.list(),
+            promptPresets = settings.prompts.ordered(),
+            localSkills = settings.localSkills.list(),
             customModels = settings.customModels
         )
         _workspace.value = WorkspaceState()
@@ -1047,9 +1063,77 @@ class BuddyRepository(val settings: AppSettings) {
         reloadMcp()
     }
 
+    /** 本机会话是否用这条 MCP（与云端下发是两个独立的开关）。 */
+    fun setMcpLocal(id: String, local: Boolean) {
+        settings.mcp.setLocal(id, local)
+        reloadMcp()
+    }
+
     fun removeMcp(id: String) {
         settings.mcp.remove(id)
         reloadMcp()
+    }
+
+    // ---------- 提示词片段 ----------
+
+    /**
+     * 片段表变了就同步到界面。
+     *
+     * 生效时机是**下一轮对话**：每轮的模型配置在发送时装配
+     * （[AppSettings.customModel]），所以改完不用重开会话。
+     */
+    fun reloadPrompts() {
+        _ui.value = _ui.value.copy(promptPresets = settings.prompts.ordered())
+    }
+
+    // ---------- 本机技能 ----------
+
+    fun reloadLocalSkills() {
+        _ui.value = _ui.value.copy(localSkills = settings.localSkills.list())
+    }
+
+    fun saveLocalSkill(id: String, content: String): String? {
+        val error = settings.localSkills.save(id, content)
+        if (error == null) reloadLocalSkills()
+        return error
+    }
+
+    fun importLocalSkill(fileName: String, content: String): String? {
+        val error = settings.localSkills.import(fileName, content)
+        if (error == null) reloadLocalSkills()
+        return error
+    }
+
+    fun setLocalSkillEnabled(id: String, enabled: Boolean) {
+        settings.localSkills.setEnabled(id, enabled)
+        reloadLocalSkills()
+    }
+
+    fun deleteLocalSkill(id: String) {
+        settings.localSkills.delete(id)
+        reloadLocalSkills()
+    }
+
+    fun localSkillBody(id: String): String? = settings.localSkills.body(id)
+
+    fun savePrompt(preset: PromptPreset) {
+        settings.prompts.upsert(preset)
+        reloadPrompts()
+    }
+
+    fun removePrompt(id: String) {
+        settings.prompts.remove(id)
+        reloadPrompts()
+    }
+
+    fun setPromptEnabled(id: String, enabled: Boolean) {
+        settings.prompts.setEnabled(id, enabled)
+        reloadPrompts()
+    }
+
+    fun movePrompt(id: String, up: Boolean) {
+        settings.prompts.move(id, up)
+        reloadPrompts()
     }
 
     // ---------- 账号 MCP 连接器（云端） ----------
@@ -1177,6 +1261,8 @@ class BuddyRepository(val settings: AppSettings) {
             accounts = settings.accounts(),
             activeAccountId = settings.activeAccountId,
             mcpServers = settings.mcp.list(),
+            promptPresets = settings.prompts.ordered(),
+            localSkills = settings.localSkills.list(),
             customModels = settings.customModels
         )
     }
@@ -1836,10 +1922,14 @@ class BuddyRepository(val settings: AppSettings) {
                 // 引擎绑定到会话：切走再回来仍然是自定义模式，不会莫名其妙跑回云端。
                 settings.setEngineFor(id, AppSettings.ENGINE_CUSTOM)
                 applyIfActive(id) { copy(state = TurnState.RUNNING, engine = AppSettings.ENGINE_CUSTOM) }
-                appendLocal(
-                    id, ChatRole.USER,
-                    prompt.ifBlank { attachments.joinToString("、") { it.name }.ifBlank { "（附件）" } }
-                )
+                val askText = prompt.ifBlank {
+                    attachments.joinToString("、") { it.name }.ifBlank { "（附件）" }
+                }
+                pushLocal(id, ChatRole.USER, askText)
+                // 上面这一句已经落盘（[pushLocal] 同时写界面与消息流）。
+                // 后面拿沙箱、传附件、调模型任何一步失败或被打断，用户已经说出口的
+                // 这句话都不能跟着一起消失——重进会话时至少还在。
+                // agent 自己发请求前还会再写一次，重复由存储层去重。
 
                 // 拿该会话的沙箱接入点；工具执行全部落在这里面。
                 val (session, endpoint) = withSandbox(id) { s, ep -> s to ep }
@@ -1854,7 +1944,12 @@ class BuddyRepository(val settings: AppSettings) {
                 // 沿用草稿态那份会让新会话永远用「上一个默认模型」。
                 val turnCfg = settings.customModel(id)
                 if (!turnCfg.usable) {
-                    appendLocal(id, ChatRole.ASSISTANT, "自定义模型未配置完整：需要接口地址、API Key 与模型 ID。请到「设置 → 自定义 API」补齐。")
+                    // 标成 failed：这不是模型说的话，回放给模型会被当成它自己的回答。
+                    pushLocal(
+                        id, ChatRole.ASSISTANT,
+                        "自定义模型未配置完整：需要接口地址、API Key 与模型 ID。请到「设置 → 自定义 API」补齐。",
+                        failed = true,
+                    )
                     applyIfActive(id) { copy(state = TurnState.FAILED) }
                     return@launch
                 }
@@ -1866,6 +1961,9 @@ class BuddyRepository(val settings: AppSettings) {
                     token = session.token,
                     config = turnCfg,
                     tokenRefresher = { refreshSandboxToken(id) },
+                    // 思考内容进消息流：不写进去的话，「思考强度」这个设置就成了
+                    // 用户唯一看不见效果的开关——模型想没想，屏幕上完全没差别。
+                    onThought = { thought -> pushLocal(id, ChatRole.THOUGHT, thought) },
                     onToolEvent = { ev -> onToolProgress(id, ev) },
                     // agent 跑的每条命令都进命令日志：用户点开终端能看到
                     // 它到底执行了什么、输出了什么，而不是只有一句"已完成"。
@@ -1875,16 +1973,26 @@ class BuddyRepository(val settings: AppSettings) {
                 )
                 val reply = agent.send(ask)
                 finishToolPlaceholder(id)
-                appendLocal(id, ChatRole.ASSISTANT, reply.answer)
+                pushLocal(id, ChatRole.ASSISTANT, reply.answer)
                 applyIfActive(id) { copy(state = TurnState.IDLE) }
             } catch (e: CancellationException) {
-                // 用户点了停止：不是错误，安静收尾。
-                finishToolPlaceholder(convId)
+                // 用户点了停止：不是错误，安静收尾。工具占位标成失败，
+                // 否则重进会话会看到一条永远转圈的调用。
+                finishToolPlaceholder(convId, ToolState.FAILED)
                 applyIfActive(convId) { copy(state = TurnState.STOPPED) }
                 throw e
             } catch (e: Exception) {
-                finishToolPlaceholder(convId)
-                applyIfActive(convId) { copy(error = readable(e), state = TurnState.FAILED) }
+                finishToolPlaceholder(convId, ToolState.FAILED)
+                val reason = readable(e)
+                // 失败原因同样落盘：重进会话时能看到这轮为什么没成，
+                // 而不是只剩一句提问、后面空空如也。带 failed 标记——界面上照常显示，
+                // 回放给模型时跳过（模型不该把报错当成自己说过的话）。
+                convId?.let { cid ->
+                    runCatching {
+                        settings.agentMemory.append(cid, AgentTurn(false, reason, error = true))
+                    }
+                }
+                applyIfActive(convId) { copy(error = reason, state = TurnState.FAILED) }
             } finally {
                 convId?.let { customJobs.remove(it) }
                 if (pendingCustomJob === coroutineContext[Job]) pendingCustomJob = null
@@ -1948,22 +2056,25 @@ class BuddyRepository(val settings: AppSettings) {
     }
 
     /**
-     * 重新打开一个自定义会话时，用本地历史还原消息流。
+     * 重新打开一个自定义会话时，用本地消息流还原整段对话。
      *
      * 云端那条会话是空的，ACP 回放不出任何东西，所以走这条分支而不是 [openConversation] 的常规路径。
+     * 还原的是**完整消息流**：提问、回答、思考、工具调用、失败记录，界面按原样重建，
+     * 折叠条里那些「N 个步骤 · X 次工具调用 · Y 段思考」也一并回来。
      */
-    private fun restoreCustomConversation(id: String) {
+    private suspend fun restoreCustomConversation(id: String) {
         val running = customJobs[id]?.isActive == true || pendingCustomJob?.isActive == true
-        var turnNo = 0
-        val msgs = settings.agentMemory.load(id).mapIndexed { index, t ->
-            if (t.fromUser) turnNo++
-            ChatMessage(
-                id = "local-$id-$index",
-                role = if (t.fromUser) ChatRole.USER else ChatRole.ASSISTANT,
-                text = t.text,
-                turn = turnNo,
-            )
+        // 上一个进程可能是在工具执行到一半时被杀掉的。先收尾再读：把挂着「运行中」的
+        // 工具标成中断、给没有下文的提问补一句说明，否则界面上就是一条永远转圈的调用
+        // 加一个等不到回答的提问。
+        val stored = withContext(Dispatchers.IO) {
+            settings.sessionStore.sealInterrupted(id)
+            settings.sessionStore.messages(id)
         }
+        // 轮次编号按消息流重算（见 [Transcript.replay]），不信任存储里的值：
+        // 老版本写进去的编号是错的（提问与回答各差一轮），直接拿来分组会让上一轮的
+        // 过程消息挂到下一轮上。
+        val msgs = Transcript.replay(stored)
         _ui.value = _ui.value.copy(
             loadingConversation = false,
             historyProgress = 0,
@@ -1979,18 +2090,47 @@ class BuddyRepository(val settings: AppSettings) {
         )
     }
 
-    /** 往消息流追加一条本地消息（自定义模型用，不经过 ACP 的 reducer）。 */
-    private fun appendLocal(id: String, role: ChatRole, text: String) {
-        applyIfActive(id) {
-            copy(
-                messages = messages + ChatMessage(
-                    id = "local-" + System.nanoTime(),
-                    role = role,
-                    text = text,
-                    turn = messages.count { it.role == ChatRole.USER },
-                )
-            )
-        }
+    /**
+     * 往消息流追加一条本地消息（自定义模型用，不经过 ACP 的 reducer）。
+     *
+     * **两处都要写**：界面状态与落盘的完整消息流。以前只写界面，退出会话后
+     * 只剩「提问 + 回答」两句话——思考、工具调用、失败记录全没了，看起来就像
+     * 消息被人删过一半。落盘的是完整流，重进时原样放回去。
+     *
+     * 返回消息 id：工具调用结束时要靠它把「运行中」改成「已完成」，落盘那条也要跟着改。
+     */
+    private fun pushLocal(
+        id: String,
+        role: ChatRole,
+        text: String,
+        toolState: ToolState = ToolState.NONE,
+        failed: Boolean = false,
+    ): String {
+        val msgId = "local-" + System.nanoTime() + "-" + localMsgSeq.incrementAndGet()
+        val msg = ChatMessage(
+            id = msgId,
+            role = role,
+            text = text,
+            toolState = toolState,
+            streaming = false,
+            turn = turnOf(id, role),
+            failed = failed,
+        )
+        applyIfActive(id) { copy(messages = messages + msg) }
+        runCatching { settings.sessionStore.append(id, StoredMessage.of(msg)) }
+        return msgId
+    }
+
+    /**
+     * 这条消息属于第几轮。
+     *
+     * 同一轮的所有消息必须拿到同一个编号，界面靠它把思考 / 工具收进一个折叠组；
+     * 编号错位会让上一轮的过程消息挂到下一轮上去（表现为折叠条内容对不上）。
+     */
+    private fun turnOf(id: String, role: ChatRole): Int {
+        val messages = settings.sessionStore.messages(id)
+        val users = messages.count { it.role == ChatRole.USER }
+        return if (role == ChatRole.USER) users else (users - 1).coerceAtLeast(0)
     }
 
     /**
@@ -2001,35 +2141,30 @@ class BuddyRepository(val settings: AppSettings) {
      */
     private fun onToolProgress(convId: String, ev: SandboxToolEvent) {
         if (ev.running) {
-            val msgId = "tool-" + System.nanoTime()
-            toolMsgIds[convId] = msgId
-            applyIfActive(convId) {
-                copy(
-                    messages = messages + ChatMessage(
-                        id = msgId,
-                        role = ChatRole.TOOL,
-                        text = ev.tool + " · " + ev.detail,
-                        toolState = ToolState.RUNNING,
-                        turn = messages.count { it.role == ChatRole.USER },
-                    )
-                )
-            }
+            toolMsgIds[convId] =
+                pushLocal(convId, ChatRole.TOOL, ev.tool + " · " + ev.detail, ToolState.RUNNING)
         } else {
             finishToolPlaceholder(convId)
         }
     }
 
-    /** 把该会话最后一条 TOOL 占位从「运行中」改成「已完成」。 */
-    private fun finishToolPlaceholder(convId: String?) {
+    /**
+     * 收尾该会话最后一条 TOOL 占位。
+     *
+     * 默认算「已完成」；这一轮失败或被中断时传 [ToolState.FAILED]——否则重进会话
+     * 会看到一条永远转圈的工具调用，用户以为它还在跑。
+     */
+    private fun finishToolPlaceholder(convId: String?, state: ToolState = ToolState.DONE) {
         val id = convId ?: return
         val msgId = toolMsgIds.remove(id) ?: return
         applyIfActive(id) {
             copy(
                 messages = messages.map {
-                    if (it.id == msgId) it.copy(toolState = ToolState.DONE) else it
+                    if (it.id == msgId) it.copy(toolState = state) else it
                 }
             )
         }
+        runCatching { settings.sessionStore.update(id, msgId) { it.copy(toolState = state) } }
     }
 
     // ---------- 命令行窗口 ----------

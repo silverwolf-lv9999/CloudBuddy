@@ -321,7 +321,7 @@ internal fun CustomApiSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack
     // 精简版没有这一页的能力。入口已经在首页隐藏，这里再拦一道：
     // 万一从旧状态或深链进来，看到的是一句说明，不是半张空表单。
     if (!Edition.full) {
-        SettingsPageScaffold("模型与推理", onBack) { padding ->
+        SettingsPageScaffold("本机模型", onBack) { padding ->
             SettingsList(padding) {
                 title("本版本不含此功能", Icons.Filled.Info)
                 item {
@@ -351,65 +351,11 @@ internal fun CustomApiSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack
     var probeState by remember { mutableStateOf<ProbeState>(ProbeState.Idle) }
     var fetching by remember { mutableStateOf(false) }
     var fetchError by remember { mutableStateOf<String?>(null) }
-    var engineMode by remember { mutableStateOf(repo.settings.engineMode) }
 
-    SettingsPageScaffold("模型与推理", onBack) { padding ->
+    // 这一页只管**本机自定义 API** 的参数。引擎切换（新会话用云端还是本机）不在这里：
+    // 它决定的是「这个 App 走哪套后端」，不是某一套后端的配置，放在首页单独一栏。
+    SettingsPageScaffold("本机模型", onBack) { padding ->
         SettingsList(padding) {
-            title("推理引擎", Icons.Filled.Psychology)
-            item {
-                SettingCard {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Text("新会话默认用哪个引擎", style = MaterialTheme.typography.titleMedium)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(
-                                AppSettings.ENGINE_WB to "云端模型",
-                                AppSettings.ENGINE_CUSTOM to "自定义 API"
-                            ).forEach { (value, label) ->
-                                val active = engineMode == value
-                                Surface(
-                                    shape = RoundedCornerShape(50),
-                                    color = if (active) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.surfaceVariant,
-                                    modifier = Modifier.clickable {
-                                        engineMode = value
-                                        repo.settings.engineMode = value
-                                    }
-                                ) {
-                                    Text(
-                                        label,
-                                        modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = if (active) MaterialTheme.colorScheme.onPrimary
-                                        else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                        Text(
-                            if (engineMode == AppSettings.ENGINE_WB) {
-                                "走云端会话协议：扣账号积分，任务在云端 agent 里执行。"
-                            } else {
-                                // 自定义引擎的定位说清楚：省的是积分，不是沙箱。
-                                "走本机 agent + 你自己的 OpenAI 兼容接口：不扣积分、不产生云端对话记录，" +
-                                    "工具调用仍在云端沙箱（/workspace）里执行。"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            "两套会话彻底分开：云端会话只能用云端模型，本机会话只能用你接口上的模型，" +
-                                "会话列表里有「云端 / 本机」标签。类型在新建时定下，之后不再互转——" +
-                                "一条会话两种引擎跑出来的历史本来就对不上号。",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-
             title("端点", Icons.Filled.Extension)
             item {
                 SettingCard {
@@ -450,6 +396,41 @@ internal fun CustomApiSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack
                                 )
                             }
                         )
+                    }
+                    Divider()
+                    // 「测试连接」紧跟在端点后面：填完地址、key、模型就想知道通不通，
+                    // 以前它在页尾，得滚过六组参数才找得到。
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                if (probeState is ProbeState.Running) return@OutlinedButton
+                                probeState = ProbeState.Running
+                                scope.launch {
+                                    val r = repo.testCustomEndpoint()
+                                    probeState = ProbeState.Done(r.ok, r.detail)
+                                }
+                            },
+                            enabled = probeState !is ProbeState.Running,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                when (probeState) {
+                                    is ProbeState.Running -> "测试中…"
+                                    else -> "测试连接"
+                                }
+                            )
+                        }
+                        (probeState as? ProbeState.Done)?.let { done ->
+                            Text(
+                                done.text,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (done.ok) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.error
+                            )
+                        }
                     }
                 }
             }
@@ -742,44 +723,6 @@ internal fun CustomApiSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack
                 }
             }
 
-            title("连接", Icons.Filled.Hub)
-            item {
-                SettingCard {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = {
-                                if (probeState is ProbeState.Running) return@OutlinedButton
-                                probeState = ProbeState.Running
-                                scope.launch {
-                                    val r = repo.testCustomEndpoint()
-                                    probeState = ProbeState.Done(r.ok, r.detail)
-                                }
-                            },
-                            enabled = probeState !is ProbeState.Running,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                when (probeState) {
-                                    is ProbeState.Running -> "测试中…"
-                                    else -> "测试连接"
-                                }
-                            )
-                        }
-                        (probeState as? ProbeState.Done)?.let { done ->
-                            Text(
-                                done.text,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (done.ok) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.error
-                            )
-                        }
-                    }
-                }
-            }
-
             item { Spacer(Modifier.size(24.dp)) }
         }
     }
@@ -795,7 +738,6 @@ internal fun AppearanceSettingsPage(ui: AppUiState, repo: BuddyRepository, onBac
     var showThoughts by remember { mutableStateOf(repo.settings.showThoughts) }
     var enterSend by remember { mutableStateOf(repo.settings.enterSend) }
     var historyTurns by remember { mutableStateOf(repo.settings.historyTurns) }
-    var historyTimeout by remember { mutableStateOf(repo.settings.historyTimeoutSec) }
 
     SettingsPageScaffold("外观与对话", onBack) { padding ->
         SettingsList(padding) {
@@ -905,7 +847,54 @@ internal fun AppearanceSettingsPage(ui: AppUiState, repo: BuddyRepository, onBac
                         historyTurns = it
                         repo.settings.historyTurns = it
                     }
-                    Divider()
+                    // 「历史加载超时」不在这里：它只影响云端 ACP 回放（本机会话直接读本地文件，
+                    // 不存在回放），所以归到「云端能力」页，跟着云端设置走。
+                }
+            }
+            item { Spacer(Modifier.size(24.dp)) }
+        }
+    }
+}
+
+// ============================ 云端能力 ============================
+
+/**
+ * 云端 agent 的能力配置：技能、连接器、MCP 服务器，外加云端历史回放。
+ *
+ * 这三样**只对云端会话生效**——它们是账号里的资产，随 `session/new` 下发给云端
+ * agent 执行；本机会话跑在自己的接口上，拿不到也不该假装拿得到。所以它们单独成页，
+ * 页首把那句边界写在最显眼的地方，而不是让用户在本机会话里翻半天开关。
+ */
+@Composable
+internal fun CloudSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack: () -> Unit) {
+    var historyTimeout by remember { mutableStateOf(repo.settings.historyTimeoutSec) }
+
+    SettingsPageScaffold("云端能力", onBack) { padding ->
+        SettingsList(padding) {
+            item {
+                SettingCard {
+                    Text(
+                        "下面这些由云端 agent 使用，随会话下发给服务端：只在「云端模型」的会话里生效。" +
+                            "本机会话（自定义 API）走你自己的接口与本机 agent，用的是沙箱工具，不读这里的配置。",
+                        modifier = Modifier.padding(14.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            title("技能", Icons.Filled.Extension)
+            item { SkillsCard(ui, repo) }
+
+            title("连接器", Icons.Filled.Hub)
+            item { ConnectorCard(ui, repo) }
+
+            title("MCP 服务器", Icons.Filled.Hub)
+            item { McpCard(ui, repo) }
+
+            title("历史回放", Icons.Filled.Cloud)
+            item {
+                SettingCard {
                     ChipSetting(
                         title = "历史加载超时",
                         subtitle = "对话越长云端回放越慢；超时只会少显示早期内容，不影响继续对话",
@@ -917,25 +906,6 @@ internal fun AppearanceSettingsPage(ui: AppUiState, repo: BuddyRepository, onBac
                     }
                 }
             }
-            item { Spacer(Modifier.size(24.dp)) }
-        }
-    }
-}
-
-// ============================ 扩展 ============================
-
-@Composable
-internal fun ExtensionsSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack: () -> Unit) {
-    SettingsPageScaffold("技能与扩展", onBack) { padding ->
-        SettingsList(padding) {
-            title("技能", Icons.Filled.Extension)
-            item { SkillsCard(ui, repo) }
-
-            title("连接器", Icons.Filled.Hub)
-            item { ConnectorCard(ui, repo) }
-
-            title("MCP 服务器", Icons.Filled.Hub)
-            item { McpCard(ui, repo) }
 
             item { Spacer(Modifier.size(24.dp)) }
         }

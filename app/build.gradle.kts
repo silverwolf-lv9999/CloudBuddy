@@ -163,7 +163,17 @@ dependencies {
         add(conf, "ai.koog:prompt-executor-llms:0.6.0")
         // ktor 的 HTTP 引擎需使用方自备（http-client-ktor 只依赖 ktor-client-core）。
         // 用 OkHttp 引擎：复用项目已有的 okhttp 4.12.0，版本完全一致，不引入第二套网络栈。
-        add(conf, "io.ktor:ktor-client-okhttp:3.2.2")
+        // 3.2.3：MCP Kotlin SDK 0.8.1（由 agents-mcp 传递引入）锁的是 3.2.3，
+        // ktor 各模块必须同版本，否则运行期会因 ABI 不一致炸在传输层。
+        add(conf, "io.ktor:ktor-client-okhttp:3.2.3")
+        // SSE 插件本身就在 ktor-client-core 3.x 里（io.ktor.client.plugins.sse），不用单独引。
+        // MCP 桥接：把远端 MCP 工具转成 Koog 的 Tool（含 JSON Schema → 工具描述符转换）。
+        // 排除 llms-all：它会带进 Anthropic / Gemini / Ollama 等全部厂商客户端，
+        // 我们只用 OpenAI 兼容接口，那几个包纯属给 APK 增重。
+        add(conf, "ai.koog:agents-mcp:0.6.0") {
+            exclude(group = "ai.koog", module = "prompt-executor-llms-all-jvm")
+            exclude(group = "ai.koog", module = "prompt-executor-llms-all")
+        }
     }
 
     debugImplementation("androidx.compose.ui:ui-tooling")

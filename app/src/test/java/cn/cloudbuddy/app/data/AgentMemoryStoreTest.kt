@@ -1,7 +1,7 @@
 package cn.cloudbuddy.app.data
 
-import android.content.SharedPreferences
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -14,47 +14,6 @@ import org.junit.Test
  * 模型会开始回答上一个项目的文件，用户完全无从理解。
  */
 class AgentMemoryStoreTest {
-
-    /** 极简内存实现，避免为几个字符串引 Robolectric。 */
-    private class FakePrefs : SharedPreferences {
-        val map = HashMap<String, Any?>()
-
-        override fun getAll(): MutableMap<String, Any?> = map
-        override fun getString(key: String, def: String?): String? = map[key] as? String ?: def
-        @Suppress("UNCHECKED_CAST")
-        override fun getStringSet(key: String, def: MutableSet<String>?): MutableSet<String>? =
-            map[key] as? MutableSet<String> ?: def
-        override fun getInt(key: String, def: Int): Int = map[key] as? Int ?: def
-        override fun getLong(key: String, def: Long): Long = map[key] as? Long ?: def
-        override fun getFloat(key: String, def: Float): Float = map[key] as? Float ?: def
-        override fun getBoolean(key: String, def: Boolean): Boolean = map[key] as? Boolean ?: def
-        override fun contains(key: String): Boolean = map.containsKey(key)
-        override fun edit(): SharedPreferences.Editor = Editor()
-        override fun registerOnSharedPreferenceChangeListener(
-            listener: SharedPreferences.OnSharedPreferenceChangeListener?
-        ) = Unit
-        override fun unregisterOnSharedPreferenceChangeListener(
-            listener: SharedPreferences.OnSharedPreferenceChangeListener?
-        ) = Unit
-
-        inner class Editor : SharedPreferences.Editor {
-            private val pending = HashMap<String, Any?>()
-            private val removed = HashSet<String>()
-            override fun putString(key: String, value: String?) = apply { pending[key] = value }
-            override fun putStringSet(key: String, values: MutableSet<String>?) = apply { pending[key] = values }
-            override fun putInt(key: String, value: Int) = apply { pending[key] = value }
-            override fun putLong(key: String, value: Long) = apply { pending[key] = value }
-            override fun putFloat(key: String, value: Float) = apply { pending[key] = value }
-            override fun putBoolean(key: String, value: Boolean) = apply { pending[key] = value }
-            override fun remove(key: String) = apply { removed += key }
-            override fun clear() = apply { map.clear() }
-            override fun commit(): Boolean { apply(); return true }
-            override fun apply() {
-                removed.forEach { map.remove(it) }
-                map.putAll(pending)
-            }
-        }
-    }
 
     @Test
     fun `保存后能原样读回`() {
@@ -69,6 +28,33 @@ class AgentMemoryStoreTest {
         assertTrue(turns[0].fromUser)
         assertEquals("看下 README", turns[0].text)
         assertEquals("run_shell: wc -l README.md", turns[1].note)
+    }
+
+    @Test
+    fun `失败记录存取后仍标记为 error`() {
+        // error 的那条只给用户看，回放给模型时会被过滤掉，标记丢了就等于
+        // 让模型把一句「调用失败」当成自己上一轮的回答。
+        val store = AgentMemoryStore(FakePrefs())
+        store.save("c1", listOf(
+            AgentTurn(fromUser = true, text = "看下这个仓库"),
+            AgentTurn(fromUser = false, text = "调用自定义模型失败：timeout", error = true),
+        ))
+
+        val turns = store.load("c1")
+        assertFalse(turns[0].error)
+        assertTrue(turns[1].error)
+        assertEquals("调用自定义模型失败：timeout", turns[1].text)
+    }
+
+    @Test
+    fun `老数据没有 error 字段时按正常一轮读`() {
+        val prefs = FakePrefs()
+        // 1.4.x 存进去的形状：只有 u/t/n
+        prefs.edit().putString("agent_hist:c1", """[{"u":true,"t":"老问题"},{"u":false,"t":"老回答"}]""").apply()
+        val turns = AgentMemoryStore(prefs).load("c1")
+        assertEquals(2, turns.size)
+        assertFalse(turns[0].error)
+        assertFalse(turns[1].error)
     }
 
     @Test

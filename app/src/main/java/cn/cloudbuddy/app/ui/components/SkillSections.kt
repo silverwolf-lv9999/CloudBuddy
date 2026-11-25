@@ -473,8 +473,10 @@ fun McpCard(ui: AppUiState, repo: BuddyRepository) {
 
     SettingSurface {
         Text(
-            "这里放自定义 MCP：只在建立会话时下发给云端沙箱，改动对下一次进入会话生效，" +
-                "不会同步到账号。市场里的 MCP 请用上面的「账号 MCP 连接器」。",
+            "这里放自定义 MCP。同一条配置有两个去处，各管各的：\n" +
+                "· 云端会话：建立会话时下发给云端沙箱，对下一次进入会话生效，不同步到账号；\n" +
+                "· 本机会话：由手机自己连（只支持 url 型；command 型要在沙箱里跑进程，手机上做不到）。\n" +
+                "市场里的 MCP 请用上面的「账号 MCP 连接器」。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
@@ -482,34 +484,59 @@ fun McpCard(ui: AppUiState, repo: BuddyRepository) {
         if (ui.mcpServers.isNotEmpty()) SectionDivider()
 
         ui.mcpServers.forEach { server ->
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(server.name, style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        server.summary,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontFamily = FontFamily.Monospace,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(server.name, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            server.summary,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontFamily = FontFamily.Monospace,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    IconButton(onClick = {
+                        draft = server.raw
+                        error = null
+                        editing = server
+                    }) {
+                        Icon(Icons.Filled.Refresh, "编辑", Modifier.size(16.dp))
+                    }
+                    IconButton(onClick = { repo.removeMcp(server.id) }) {
+                        Icon(Icons.Filled.Delete, "删除", Modifier.size(16.dp))
+                    }
+                }
+                // 两个开关并排，而不是塞进一个「全部启用」：云端和本机是两条完全不同的
+                // 通道（服务端连 vs 手机自己连），能力也不同，合起来必然是误导。
+                val isStdio = server.toJson()?.has("command") == true
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(18.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ScopeSwitch(
+                        label = "云端会话",
+                        hint = "随会话下发给沙箱",
+                        checked = server.enabled,
+                        enabled = true,
+                        onChange = { repo.setMcpEnabled(server.id, it) }
+                    )
+                    ScopeSwitch(
+                        label = "本机会话",
+                        hint = if (isStdio) "command 型不支持" else "手机直连 url",
+                        checked = server.local && !isStdio,
+                        enabled = !isStdio,
+                        onChange = { repo.setMcpLocal(server.id, it) }
                     )
                 }
-                Switch(
-                    checked = server.enabled,
-                    onCheckedChange = { repo.setMcpEnabled(server.id, it) }
-                )
-                IconButton(onClick = {
-                    draft = server.raw
-                    error = null
-                    editing = server
-                }) {
-                    Icon(Icons.Filled.Refresh, "编辑", Modifier.size(16.dp))
-                }
-                IconButton(onClick = { repo.removeMcp(server.id) }) {
-                    Icon(Icons.Filled.Delete, "删除", Modifier.size(16.dp))
+                if (server.local && isStdio) {
+                    Text(
+                        "这条是 command 型，本机会话用不了（已按不支持处理）。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
                 }
             }
             SectionDivider()
@@ -602,4 +629,36 @@ private fun SectionDivider() {
             .height(1.dp)
             .background(MaterialTheme.colorScheme.outlineVariant)
     )
+}
+
+/**
+ * 一个带说明的小开关（用于「云端会话 / 本机会话」这种作用域选择）。
+ *
+ * 标签在上、开关在下会让行高翻倍，所以横着排：左标签右开关，说明用极小的字跟着标签。
+ */
+@Composable
+private fun ScopeSwitch(
+    label: String,
+    hint: String,
+    checked: Boolean,
+    enabled: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                color = if (enabled) MaterialTheme.colorScheme.onSurface
+                else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                hint,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(Modifier.width(6.dp))
+        Switch(checked = checked, onCheckedChange = onChange, enabled = enabled)
+    }
 }

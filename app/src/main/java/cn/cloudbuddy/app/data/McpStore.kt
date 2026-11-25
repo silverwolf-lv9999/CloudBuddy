@@ -15,7 +15,16 @@ data class McpServer(
     val id: String,
     val name: String,
     val raw: String,
-    val enabled: Boolean = true
+    /** 是否随云端会话下发（ACP 的 `mcpServers`）。 */
+    val enabled: Boolean = true,
+    /**
+     * 是否交给**本机会话**用。
+     *
+     * 同一条配置有两个去处：云端会话由服务端连（`enabled`），本机会话由客户端自己连
+     * （`local`）。分开是因为两者能力不同——stdio 型只有云端沙箱跑得动，
+     * 客户端只能连 url 型；反过来客户端连的服务器也未必想让云端看见。
+     */
+    val local: Boolean = false,
 ) {
     fun toJson(): JSONObject? = runCatching { JSONObject(raw) }.getOrNull()
 
@@ -62,7 +71,8 @@ class McpStore(private val prefs: SharedPreferences) {
                 id = id,
                 name = o.optString("name"),
                 raw = o.optString("raw"),
-                enabled = o.optBoolean("enabled", true)
+                enabled = o.optBoolean("enabled", true),
+                local = o.optBoolean("local", false)
             )
         }
     }
@@ -84,7 +94,14 @@ class McpStore(private val prefs: SharedPreferences) {
         val target = id?.takeIf { it.isNotBlank() } ?: ("m" + System.currentTimeMillis().toString(36))
         val next = list().toMutableList()
         val index = next.indexOfFirst { it.id == target }
-        val item = McpServer(target, name, parsed.toString(), next.getOrNull(index)?.enabled ?: true)
+        val prior = next.getOrNull(index)
+        // 编辑内容时不要顺手把两个作用域开关重置了：用户改的是一行 url，
+        // 不该因此把「给本机会话用」悄悄关掉。
+        val item = McpServer(
+            target, name, parsed.toString(),
+            enabled = prior?.enabled ?: true,
+            local = prior?.local ?: false,
+        )
         if (index >= 0) next[index] = item else next += item
         save(next)
         return null
@@ -93,6 +110,15 @@ class McpStore(private val prefs: SharedPreferences) {
     fun setEnabled(id: String, enabled: Boolean) {
         save(list().map { if (it.id == id) it.copy(enabled = enabled) else it })
     }
+
+    /** 本机会话是否使用这条服务器。 */
+    fun setLocal(id: String, local: Boolean) {
+        save(list().map { if (it.id == id) it.copy(local = local) else it })
+    }
+
+    /** 本机 agent 要连的那些：启用中、勾了「本机使用」、且是 url 型。 */
+    fun localServers(): List<McpServer> = list().filter { it.enabled && it.local }
+
 
     fun remove(id: String) {
         save(list().filterNot { it.id == id })
@@ -119,6 +145,7 @@ class McpStore(private val prefs: SharedPreferences) {
                     .put("name", it.name)
                     .put("raw", it.raw)
                     .put("enabled", it.enabled)
+                    .put("local", it.local)
             )
         }
         prefs.edit().putString(KEY, array.toString()).apply()

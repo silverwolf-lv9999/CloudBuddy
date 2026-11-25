@@ -7,6 +7,6 @@ package cn.cloudbuddy.app.data
  * 两种包的仓储代码完全一致。见 [AgentRuntime] 的说明。
  */
 internal object AgentSupport {
-    fun create(exec: SandboxExec, memory: AgentMemory): AgentRuntime =
-        SessionAgentHub(exec, memory)
+    fun create(exec: SandboxExec, settings: AppSettings): AgentRuntime =
+        SessionAgentHub(exec, settings)
 }

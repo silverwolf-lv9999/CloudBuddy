@@ -4,6 +4,7 @@ import ai.koog.agents.core.agent.AIAgent
 import ai.koog.agents.core.agent.ToolCalls
 import ai.koog.agents.core.agent.config.AIAgentConfig
 import ai.koog.agents.core.agent.singleRunStrategy
+import ai.koog.agents.core.tools.ToolRegistry
 import ai.koog.prompt.dsl.prompt
 import ai.koog.prompt.executor.clients.openai.OpenAIClientSettings
 import ai.koog.prompt.executor.clients.openai.OpenAILLMClient
@@ -34,9 +35,15 @@ class SessionAgent(
     /** token 过期时向云端换新（72 小时有效期），由上层注入以免这里认识 Repository。 */
     private val tokenRefresher: suspend () -> String? = { null },
     private val memory: AgentMemory = AgentMemory.None,
+    /** 模型每想完一段就回调一次（见 [ReasoningTee]）；不思考的模型不会触发。 */
+    private val onThought: (String) -> Unit = {},
     private val onToolEvent: (SandboxToolEvent) -> Unit = {},
     /** 每条命令执行完的完整回执，交给上层写命令日志（终端窗口）。 */
     private val onExecuted: (String, Long, SandboxExec.Result) -> Unit = { _, _, _ -> },
+    /** 本机技能库；为空表示这条 agent 不带技能（旧构造点、单测）。 */
+    private val skills: LocalSkillStore? = null,
+    /** 本机直连的 MCP 服务器；连接在第一次发消息时建立。 */
+    private val mcpServers: () -> List<McpServer> = { emptyList() },
 ) : AgentSession {
 
     /** 本轮执行过的工具摘要，供 [onToolEvent] 之外的持久化使用。 */
@@ -48,6 +55,14 @@ class SessionAgent(
     /** 本轮是否已经动过沙箱。动过就不能自动重试，否则副作用会执行两次。 */
     @Volatile
     private var sandboxTouched = false
+
+    /** MCP 连接在首次使用时建立；失败不阻塞对话，只记一条问题。 */
+    private val mcp = LocalMcp()
+    private var mcpSession: LocalMcp.Session? = null
+    private var mcpSignature: String = ""
+
+    /** 本轮启用的技能；每次 send 时重算，用户刚导入的技能下一轮就能用。 */
+    private var activeSkills: List<LocalSkill> = emptyList()
 
     private val tools = SandboxTools(exec, endpoint, token, tokenRefresher, { ev ->
         if (ev.running) {
@@ -71,6 +86,16 @@ class SessionAgent(
 
         toolNotes.clear()
         sandboxTouched = false
+        // 每轮重算启用的技能：用户刚在设置里加/停的技能，这一轮就该生效。
+        // 读目录是阻塞 IO，放到 IO 线程，别让首字延迟里混进文件操作。
+        activeSkills = if (skills == null) emptyList() else withContext(Dispatchers.IO) { skills.enabled() }
+        // **先把这一问落盘**，再开始跑。
+        //
+        // 以前是整轮成功结束时才把「提问 + 回答」一起写进历史，后果是：跑长任务
+        // （看一个仓库、装个依赖动辄几十秒）时用户退出去再进来，任务还没跑完，
+        // 磁盘上什么都没有 —— 会话看起来是空的，用户会以为消息被吞了。
+        // 提问是用户已经说过的话，任何中断都不该让它消失。
+        remember(AgentTurn(fromUser = true, text = userText))
 
         var attempt = 0
         var lastError: Exception? = null
@@ -79,6 +104,8 @@ class SessionAgent(
                 return runOnce(userText)
             } catch (e: CancellationException) {
                 // 用户点停止：不是错误，原样往上抛让上层安静收尾。
+                // 但要留一条痕迹：重进这个会话时得能看出这轮是被中断的，而不是凭空少一段。
+                remember(AgentTurn(fromUser = false, text = INTERRUPTED, error = true))
                 throw e
             } catch (e: Exception) {
                 lastError = e
@@ -91,7 +118,12 @@ class SessionAgent(
             }
         }
         val msg = lastError?.message ?: lastError?.let { it::class.simpleName } ?: "未知错误"
-        return AgentReply("调用自定义模型失败：$msg")
+        val text = "调用自定义模型失败：$msg"
+        // 失败同样要落盘：用户重进时至少能看到「这条发过、当时失败了」，
+        // 而不是整轮蒸发。标成 error 之后，下一轮回放会跳过它（模型不该把
+        // 报错当成自己说过的话），只作为界面上的记录存在。
+        remember(AgentTurn(fromUser = false, text = text, error = true))
+        return AgentReply(text)
     }
 
     /** 真正跑一轮；异常交由 [send] 决定是否重试。 */
@@ -104,50 +136,83 @@ class SessionAgent(
         val client = llm.getOrCreate { CustomLlmClient.build(config) }
         // OpenAILLMClient 只是 LLMClient，agent 需要 PromptExecutor；
         // SingleLLMPromptExecutor 是框架提供的官方适配层。
-        val executor = SingleLLMPromptExecutor(client)
+        // 外面再套 [ReasoningTee]：agent 只吐最终答案，思考过程得在 executor 这一层抄出来。
+        val executor = ReasoningTee(SingleLLMPromptExecutor(client), onThought)
         val agentConfig = AIAgentConfig(
             prompt = p,
             model = model,
             maxAgentIterations = config.maxIterations.coerceIn(1, 200),
         )
 
+        // 工具表 = 沙箱工具 + 技能读取 + MCP 远端工具。
+        // MCP 是外部依赖，连不上只是少一批工具，不能让整轮对话失败（见 [ensureMcp]）。
+        val skillRegistry = if (activeSkills.isEmpty() || skills == null) {
+            ToolRegistry.EMPTY
+        } else {
+            LocalSkillTools(skills).registry()
+        }
+        val registry = tools.registry() + skillRegistry + ensureMcp()
+
         val agent = AIAgent(
             promptExecutor = executor,
             agentConfig = agentConfig,
             strategy = singleRunStrategy(ToolCalls.SEQUENTIAL),
-            toolRegistry = tools.registry(),
+            toolRegistry = registry,
             id = "cb-" + conversationId,
         )
 
+        // 「每条消息之前」的片段贴在这里：它本来就该紧挨着用户这句话。
+        // 塞进系统提示词的话，隔着整段历史，模型很容易当耳旁风。
+        val input = config.userPrefix.takeIf { it.isNotBlank() }
+            ?.let { "$it\n\n$userText" }
+            ?: userText
+
         val answer = try {
-            agent.run(userText)
+            agent.run(input)
         } finally {
             runCatching { agent.close() }
         }
 
-        val history = memory.load(conversationId).toMutableList()
-        history.add(AgentTurn(true, userText))
-        history.add(
+        // 只写回答：提问已经在 [send] 开头写过了。这一轮真正跑完，才算有了「回复」。
+        remember(
             AgentTurn(
                 fromUser = false,
                 text = answer,
                 note = toolNotes.distinct().takeIf { it.isNotEmpty() }?.joinToString("；"),
             )
         )
-        // 只保留最近 N 轮，避免上下文无限膨胀把模型打爆。
-        val keep = config.contextTurns.coerceIn(1, 50) * 2
-        while (history.size > keep) history.removeAt(0)
-        memory.save(conversationId, history)
 
         return AgentReply(answer, toolNotes.distinct())
     }
 
-    /** 把持久化的历史灌进 prompt。 */
+    /**
+     * 往消息流里追加一条。
+     *
+     * 只追加、不重写整段：落盘的是完整消息流（思考与工具过程都在里面），
+     * 整体覆盖会让那些过程消息在每次写历史时被抹掉——重进会话就只剩问答两行，
+     * 正是「会话像是被人删过一半」的来源。上下文长度由 [buildPrompt] 截取。
+     */
+    private fun remember(turn: AgentTurn) {
+        memory.append(conversationId, turn)
+    }
+
+    /**
+     * 把持久化的历史灌进 prompt。
+     *
+     * **本轮提问不在这里追加**：`agent.run(userText)` 会把它作为新一轮输入接到
+     * prompt 后面，这里再写一遍就会让同一句话出现两次（模型于是反复确认需求，
+     * 还白烧一份 token）。send() 开头已经把提问写进 memory 了，所以要摘掉。
+     */
     private fun buildPrompt(userText: String): ai.koog.prompt.dsl.Prompt {
-        val history = memory.load(conversationId)
+        val history = memory.load(conversationId).filterNot { it.error }
+        val replay = if (history.lastOrNull()?.let { it.fromUser && it.text == userText } == true) {
+            history.dropLast(1)
+        } else {
+            history
+        }
         val base = prompt("cb-" + conversationId) {
             system(systemPrompt())
-            for (t in history) {
+            for (t in replayWindow(replay)) {
                 if (t.fromUser) {
                     user(t.text)
                 } else {
@@ -156,12 +221,72 @@ class SessionAgent(
                     assistant(text)
                 }
             }
-            user(userText)
         }
         return base.withParams(CustomLlmClient.params(config))
     }
 
-    private fun systemPrompt(): String = config.effectiveSystemPrompt
+    /**
+     * 只回放最近若干轮，避免上下文无限膨胀把模型打爆。
+     *
+     * 截断必须对齐到用户提问开头：留下一条孤零零的 assistant，模型会以为自己
+     * 刚说完话没人接，回放出来就是「自问自答」。
+     */
+    private fun replayWindow(turns: List<AgentTurn>): List<AgentTurn> {
+        val keep = config.contextTurns.coerceIn(1, 50) * 2
+        var window = if (turns.size <= keep) turns else turns.takeLast(keep)
+        while (window.size > 1 && !window.first().fromUser) window = window.drop(1)
+        return window
+    }
+
+    /**
+     * 建立（或复用）MCP 连接并返回它的工具表。
+     *
+     * 三条原则：
+     * 1. **失败不抛出**——MCP 服务器是别人的服务，挂了不该让整轮对话发不出去；
+     * 2. **按配置签名缓存**——每次发消息都重连会把 SSE 长连接反复建断，既慢又费电；
+     * 3. **配置变了就重连**——用户改了 url 或勾掉一条，下一轮必须按新的来。
+     */
+    private suspend fun ensureMcp(): ToolRegistry {
+        val wanted = mcpServers().filter { it.enabled && it.local }
+        val signature = wanted.joinToString("|") { it.id + it.raw }
+        if (signature.isEmpty()) {
+            if (mcpSession != null) {
+                mcp.close()
+                mcpSession = null
+                mcpSignature = ""
+            }
+            return ToolRegistry.EMPTY
+        }
+        if (mcpSession != null && signature == mcpSignature) return mcpSession!!.registry
+
+        mcp.close()
+        val session = try {
+            withContext(Dispatchers.IO) { mcp.connect(wanted) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // 连都连不上（例如 DNS 挂了）：当作一条问题记下来，工具表为空。
+            LocalMcp.Session(ToolRegistry.EMPTY, emptyList(), listOf("MCP 连接失败：" + (e.message ?: "未知错误")))
+        }
+        mcpSession = session
+        mcpSignature = signature
+        // 问题写进本轮的工具摘要：用户能在折叠条里看到「为什么这个工具没出现」，
+        // 而不用去翻 logcat。
+        session.problems.forEach { toolNotes.add("mcp: " + it) }
+        return session.registry
+    }
+
+    /**
+     * 系统提示 = 角色与沙箱规则 + 提示词片段 + 可用技能清单。
+     *
+     * 技能只放「名字 + 一句话」，正文等模型调 `use_skill` 再读（渐进披露）：
+     * 一条技能动辄上万字，十来条全塞进来，每轮都白付这份 token。
+     */
+    private fun systemPrompt(): String {
+        val base = config.effectiveSystemPrompt
+        val brief = SkillPrompt.brief(activeSkills)
+        return if (brief.isBlank()) base else base + "\n\n" + brief
+    }
 
     /**
      * 判断异常值不值得重试。
@@ -185,15 +310,24 @@ class SessionAgent(
             e is java.io.IOException
     }
 
-    /** 换会话或退出时释放。历史已经落盘，这里清内存引用与 HTTP 连接。 */
+    /**
+     * 换会话或退出时释放。
+     *
+     * **不能在这里清历史**：消息流是用户唯一的会话记录（云端那条是空的），
+     * 清掉就再也找不回来。这里只放内存里的 HTTP 连接。
+     */
     fun close() {
-        memory.clear(conversationId)
         llm.close()
+        mcp.close()
+        mcpSession = null
     }
 
     private companion object {
         const val MAX_RETRIES = 2
         const val RETRY_BASE_MS = 800L
+
+        /** 被用户停止时留在历史里的那句话；重进会话能看出这轮没跑完。 */
+        const val INTERRUPTED = "（本轮已中断，可重新发送）"
     }
 }
 
@@ -224,7 +358,7 @@ private class LazyClient {
 
 class SessionAgentHub(
     private val exec: SandboxExec,
-    private val memory: AgentMemory = AgentMemory.None,
+    private val settings: AppSettings,
 ) : AgentRuntime {
 
     private val agents = ConcurrentHashMap<String, SessionAgent>()
@@ -235,6 +369,7 @@ class SessionAgentHub(
         token: String,
         config: CustomModelConfig,
         tokenRefresher: suspend () -> String?,
+        onThought: (String) -> Unit,
         onToolEvent: (SandboxToolEvent) -> Unit,
         onExecuted: (String, Long, SandboxExec.Result) -> Unit,
     ): SessionAgent {
@@ -248,7 +383,11 @@ class SessionAgentHub(
         }
         val created = SessionAgent(
             conversationId, exec, endpoint, token, config,
-            tokenRefresher, memory, onToolEvent, onExecuted,
+            tokenRefresher, settings.agentMemory, onThought, onToolEvent, onExecuted,
+            // 技能与 MCP 都在「本机模型」那一栏配置，只喂本机会话。
+            // 传 getter 而不是当时的快照：用户在设置里改了配置，下一条消息就该按新的来。
+            skills = settings.localSkills,
+            mcpServers = { settings.mcp.localServers() },
         )
         agents[conversationId] = created
         return created

@@ -21,7 +21,14 @@ data class ChatMessage(
     val text: String,
     val toolState: ToolState = ToolState.NONE,
     val streaming: Boolean = false,
-    val turn: Int = 0
+    val turn: Int = 0,
+    /**
+     * 这条不是模型的正式回答，而是「这一轮失败了 / 被中断了」的留痕。
+     *
+     * 单独一个字段而不是塞进 [text]：失败记录要显示（否则重进会话时这一轮凭空消失），
+     * 但回放给模型时必须跳过——模型不该把一句报错当成自己上一轮说过的话。
+     */
+    val failed: Boolean = false
 )
 
 enum class ToolState { NONE, RUNNING, DONE, FAILED }

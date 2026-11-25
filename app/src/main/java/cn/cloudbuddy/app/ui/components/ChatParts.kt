@@ -154,9 +154,26 @@ fun MessageRow(message: ChatMessage, showThoughts: Boolean) {
         }
 
         ChatRole.ASSISTANT -> Column(modifier = Modifier.fillMaxWidth()) {
-            MarkdownText(markdown = message.text, baseSize = 15f)
-            if (message.streaming) TypingCursor()
-            if (longText && !message.streaming) ActionText("复制", copy)
+            if (message.failed) {
+                // 失败 / 中断的留痕：用错误色的一小块提示，而不是当正文渲染。
+                // 它长得像模型回答的话，用户重进会话会以为模型当时说了这句话。
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.55f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = message.text,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+            } else {
+                MarkdownText(markdown = message.text, baseSize = 15f)
+                if (message.streaming) TypingCursor()
+                if (longText && !message.streaming) ActionText("复制", copy)
+            }
         }
 
         ChatRole.THOUGHT -> ThoughtRow(message.text, showThoughts, message.streaming)
