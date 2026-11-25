@@ -2496,3 +2496,20 @@ full/base 编译、单测、lint 全绿；ModelRegistryTest 保留。
 - TranscriptMemoryTest +2：干净版/全文版就地升级（不追加、display 保留、
   模型派生用全文）、display 字段落盘往返；
 - full/base 编译、单测、lint 全绿。
+
+# 1.6.0 追加 · 缩略图缩小 + 附件入口收成二级菜单
+
+## 反馈
+1. 气泡里的图片附件显示得太大。
+2. 图片、文件两个图标挨在一起容易点错，应开二级菜单再选。
+
+## 改法
+1. `LocalImageThumb`：240dp 横向铺满改成 **140×140 上限 + ContentScale.Fit**
+   （按比例缩进方框，竖图不占一屏）；圆角 12dp。
+2. 输入栏：两个 IconButton 收成**一个回形针按钮 + DropdownMenu 二级菜单**
+   （照 RikkaHub 的添加弹出），菜单项「图片」/「文件」带图标说明；
+   点「图片」出 image/* 选择器（读图模型可直发），点「文件」出任意类型
+   选择器（进沙箱用工具读）——入口合并了，类型分流语义不变。
+
+## 测试
+full/base 编译、单测、lint 全绿。

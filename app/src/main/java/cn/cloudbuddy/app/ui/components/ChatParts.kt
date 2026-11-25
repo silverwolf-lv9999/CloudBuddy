@@ -553,10 +553,13 @@ fun LocalImageThumb(path: String, modifier: Modifier = Modifier) {
         androidx.compose.foundation.Image(
             bitmap = bmp.asImageBitmap(),
             contentDescription = "消息图片",
-            contentScale = androidx.compose.ui.layout.ContentScale.FillWidth,
+            // Fit：按比例缩进 140dp 方框内，既不会横向铺满聊天气泡，
+            // 竖图也不会把一屏占掉；看清内容够了，大图点开系统相册看。
+            contentScale = androidx.compose.ui.layout.ContentScale.Fit,
             modifier = modifier
-                .widthIn(max = 240.dp)
-                .clip(RoundedCornerShape(14.dp))
+                .widthIn(max = 140.dp)
+                .heightIn(max = 140.dp)
+                .clip(RoundedCornerShape(12.dp))
         )
     }
 }

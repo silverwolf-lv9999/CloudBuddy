@@ -859,24 +859,44 @@ private fun Composer(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    // 两个入口分开（照 RikkaHub 的 photo / upload_file）：图片按钮
-                    // 只出 image/*（读图模型能直发），文件按钮出任意类型（进沙箱
-                    // 用工具读）。混在一个入口，用户没法知道选的东西模型到底能不能看。
-                    IconButton(onClick = onPickImage, modifier = Modifier.size(34.dp)) {
-                        Icon(
-                            Icons.Filled.Image,
-                            "添加图片",
-                            Modifier.size(19.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    IconButton(onClick = onPickFile, modifier = Modifier.size(34.dp)) {
-                        Icon(
-                            Icons.Filled.AttachFile,
-                            "添加文件",
-                            Modifier.size(19.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    // 附件入口收成一个按钮 + 二级菜单（照 RikkaHub 的添加弹出）：
+                    // 两个图标挨着太容易点错。菜单里分「图片」与「文件」——图片
+                    // 只出 image/*（读图模型能直发），文件出任意类型（进沙箱用工具读）。
+                    var attachMenu by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(onClick = { attachMenu = true }, modifier = Modifier.size(34.dp)) {
+                            Icon(
+                                Icons.Filled.AttachFile,
+                                "添加附件",
+                                Modifier.size(19.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = attachMenu,
+                            onDismissRequest = { attachMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("图片") },
+                                leadingIcon = {
+                                    Icon(Icons.Filled.Image, null, Modifier.size(18.dp))
+                                },
+                                onClick = {
+                                    attachMenu = false
+                                    onPickImage()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("文件") },
+                                leadingIcon = {
+                                    Icon(Icons.Filled.InsertDriveFile, null, Modifier.size(18.dp))
+                                },
+                                onClick = {
+                                    attachMenu = false
+                                    onPickFile()
+                                }
+                            )
+                        }
                     }
                     Surface(
                         shape = RoundedCornerShape(50),
