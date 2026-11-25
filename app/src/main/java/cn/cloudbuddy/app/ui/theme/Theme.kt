@@ -11,10 +11,13 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CloudBuddy 主题：Material 3 Expressive（material3 1.4.x）。
@@ -157,6 +160,25 @@ fun CloudBuddyTheme(
         else -> LightScheme
     }
     val extend = if (darkTheme) DarkExtend else LightExtend
+
+    // 状态栏图标颜色跟随主题：深色主题用浅色图标，浅色主题用深色图标。
+    val view = LocalView.current
+    val activity = view.context as? android.app.Activity
+    if (!view.isInEditMode && activity != null) {
+        DisposableEffect(activity, darkTheme) {
+            val window = activity.window
+            val controller = WindowCompat.getInsetsController(window, view)
+            val previousLightStatusBars = controller.isAppearanceLightStatusBars
+            val previousLightNavigationBars = controller.isAppearanceLightNavigationBars
+            controller.isAppearanceLightStatusBars = !darkTheme
+            controller.isAppearanceLightNavigationBars = !darkTheme
+            onDispose {
+                controller.isAppearanceLightStatusBars = previousLightStatusBars
+                controller.isAppearanceLightNavigationBars = previousLightNavigationBars
+            }
+        }
+    }
+
     CompositionLocalProvider(LocalExtendColors provides extend) {
         MaterialExpressiveTheme(
             colorScheme = scheme,

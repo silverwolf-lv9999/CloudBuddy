@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -48,6 +49,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.UnfoldLess
@@ -55,6 +57,7 @@ import androidx.compose.material.icons.filled.UnfoldMore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ContainedLoadingIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -63,6 +66,7 @@ import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
@@ -70,8 +74,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -308,7 +314,8 @@ fun ChatScreen(
                         }
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                modifier = Modifier.statusBarsPadding()
             )
         },
         bottomBar = {
@@ -893,123 +900,196 @@ fun ModelDialog(
     onDismiss: () -> Unit
 ) {
     var custom by remember { mutableStateOf("") }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("选择模型", modifier = Modifier.weight(1f))
+    var search by remember { mutableStateOf("") }
+    val sheetState = rememberBottomSheetState()
+    val scope = rememberCoroutineScope()
+
+    fun dismiss() {
+        scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() }
+    }
+
+    val filtered = remember(models, search) {
+        if (search.isBlank()) models
+        else models.filter {
+            it.name.contains(search, ignoreCase = true) ||
+                it.id.contains(search, ignoreCase = true) ||
+                it.description?.contains(search, ignoreCase = true) == true
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = { dismiss() },
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = MaterialTheme.shapes.extraLargeIncreased
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // 标题行
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    "选择模型",
+                    style = MaterialTheme.typography.titleLargeEmphasized,
+                    modifier = Modifier.weight(1f)
+                )
                 if (loading) {
-                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    ContainedLoadingIndicator(modifier = Modifier.size(20.dp))
                 }
             }
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    "当前：" + (models.firstOrNull { it.id == selected }?.name
-                        ?: selected.ifBlank { "云端默认" }),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.primary
+
+            // 当前模型提示
+            Text(
+                "当前：" + (models.firstOrNull { it.id == selected }?.name
+                    ?: selected.ifBlank { "云端默认" }),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            // 搜索框
+            OutlinedTextField(
+                value = search,
+                onValueChange = { search = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("搜索模型…") },
+                shape = CircleShape,
+                singleLine = true,
+                colors = TextFieldDefaults.colors(
+                    unfocusedIndicatorColor = Color.Transparent,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                ),
+                leadingIcon = { Icon(Icons.Filled.Search, null, Modifier.size(20.dp)) }
+            )
+
+            // 模型列表
+            when {
+                loading && models.isEmpty() -> Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(vertical = 24.dp)
+                ) {
+                    ContainedLoadingIndicator(modifier = Modifier.size(24.dp))
+                    Spacer(Modifier.width(12.dp))
+                    Text("正在从云端获取模型…", style = MaterialTheme.typography.bodyMedium)
+                }
+
+                models.isEmpty() -> Text(
+                    "暂时没有拿到模型列表，可以直接在下方填写模型 ID，或点「重新加载」。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(vertical = 16.dp)
                 )
-                when {
-                    loading && models.isEmpty() -> Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(vertical = 12.dp)
-                    ) {
-                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.width(8.dp))
-                        Text("正在从云端获取模型…", style = MaterialTheme.typography.bodySmall)
-                    }
 
-                    models.isEmpty() -> Text(
-                        "暂时没有拿到模型列表，可以直接在下方填写模型 ID，或点「重新加载」。",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-
-                    else -> LazyColumn(
-                        modifier = Modifier.heightIn(max = 260.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        items(models, key = { it.id }) { model ->
-                            val active = model.id == selected
-                            Surface(
-                                shape = MaterialTheme.shapes.large,
-                                color = if (active) MaterialTheme.colorScheme.primaryContainer
-                                else MaterialTheme.colorScheme.surfaceContainerHigh,
-                                modifier = Modifier.fillMaxWidth().clickable { onSelect(model.id) }
-                            ) {
-                                Column(modifier = Modifier.padding(10.dp)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            model.name,
-                                            style = MaterialTheme.typography.titleMedium,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                        model.credits?.let {
-                                            Text(
-                                                "x$it",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                    }
+                else -> LazyColumn(
+                    modifier = Modifier.heightIn(max = 320.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(filtered, key = { it.id }) { model ->
+                        val active = model.id == selected
+                        Surface(
+                            shape = MaterialTheme.shapes.largeIncreased,
+                            color = if (active) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surfaceContainerHigh,
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                onSelect(model.id)
+                                dismiss()
+                            }
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
-                                        model.id,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        model.name,
+                                        style = MaterialTheme.typography.titleSmallEmphasized,
+                                        modifier = Modifier.weight(1f)
                                     )
-                                    model.description?.let {
+                                    model.credits?.let {
                                         Text(
-                                            it,
+                                            "x$it",
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
+                                }
+                                Text(
+                                    model.id,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                model.description?.let {
+                                    Text(
+                                        it,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.padding(top = 4.dp)
+                                    )
                                 }
                             }
                         }
                     }
                 }
-                error?.let {
-                    Surface(
-                        color = MaterialTheme.colorScheme.errorContainer,
-                        shape = MaterialTheme.shapes.medium,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            it,
-                            modifier = Modifier.padding(10.dp),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer
-                        )
-                    }
-                }
-                Text(
-                    "云端未列出模型时，可手动填写模型 ID（切换结果会即时提示）",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = custom,
-                        onValueChange = { custom = it },
-                        label = { Text("模型 ID") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
+            }
+
+            // 错误提示
+            error?.let {
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        it,
+                        modifier = Modifier.padding(12.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer
                     )
-                    Spacer(Modifier.width(6.dp))
-                    TextButton(
-                        enabled = custom.isNotBlank(),
-                        onClick = { onSelect(custom.trim()) }
-                    ) { Text("使用") }
                 }
             }
-        },
-        confirmButton = { TextButton(onClick = onRefresh) { Text("重新加载") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
-    )
+
+            // 手动输入
+            Text(
+                "云端未列出模型时，可手动填写模型 ID",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = custom,
+                    onValueChange = { custom = it },
+                    label = { Text("模型 ID") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                    shape = MaterialTheme.shapes.largeIncreased
+                )
+                Spacer(Modifier.width(8.dp))
+                TextButton(
+                    enabled = custom.isNotBlank(),
+                    onClick = {
+                        onSelect(custom.trim())
+                        dismiss()
+                    }
+                ) { Text("使用") }
+            }
+
+            // 底部按钮
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = onRefresh) { Text("重新加载") }
+                Spacer(Modifier.width(8.dp))
+                TextButton(onClick = { dismiss() }) { Text("关闭") }
+            }
+        }
+    }
 }
 
 /** 从 SAF 读取附件内容，限制单文件 24MB（更大的文件请放进沙箱或改用工作区上传）。 */
