@@ -2,15 +2,19 @@ package cn.cloudbuddy.app.ui.components
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -22,8 +26,9 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -42,9 +47,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import cn.cloudbuddy.app.data.CustomModel
 import cn.cloudbuddy.app.data.CustomModelCatalog
 import cn.cloudbuddy.app.data.EndpointResolver
@@ -156,10 +163,9 @@ fun ProviderManager(
     }
 
     removing?.let { target ->
-        AlertDialog(
+        AdaptiveDialog(
             onDismissRequest = { removing = null },
-            title = { Text("删除提供商「${target.label.ifBlank { "未命名" }}」？") },
-            text = { Text("它名下的模型会一起删除，使用这些模型的会话将退回云端模型。此操作不可撤销。") },
+            title = "删除提供商「${target.label.ifBlank { "未命名" }}」？",
             confirmButton = {
                 TextButton(onClick = {
                     onRemove(target)
@@ -167,7 +173,12 @@ fun ProviderManager(
                 }) { Text("删除", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton(onClick = { removing = null }) { Text("取消") } }
-        )
+        ) {
+            Text(
+                "它名下的模型会一起删除，使用这些模型的会话将退回云端模型。此操作不可撤销。",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
     }
 }
 
@@ -180,6 +191,72 @@ private fun Tag(text: String, container: androidx.compose.ui.graphics.Color) {
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurface
         )
+    }
+}
+
+// ============================ 小屏自适应 ============================
+// 这个文件里的界面要能在 410×502 的矩形手表上用：常见密度（1.5~2.0）下宽度
+// 只有 205~273dp、高度 251~335dp，手机一般 ≥360dp 宽。判定不是二值化布局，
+// 只处理两类必炸的问题：①对话框默认宽度按手机算（内容会被 clamp 贴边、按钮
+// 挤变形）；②固定高度的弹窗列表（320dp）直接撑爆屏高。其余布局本身是
+// weight + fillMaxWidth 的，天然随宽度缩。
+
+/** 小屏判定：手表 / 分屏窄窗 / 折叠屏窄态都落进来。 */
+@Composable
+private fun isCompactScreen(): Boolean {
+    val config = LocalConfiguration.current
+    return config.screenWidthDp < 340
+}
+
+/**
+ * 自适应对话框：关掉平台默认宽度，自己控制「满宽 + 安全边距 + 宽度上限」。
+ * M3 默认 AlertDialog 有 280dp 起的最小宽度——在 205~273dp 宽的表上会顶满
+ * 屏幕边缘，两个按钮挤在一行还可能被裁；这里的内容边距小屏减半，
+ * 确认/取消按钮行自绘（M3 的 slots 排版不受影响，行为一致）。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AdaptiveDialog(
+    onDismissRequest: () -> Unit,
+    title: String,
+    confirmButton: @Composable () -> Unit,
+    dismissButton: @Composable () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val compact = isCompactScreen()
+    BasicAlertDialog(
+        onDismissRequest = onDismissRequest,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier
+                    .widthIn(max = 520.dp)
+                    .padding(
+                        horizontal = if (compact) 10.dp else 24.dp,
+                        vertical = 16.dp
+                    )
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(title, style = MaterialTheme.typography.headlineSmall)
+                    content()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        dismissButton()
+                        Spacer(Modifier.width(6.dp))
+                        confirmButton()
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -240,7 +317,10 @@ fun ProviderDetailPage(
         }
     }
 
-    Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(if (isCompactScreen()) 8.dp else 14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
         Text("配置", style = MaterialTheme.typography.titleSmall)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
@@ -326,9 +406,17 @@ fun ProviderDetailPage(
             ) {
                 Icon(Icons.Filled.Refresh, contentDescription = "重新拉取列表", modifier = Modifier.size(16.dp))
             }
-            TextButton(onClick = { pickerOpen = true }, enabled = !loading) {
-                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                Text("从列表添加")
+            // 小屏收成图标按钮：四个字带图标的 TextButton 在 200dp 级宽度的表上
+            // 会把标题挤没，图标含义（+）在这里足够明确，弹窗里有完整入口。
+            if (isCompactScreen()) {
+                IconButton(onClick = { pickerOpen = true }, enabled = !loading, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Filled.Add, contentDescription = "从列表添加", modifier = Modifier.size(16.dp))
+                }
+            } else {
+                TextButton(onClick = { pickerOpen = true }, enabled = !loading) {
+                    Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Text("从列表添加")
+                }
             }
         }
         Text(
@@ -419,10 +507,9 @@ fun ProviderDetailPage(
     }
 
     if (removing) {
-        AlertDialog(
+        AdaptiveDialog(
             onDismissRequest = { removing = false },
-            title = { Text("删除提供商？") },
-            text = { Text("它名下的模型会一起删除，使用这些模型的会话将退回云端模型。此操作不可撤销。") },
+            title = "删除提供商？",
             confirmButton = {
                 TextButton(onClick = {
                     removing = false
@@ -430,7 +517,12 @@ fun ProviderDetailPage(
                 }) { Text("删除", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton(onClick = { removing = false }) { Text("取消") } }
-        )
+        ) {
+            Text(
+                "它名下的模型会一起删除，使用这些模型的会话将退回云端模型。此操作不可撤销。",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
     }
 }
 
@@ -457,7 +549,12 @@ private fun SecretField(value: String, onValueChange: (String) -> Unit, label: S
 /**
  * 远端模型选择弹窗：搜索过滤、逐个 +/✓、全部加入。
  * 已加入的模型照样显示但勾不动，和 RikkaHub 的 ModelPicker 一个口径。
+ *
+ * 小屏处理：不用默认 AlertDialog（280dp 最小宽 + 内容 wrap 高度，在表上
+ * 列表会把按钮顶出屏幕），改为 BasicAlertDialog 自控——弹窗最高占屏高九成，
+ * 模型列表用 weight 吃剩余空间，搜索框、全部加入和确认按钮行任何屏高都可见。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RemoteModelPicker(
     remoteModels: List<String>,
@@ -475,140 +572,153 @@ private fun RemoteModelPicker(
         else remoteModels.filter { m -> keywords.all { m.contains(it, ignoreCase = true) } }
     }
     val unselected = visible.count { it !in existingIds && it !in picked }
+    val compact = isCompactScreen()
+    val maxBodyHeight = (LocalConfiguration.current.screenHeightDp * 0.9f).dp
 
-    AlertDialog(
+    BasicAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("端点上的模型（${remoteModels.size}）") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedTextField(
-                        value = query,
-                        onValueChange = { query = it },
-                        label = { Text("搜索") },
-                        placeholder = { Text("空格分隔多个关键词") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier
+                    .widthIn(max = 520.dp)
+                    .padding(
+                        horizontal = if (compact) 10.dp else 24.dp,
+                        vertical = 16.dp
                     )
-                    IconButton(onClick = onRefresh, enabled = !loading, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Filled.Refresh, contentDescription = "刷新", modifier = Modifier.size(18.dp))
-                    }
-                }
-                if (loading) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-                        Text("拉取中…", style = MaterialTheme.typography.labelSmall)
-                    }
-                } else if (remoteModels.isEmpty()) {
+                    .heightIn(max = maxBodyHeight)
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                     Text(
-                        "还没有拿到模型清单。检查配置后点右上角刷新。",
-                        style = MaterialTheme.typography.bodySmall
+                        "端点上的模型（${remoteModels.size}）",
+                        style = MaterialTheme.typography.headlineSmall
                     )
-                } else {
-                    TextButton(
-                        onClick = {
-                            if (unselected > 0) {
-                                onAdd(visible.filter { it !in existingIds && it !in picked })
-                                picked = emptySet()
-                            } else {
-                                // 全都选上了再点一次 = 反选：把过滤范围内的都撤掉
-                                onDismiss()
-                            }
-                        },
-                        enabled = visible.isNotEmpty(),
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
-                    ) {
-                        Text(
-                            if (unselected > 0) "全部加入（$unselected）" else "取消全选",
-                            style = MaterialTheme.typography.labelSmall
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedTextField(
+                            value = query,
+                            onValueChange = { query = it },
+                            label = { Text("搜索") },
+                            placeholder = { Text("空格分隔多个关键词") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
                         )
+                        IconButton(onClick = onRefresh, enabled = !loading, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Filled.Refresh, contentDescription = "刷新", modifier = Modifier.size(18.dp))
+                        }
                     }
-                    LazyColumn(
-                        modifier = Modifier.heightIn(max = 320.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp)
-                    ) {
-                        items(visible, key = { it }) { id ->
-                            val exists = id in existingIds
-                            val checked = exists || id in picked
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable(enabled = !exists) {
-                                        picked = if (id in picked) picked - id else picked + id
-                                    }
-                                    .padding(vertical = 4.dp)
-                            ) {
-                                Icon(
-                                    if (checked) Icons.Filled.Check else Icons.Filled.Add,
-                                    contentDescription = if (checked) "已加入" else "加入",
-                                    modifier = Modifier.size(18.dp),
-                                    tint = if (exists) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Spacer(Modifier.width(10.dp))
-                                Text(
-                                    id,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                if (exists) {
-                                    Text(
-                                        "已加入",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    if (loading) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                            Text("拉取中…", style = MaterialTheme.typography.labelSmall)
+                        }
+                    } else if (remoteModels.isEmpty()) {
+                        Text(
+                            "还没有拿到模型清单。检查配置后点右上角刷新。",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    } else {
+                        TextButton(
+                            onClick = {
+                                if (unselected > 0) {
+                                    onAdd(visible.filter { it !in existingIds && it !in picked })
+                                    picked = emptySet()
+                                } else {
+                                    // 全都选上了再点一次 = 反选：把过滤范围内的都撤掉
+                                    onDismiss()
+                                }
+                            },
+                            enabled = visible.isNotEmpty(),
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                        ) {
+                            Text(
+                                if (unselected > 0) "全部加入（$unselected）" else "取消全选",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                        // weight：列表吃掉弹窗里剩余的高度，矮屏自动缩短（可滚动），
+                        // 高屏放大；按钮行固定在底部永远可见。
+                        LazyColumn(
+                            modifier = Modifier.weight(1f).heightIn(min = 60.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            items(visible, key = { it }) { id ->
+                                val exists = id in existingIds
+                                val checked = exists || id in picked
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable(enabled = !exists) {
+                                            picked = if (id in picked) picked - id else picked + id
+                                        }
+                                        .padding(vertical = 4.dp)
+                                ) {
+                                    Icon(
+                                        if (checked) Icons.Filled.Check else Icons.Filled.Add,
+                                        contentDescription = if (checked) "已加入" else "加入",
+                                        modifier = Modifier.size(18.dp),
+                                        tint = if (exists) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.onSurfaceVariant
                                     )
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(
+                                        id,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    if (exists) {
+                                        Text(
+                                            "已加入",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                 }
                             }
                         }
+                        if (picked.isNotEmpty()) {
+                            Text(
+                                "已选 ${picked.size} 个",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
-                    if (picked.isNotEmpty()) {
-                        Text(
-                            "已选 ${picked.size} 个，点「加入所选」提交",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = onDismiss) { Text("关闭") }
+                        Spacer(Modifier.width(6.dp))
+                        TextButton(
+                            onClick = {
+                                onAdd(picked.toList())
+                                onDismiss()
+                            },
+                            enabled = picked.isNotEmpty()
+                        ) { Text("加入所选") }
                     }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    onAdd(picked.toList())
-                    onDismiss()
-                },
-                enabled = picked.isNotEmpty()
-            ) { Text("加入所选") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
-    )
+        }
+    }
 }
 
 @Composable
 private fun ManualAddDialog(onAdd: (String) -> Unit, onDismiss: () -> Unit) {
     var id by remember { mutableStateOf("") }
-    AlertDialog(
+    AdaptiveDialog(
         onDismissRequest = onDismiss,
-        title = { Text("手动添加模型") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    "端点不提供 /models 时（不少自建 vLLM 是这样），在这里直接填模型 ID。",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                OutlinedTextField(
-                    value = id,
-                    onValueChange = { id = it },
-                    label = { Text("模型 ID") },
-                    placeholder = { Text("deepseek-chat") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        },
+        title = "手动添加模型",
         confirmButton = {
             TextButton(
                 onClick = { onAdd(id.trim()) },
@@ -616,7 +726,20 @@ private fun ManualAddDialog(onAdd: (String) -> Unit, onDismiss: () -> Unit) {
             ) { Text("加入") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
-    )
+    ) {
+        Text(
+            "端点不提供 /models 时（不少自建 vLLM 是这样），在这里直接填模型 ID。",
+            style = MaterialTheme.typography.bodySmall
+        )
+        OutlinedTextField(
+            value = id,
+            onValueChange = { id = it },
+            label = { Text("模型 ID") },
+            placeholder = { Text("deepseek-chat") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
 }
 
 /**

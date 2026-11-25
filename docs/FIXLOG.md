@@ -2314,3 +2314,31 @@ IDLE（`turnActive` 时降级返回），**没挡 DONE**——所以即使这轮
 ## 测试
 - 新增 LlmProviderTest：encode/decode 往返（含 chatPath/headers）、旧数据 decode 兼容、
   请求头解析与文本化、streamUrl 三种拼法；全绿（full），base flavor 编译通过，lint 0 error。
+
+# 1.6.0 追加 · 提供商界面的小屏适配（410×502 矩形手表）
+
+## 现象（用户反馈）
+用户要在 410×502 的矩形手表上用；已有界面都没问题，只有提供商那一块可能出问题
+（RikkaHub 自己的提供商设置在小屏上也有显示问题）。
+
+## 风险点与改法（全部限定在 ProviderManager.kt）
+小屏在常见密度（1.5~2.0）下只有 205~273dp 宽、251~335dp 高，手机 ≥360dp 宽。
+适配不是二值化布局，只处理两类必炸问题：
+
+1. **M3 默认 AlertDialog 有 280dp 起的最小宽度**：在表上内容被 clamp 贴边、
+   两按钮挤变形。四个弹窗（列表页删除确认、详情页删除确认、手动添加、模型选择）
+   全部改走 `BasicAlertDialog(usePlatformDefaultWidth=false)` 自控：
+   满宽 + 安全边距（小屏 10dp，手机 24dp）+ widthIn(max=520)。
+   抽了 `AdaptiveDialog` 骨架（标题/内容/确认取消行自绘），行为与 M3 一致。
+2. **固定高度弹窗列表撑爆屏高**：模型选择弹窗原 `heightIn(max=320.dp)` 在
+   335dp 高的表上直接把按钮顶出屏幕。改为弹窗最高占屏高九成，
+   模型列表 `weight(1f)` 吃剩余高度（矮屏自动缩、仍可滚动），
+   搜索框、全部加入、确认按钮行任何屏高都可见。
+3. **详情页标题行按钮**：小屏时「从列表添加」TextButton 收成 + 图标
+   IconButton（四个字带图标在 200dp 级宽度上会把标题挤没）；
+   详情页内边距 14dp → 小屏 8dp。
+4. 其余布局（weight + fillMaxWidth + horizontalScroll 的强度 chips）
+   天然随宽度缩，不动。
+
+## 测试
+- 编译/单测/lint 全绿；full debug 包 wip3 出到 dist 供真机验证。
