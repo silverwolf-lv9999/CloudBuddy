@@ -473,7 +473,7 @@ class BuddyRepository(val settings: AppSettings) {
         // 本机会话在云端只有一条空壳记录，没有「真相」可对：推理在本机，状态也只能算在本机。
         // 拿它的云端角标去对账，就会把一条早就没在跑的会话永久钉在「执行中」
         // （而且每次对账还会去建一条临时 ACP 连接重放空历史）。
-        val activeLocal = settings.isLocal(activeId)
+        val activeLocal = isLocalConv(activeId)
 
         var activeRemote: Conversation? = null
         var list: List<Conversation>? = null
@@ -516,7 +516,7 @@ class BuddyRepository(val settings: AppSettings) {
                     artifacts = latest.artifacts.ifEmpty { remote.artifacts },
                     ask = latest.ask
                 )
-                settings.isLocal(remote.id) -> remote.asLocal()
+                isLocalConv(remote.id) -> remote.asLocal()
                 else -> remote
             }
         } ?: if (adopted != null) {
@@ -633,7 +633,9 @@ class BuddyRepository(val settings: AppSettings) {
      * 用于「任务在云端继续跑」的场景：用户不该看到进度条，只该看到内容变多。
      */
     private suspend fun silentResync(id: String): Boolean {
+        // 本机会话没有云端历史可补：这里替换 messages 的语义对它就是「清空」。
         if (_ui.value.activeId != id || hasLiveTurn(id)) return false
+        if (isLocalConv(id)) return false
         val conn = withContext(Dispatchers.IO) {
             connections.remove(id)?.close()
             connection(id)
@@ -789,7 +791,7 @@ class BuddyRepository(val settings: AppSettings) {
             // 本机会话只清理**一次**：它的云端状态我们根本不采信（见 [asLocal]），
             // 但 1.5.4 及更早建出来的会话可能真在服务端挂着一个没模型的空轮次，
             // 清一次值得；清不掉就算了，反复建临时 ACP 连接纯属白发请求。
-            (!settings.isLocal(conv.id) || conv.id !in cleanedLocal) &&
+            (!isLocalConv(conv.id) || conv.id !in cleanedLocal) &&
                 now - (healAt[conv.id] ?: 0L) >= HEAL_GAP_MS &&
                 StateReconciler.shouldHeal(
                     remoteActive = true,
@@ -803,7 +805,7 @@ class BuddyRepository(val settings: AppSettings) {
         healing = true
         healAt[target.id] = now
         healTries[target.id] = (healTries[target.id] ?: 0) + 1
-        if (settings.isLocal(target.id)) cleanedLocal.add(target.id)
+        if (isLocalConv(target.id)) cleanedLocal.add(target.id)
         scope.launch {
             val ok = healStaleRun(target.id)
             healing = false
@@ -1317,7 +1319,7 @@ class BuddyRepository(val settings: AppSettings) {
                     // 它的状态位要么恒为 null，要么是这条会话还是云会话时的历史残留。
                     // 直接采信就会看到「本机」标签旁边挂着「云端执行中」，而且永远不消失。
                     // 真实情况只有一种：本进程里有没有它的 job 在跑（进程一死，agent 也就没了）。
-                    settings.isLocal(remote.id) -> remote.asLocal()
+                    isLocalConv(remote.id) -> remote.asLocal()
                     else -> remote
                 }
             }
@@ -1339,7 +1341,7 @@ class BuddyRepository(val settings: AppSettings) {
         val active = _ui.value.activeId
         // 本机会话不在这套命名空间里：它的模型 ID 属于用户自己的端点，
         // 拿云端清单里的任何一个去顶替，界面上就会显示一个它根本没用过的模型。
-        val localNow = active != null && settings.isLocal(active)
+        val localNow = active != null && isLocalConv(active)
         val selected = if (localNow) {
             _ui.value.selectedModel
         } else {
@@ -1451,6 +1453,9 @@ class BuddyRepository(val settings: AppSettings) {
      * 所以顺手写进本地缓存，下次打开会话首屏（ACP 还没连上时）也能显示对。
      */
     private fun publishModels(conversationId: String, models: List<ModelChoice>, current: String?) {
+        // 同 publish()：本机会话的模型来自用户自己的端点（customModelFor），
+        // 云端推送的模型 ID 写进会话设置会把本机选择覆盖掉，下次发送就 404。
+        if (isLocalConv(conversationId)) return
         if (models.isNotEmpty()) acpModels[conversationId] = models
         val cloud = current?.takeIf { it.isNotBlank() }
         if (cloud != null) {
@@ -1566,7 +1571,7 @@ class BuddyRepository(val settings: AppSettings) {
         }
         // 本机会话只认本机模型：它的模型 ID 属于用户自己的端点，云端那套在这里没有意义。
         // 换端点/换 Key 是全局配置，这里只动「这条会话用哪个模型」。
-        if (settings.isLocal(active)) {
+        if (isLocalConv(active)) {
             settings.setModelFor(active, clean)
             _ui.value = _ui.value.copy(selectedModel = clean, modelError = null)
             _events.tryEmit("本会话已改用本机模型「$clean」")
@@ -1651,7 +1656,18 @@ class BuddyRepository(val settings: AppSettings) {
      */
     private suspend fun seedCustomHistory(conversationId: String): Int {
         if (settings.agentMemory.load(conversationId).isNotEmpty()) return 0
-        val snap = withContext(Dispatchers.IO) { connection(conversationId).snapshot() }
+        // 用**临时**连接搬历史，用完就关：不能走 [connection()]——那条连接会带着
+        // onUpdate 进缓存，之后云端任何一次事件推送都会用空快照把本机消息流冲掉。
+        val snap = withContext(Dispatchers.IO) {
+            val conn = AcpConnection(http, settings, sessionOf(conversationId))
+            try {
+                conn.open()
+                conn.initializeAndLoad(settings.historyTimeoutMs)
+                conn.snapshot()
+            } finally {
+                runCatching { conn.close() }
+            }
+        }
         // 只搬「用户提问」和「最终回答」：思考与工具调用是过程，
         // 搬进 memory 会白占 token，模型也用不上。
         val turns = snap.messages
@@ -1700,7 +1716,13 @@ class BuddyRepository(val settings: AppSettings) {
         val convKind = settings.kindOf(id)
         // 会话自己用哪个引擎必须本地记住：云端没有「本机推理」这个概念。
         if (!settings.hasEngineFor(id)) settings.setEngineFor(id, convKind)
-        val local = convKind == AppSettings.ENGINE_CUSTOM
+        // 自愈闸：只要本机消息流里有内容（或在自定义标记表里），就按本机会话处理，
+        // 无论归属记录怎么说——引擎记录按账号前缀存，换账号后 kindOf 会回落成
+        // 「云端」，走 ACP 回放只能得到空快照，用户看到的就是「消息全丢了」。
+        val local = isLocalConv(id)
+        if (local && convKind != AppSettings.ENGINE_CUSTOM) {
+            settings.setEngineFor(id, AppSettings.ENGINE_CUSTOM)
+        }
         _ui.value = _ui.value.copy(
             activeId = id,
             draft = false,
@@ -1796,8 +1818,9 @@ class BuddyRepository(val settings: AppSettings) {
         if (prompt.isBlank() && attachments.isEmpty()) return
         // 分流兜底：本机会话绝不能走 ACP。界面上已经按会话分好流，但「重新加载」
         // 之类入口会绕过界面直接调 send，漏一次就会把本机历史推进云端会话。
+        // 判定与 openConversation 的自愈闸同一口径（见 [isLocalConv]）。
         val kindId = _ui.value.activeId
-        if (kindId != null && settings.isLocal(kindId)) {
+        if (isLocalConv(kindId)) {
             sendCustom(prompt, attachments)
             return
         }
@@ -1886,7 +1909,7 @@ class BuddyRepository(val settings: AppSettings) {
         // 云会话走 sendCustom 是错配（会往云端会话里塞只有本机才有的历史），
         // 反过来本机会话走 send 也一样。两边都按会话类型硬拦一次。
         val kindId = _ui.value.activeId
-        if (kindId != null && !settings.isLocal(kindId)) {
+        if (kindId != null && !isLocalConv(kindId)) {
             send(prompt, attachments)
             return
         }
@@ -2075,6 +2098,9 @@ class BuddyRepository(val settings: AppSettings) {
         // 老版本写进去的编号是错的（提问与回答各差一轮），直接拿来分组会让上一轮的
         // 过程消息挂到下一轮上。
         val msgs = Transcript.replay(stored)
+        // 用户在恢复期间切到了别的会话：整份覆盖会把 A 的消息写进 B 的页面。
+        // 与云端路径的 `if (_ui.value.activeId != id) return` 同一防线，本地也要有。
+        if (_ui.value.activeId != id) return
         _ui.value = _ui.value.copy(
             loadingConversation = false,
             historyProgress = 0,
@@ -2814,12 +2840,36 @@ class BuddyRepository(val settings: AppSettings) {
         return id
     }
 
+    /**
+     * 「这条会话归本机」的**统一判定**，全仓储分流都走它，别再各写各的。
+     *
+     * 三个条件满足其一就算本机：
+     * 1. 引擎归属记录是 CUSTOM（正常路径）；
+     * 2. 在自定义会话标记表里（sendCustom / 历史迁移都登记过）；
+     * 3. 本机消息流里有它的内容（SessionStore 有文件）。
+     *
+     * 为什么不止看第 1 条：归属记录按账号前缀存在 SharedPreferences 里，换账号、
+     * 记录被清都会让 kindOf 回落成「云端」——然后这条会话就走了 ACP 回放，
+     * 云端侧本来是空的，界面被空快照盖掉，用户看到的就是「历史消息消失了」。
+     * 消息流里有内容的会话在云端不可能有内容，按本机处理永远是对的。
+     */
+    private fun isLocalConv(id: String?): Boolean =
+        id != null &&
+            (settings.isLocal(id) ||
+                settings.isCustomConversation(id) ||
+                settings.sessionStore.has(id))
+
     private suspend fun sessionOf(id: String): CloudSession {
         sessions[id]?.let { return it }
         return api.fetchSession(id).also { sessions[id] = it }
     }
 
     private suspend fun connection(id: String): AcpConnection {
+        // 硬闸：本机会话不走云端 ACP。推理与历史全在本机，这条会话在云端是空的；
+        // 建连只会带来两种伤害——回放空历史覆盖界面（publish 现在已经拦了，
+        // 这是第二道闸）、以及留下一条永不收尾的长连接。宁可当场报错暴露调用方，
+        // 也不允许静默地拿空快照冲掉用户的消息。
+        check(!isLocalConv(id)) { "本机会话不走云端 ACP 连接（$id）" }
         connections[id]?.takeIf { it.alive }?.let { return it }
         val session = sessionOf(id)
         val conn = AcpConnection(http, settings, session)
@@ -2856,6 +2906,12 @@ class BuddyRepository(val settings: AppSettings) {
     }
 
     private fun publish(id: String, snapshot: AcpSnapshot) = synchronized(uiLock) {
+        // 本机会话的界面真相是本地消息流（SessionStore）：推理在本机，云端那条会话
+        // 从来没收到过 prompt，快照必然是空的。谁在这条会话上留下了活连接
+        // （历史迁移、引擎切换的残留），它 onUpdate 一推就把本机历史整份覆盖成
+        // 空白——「消息消失」的第二个入口，和落盘竞态是两回事。在这里一刀切：
+        // 本机会话永远不吃云端快照。
+        if (isLocalConv(id)) return@synchronized
         val current = _ui.value
         if (current.activeId != id) return
 

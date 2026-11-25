@@ -2212,3 +2212,28 @@ IDLE（`turnActive` 时降级返回），**没挡 DONE**——所以即使这轮
 - 新增：SessionStore（12+竞态回归）、TranscriptMemory、PromptComposer、SkillFrontmatter、
   LocalSkillStore、UpdateChecker 三包资产选择（12）等。
 - 876 → 951，三变体 lint 0 error。
+
+# 1.5.0 追加 · 本机会话历史消息再次消失（云端同步通道没关干净）
+
+## 现象（用户反馈）
+自定义 API 会话的历史消息仍会消失；用户猜测「是不是又在这些会话里关闭了云端同步」。
+
+## 根因
+本机会话在云端是空壳（故意不传 prompt），但仓储里多条路径仍会为它建 ACP 连接：
+1. `seedCustomHistory` 走 `connection()`——那条连接带着 `onUpdate → publish` 进缓存，
+   之后云端任何事件推送都会用空快照把本机消息整份覆盖掉；
+2. `publishModels` 会把云端模型 ID 写进本机会话的模型设置；
+3. `silentResync` 对本机会话执行的「补历史」语义就是「替换为云端内容（空）」；
+4. 引擎归属记录按账号前缀存在 SharedPreferences，换账号后 `kindOf` 回落成「云端」，
+   会话被当成云会话打开——ACP 回放空历史，界面上就是「消息全没了」。
+
+## 改法（三层）
+1. **出口拦截**：`publish` / `publishModels` / `silentResync` 见本机会话直接返回。
+2. **入口拦截**：`connection()` 对本机会话 `check` 报错；历史迁移改用临时连接用完即关。
+3. **判定自愈**：新增 `isLocalConv()`——归属记录是 CUSTOM ‖ 在自定义标记表 ‖
+   SessionStore 有内容，满足其一即本机；`openConversation` 恢复、`send` 分流、
+   对账、自愈、模型推送全部换用，记录丢失时自动改回 CUSTOM。
+4. `restoreCustomConversation` 补 `activeId` 守卫（恢复期间切走不再串台）。
+
+## 测试
+- 951 项全绿（base/full/plus），lint 0 error。
