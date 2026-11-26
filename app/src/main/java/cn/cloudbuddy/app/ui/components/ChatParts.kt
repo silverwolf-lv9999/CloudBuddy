@@ -1,6 +1,10 @@
 package cn.cloudbuddy.app.ui.components
 
-import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
@@ -218,8 +222,8 @@ fun MessageRow(message: ChatMessage, showThoughts: Boolean, finalAnswer: Boolean
 /**
  * 一轮对话的「中间步骤」组：思考、工具调用、过程叙述都收在这里。
  *
- * 抄 rikkahub 的 ChainOfThought：整行可点击展开/收回，箭头翻转，卡片高度
- * `animateContentSize` 平滑过渡——和思考卡片是同一套交互，不再是硬切换。
+ * 抄 rikkahub 的 ChainOfThought：整行可点击展开/收回，箭头翻转，展开的明细
+ * 由 [AnimatedVisibility] 播一次高度动画——和思考卡片是同一套交互，不再是硬切换。
  * 展开状态由外部（会话级）控制，手动点过只影响当前会话的这一条。
  */
 @Composable
@@ -251,20 +255,16 @@ fun StepsGroup(
     // 一次性组合并测量几十张卡片，点开就会先卡一下。
     var showAll by rememberSaveable(groupKey) { mutableStateOf(false) }
     val page = remember(steps, showAll) { pageSteps(steps, showAll) }
-    // 高度动画只在步骤不多、且这一轮已经跑完时开：流式期间内容每个分片都在变高，
-    // animateContentSize 会被反复打断，并逐帧重测量整棵树（含 Markdown 和卡片）。
-    val animateHeight = steps.size <= 12 && !running && state != TurnState.RUNNING
+    // 展开/收回的动画只在这一轮跑完之后给：流式期间内容每个分片都在长高，
+    // 高度动画会被反复打断并逐帧重测整棵树，播出来只是抖。
+    val animateToggle = !running && state != TurnState.RUNNING
 
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
         shape = RoundedCornerShape(20.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(
-            modifier = Modifier
-                .padding(horizontal = 12.dp, vertical = 6.dp)
-                .then(if (animateHeight) Modifier.animateContentSize() else Modifier)
-        ) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -303,7 +303,16 @@ fun StepsGroup(
                 }
             }
 
-            if (expanded) {
+            // 展开/收回用 AnimatedVisibility，而不是给整块加 animateContentSize：
+            // 后者对**任何**高度变化都起动画，流式期间每个分片长高都会触发一次，
+            // 动画反复被打断、还要逐帧重测整棵树——那正是之前流式发卡的主因。
+            // 前者只在 visible 翻转时播一次，跑着的轮次干脆不播（内容还在长）。
+            AnimatedVisibility(
+                visible = expanded,
+                modifier = Modifier.fillMaxWidth(),
+                enter = if (animateToggle) expandVertically(expandFrom = Alignment.Top) else EnterTransition.None,
+                exit = if (animateToggle) shrinkVertically(shrinkTowards = Alignment.Top) else ExitTransition.None,
+            ) {
                 Column(
                     modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 2.dp),
                     // 组内相邻行只隔 4dp：它们属于同一次连续动作，行距一大就散了。
@@ -324,8 +333,8 @@ fun StepsGroup(
                     }
                     page.rows.forEach { step ->
                         when (step.role) {
-                            // 组外壳自己有 animateContentSize：内层思考卡不再叠一层
-                            // 高度动画，否则展开/收起时双层逐帧重测量，是实测的卡顿源。
+                            // 组外壳已经在播展开动画，内层思考卡不再叠一层高度动画：
+                            // 两层同时逐帧重测整棵子树，是实测的卡顿源。
                             ChatRole.THOUGHT -> ThoughtRow(step.text, showThoughts, step.streaming, animate = false)
                             ChatRole.TOOL -> ToolRow(step)
                             ChatRole.ASSISTANT -> MarkdownText(
