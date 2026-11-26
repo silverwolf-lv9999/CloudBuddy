@@ -30,6 +30,8 @@ data class StoredMessage(
     val display: String = "",
     /** 附件元数据 JSON（MsgAttachment.listToJson），只有用户消息可能有。 */
     val att: String = "",
+    /** 工具输出正文（只有 TOOL 消息可能有），界面点开工具行时显示。 */
+    val detail: String = "",
 ) {
     fun toChatMessage(): ChatMessage = ChatMessage(
         id = id,
@@ -40,6 +42,7 @@ data class StoredMessage(
         failed = failed,
         display = display,
         attachments = MsgAttachment.listFromJson(att),
+        detail = detail,
     )
 
     fun encode(): JSONObject = JSONObject()
@@ -53,6 +56,7 @@ data class StoredMessage(
         // 只在非空时落盘：旧版本解析自然得到空默认
         .putOpt("d", display.takeIf { it.isNotBlank() })
         .putOpt("a", att.takeIf { it.isNotBlank() })
+        .putOpt("x", detail.takeIf { it.isNotBlank() })
 
     companion object {
         fun of(message: ChatMessage, at: Long = System.currentTimeMillis()): StoredMessage =
@@ -66,6 +70,7 @@ data class StoredMessage(
                 failed = message.failed,
                 display = message.display,
                 att = MsgAttachment.listToJson(message.attachments),
+                detail = message.detail,
             )
 
         fun decode(o: JSONObject): StoredMessage? {
@@ -85,6 +90,7 @@ data class StoredMessage(
                 failed = o.optBoolean("f", false),
                 display = o.optString("d"),
                 att = o.optString("a"),
+                detail = o.optString("x"),
             )
         }
     }

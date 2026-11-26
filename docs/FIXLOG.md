@@ -10,6 +10,105 @@
 
 ---
 
+## 1.6.3（深度思考卡片底色与外层一致；工具行按「读/写/运行」区分图标）
+
+两项 UI 修正，合成一次提交：思考卡片的底色，以及工具行的图标与折叠摘要。
+两者都在 `ChatParts.kt` 附近，都是"同一类信息用两种方式表达"的问题。
+
+### 一、「深度思考」框比它所在的卡片深一块
+
+**现象**：对话里那个写着「深度思考」的框，背景比它所在的卡片深一块，像贴了张色块。
+
+**根因**：`ThoughtRow`（`ChatParts.kt`）用 `ChainOfThought` 渲染，而 `ChainOfThought` 的默认
+`cardColors` 是 `surfaceVariant.copy(alpha = 0.5f)`。可思考步骤绝大多数时候是**嵌在
+`StepsGroup` 里**的，那个容器用的也是 `surfaceVariant.copy(alpha = 0.5f)`——同一块区域被涂了两遍，
+叠出来的颜色自然比外层深。反过来，单独出现（没进分组）时卡片是灰的，而聊天底是 `background`，
+看着又"不属于这一页"。
+
+**改法**：给这一处 `ChainOfThought` 传 `CardDefaults.cardColors(containerColor = Color.Transparent)`，
+底色交给下层决定：在分组里露出分组色，单独出现时露出聊天背景——两种位置都"与下层一致"。
+没改 `ChainOfThought` 的默认值：它是通用组件，默认给个可见底色是对的，只是思考卡这里不需要。
+
+### 二、除了「深度思考」，看不到读/写/运行
+
+**现象**：用户问「除了思考状态，其他能显示吗，比如读，写，运行之类的状态」。
+此前组内每条工具调用都是一个扳手图标，只有标题文字不同；组一折叠，连标题也看不见，
+只剩「5 个步骤 · 3 次工具调用」——这轮到底读了文件还是跑了命令，无从判断。
+
+**根因**：`ToolRow` 的图标是写死的 `Icons.Filled.Build`，`StepsGroup` 的摘要只按 role 计数。
+ACP 的 `tool_call` 规范里有 `kind` 字段，但云端实际下发的是中文动宾标题
+（`运行 npm install` / `读取文件` / `生成图表`），`kind` 时常缺失，代码里也没读它。
+
+**改法**：新增 `ui/components/ToolKind.kt`，把标题按关键词归成 9 类，给出图标与简称。
+
+| 类别 | 简称 | 图标（ImageVector） | 命中示例 |
+|---|---|---|---|
+| READ | 读 | `Icons.Filled.MenuBook` | 读取文件 / 查看 / cat |
+| WRITE | 写 | `Icons.Filled.NoteAdd` | 写入 / 新建 / 生成 |
+| EDIT | 改 | `Icons.Filled.Edit` | 修改 / 替换 / 重命名 |
+| EXEC | 运行 | `Icons.Filled.Terminal` | 运行 / 执行 / bash / npm |
+| SEARCH | 搜 | `Icons.Filled.Search` | 搜索 / 查找 / grep / glob |
+| NET | 联网 | `Icons.Filled.Language` | 抓取 / 下载 / fetch / curl |
+| DELETE | 删 | `Icons.Filled.Delete` | 删除 / 移除 / rm |
+| THINK | 想 | `Icons.Filled.Psychology` | 思考 / 推理 |
+| OTHER | 工具 | `Icons.Filled.Build` | 认不出来的（纯文件名等） |
+
+- **全部是 MD3 图标，不用 emoji**：上面每个都是 `material-icons-extended` 里的 `ImageVector`
+  （`androidx.compose.material3` 同一套图标集），矢量绘制、跟随 `tint`、按 dp 缩放，
+  与项目既有 146 处 `Icons.Filled.*` 同风格。emoji / 字符号做不了这些——不同设备字体下字形不一、
+  没法跟着状态变色、也不随深色模式与字号走。
+- **图标管「在干什么」，颜色管「干到哪了」**：`ToolState` 的配色（蓝跑 / 绿成 / 红败）
+  一个字没动，两者正交，不会出现"绿了但不知道在干嘛"。
+- **规则顺序即优先级**：删 > 搜 > 联网 > 运行 > 改 > 写 > 读 > 想。
+  「删除旧文件」不该算修改，「curl …」该算联网而不是跑命令，都靠顺序保证。
+- **摘要行补类别计数**：`2 次工具调用（读 1 · 运行 1）`，按数量降序最多列三类；
+  认不出类别的只计入总数，否则会出现「工具 2」这种没信息量的字样。
+- **不落库**：归类在渲染期算，历史消息翻回去同样有图标，不用改 `StoredMessage` 的兼容。
+
+### 三、工具行平铺一屏，完成态一片绿勾
+
+**现象**：组展开后每条工具调用都直接铺出来，一轮十几条就把回答挤到屏幕外；完成态用的是
+`Color(0xFF17805F)` 绿色勾，一屏十几条时那片绿比正文还抢眼。而且只有标题、没有输出——
+「运行 npm install」显示完成了，但到底装了什么、有没有报错，看不见。
+
+**改法**：
+
+1. **`ToolRow` 收成一行、点击展开**：类别图标 + 标题 + 尾部状态标记 + 箭头（`rotationZ` 翻转，
+   与思考卡同节奏）。默认只占一行，点开才铺输出；展开态用 `rememberSaveable(message.id)` 记住，
+   组收起再展开不会丢。
+2. **输出落库**：`ChatMessage` / `StoredMessage` 各加一个 `detail`（落盘键 `x`，旧会话读出来是空，
+   向后兼容）；`AcpReducer` 用现成的 `textOf` 从 `content` 取文本。`tool_call_update` 不带
+   `content` 时**保留上一次的**——否则一次收尾状态更新就把已经拿到的输出擦成空。
+   单条上限 2000 字符：构建类工具能吐几万字，全量落盘只会把会话文件撑爆。
+3. **输出区样式**：等宽 11sp，**完整铺开、不限高、不内滚**——思考正文的 Expanded 态本来
+   也不设上限（只有 Preview 压在 100dp），两边铺法一致：点开就看完，而不是在 220dp 的小窗里
+   再滚一次。输出在归约时已截到 2000 字符，不会真的铺不完。
+4. **布局直接复用思考卡组件**：先按参数手抄了一版（12dp 内边距 / 24dp 图标槽 / 8dp 间距 /
+   32dp 缩进），装机后仍然"左侧没对齐"——`ChainOfThought` 里还有一层卡片内边距、图标槽里放的
+   是 20dp 的 `chainStepIcon`、行高 8dp，抄漏一项就偏一截。改成让 `ToolRow` 直接
+   `ChainOfThought { ControlledChainOfThoughtStep(...) }` 渲染：同一套组件出同一套坐标，
+   图标、标题、正文、箭头、右边缘全部一致，以后上游调布局这边自动跟着走。
+5. **颜色收敛**：类别图标一律 `onSurfaceVariant`，完成态的勾也改默认色、不再涂绿。
+   只留两处彩色：运行中转圈用主色（整行只有它在动，一眼看出没卡住），
+   失败用 `error` 红（灰底上一枚叉和一枚勾太难分辨）。
+
+### 验证
+
+- 单测：full **362 项全绿**（`ToolKindTest` 5 条 + 摘要类别 1 条 + 输出解析 3 条 + 落盘往返 1 条）
+- 编译：base / full / plus 三包 `BUILD SUCCESSFUL`；full lint **0 error**
+- 版本 1.6.3（versionCode 42），三包 `apksigner verify` 通过
+
+| 包 | 大小 | sha256 |
+|---|---|---|
+| full | 23,871,160 B | `9a443f80f64a52d3b1d48aa8ccd3150e6f8cfc686798e6fd329987c49f604b78` |
+| base | 18,707,439 B | `71d5fd7c67a3d386ec74282111304750743a757ee33462e6cf93019e98975e87` |
+| plus | 23,871,183 B | `5f6d31e6db7014b44bb69855bb89263bc74b87a9ab380d6a88cf9ae8bf59cdc8` |
+
+**待真机确认**：展开态下思考正文（`onSurfaceVariant` 文字）在透明底上对比度是否够；
+若觉得偏灰，把 `ReasoningContent` 的 `textColor` 换成 `onSurface` 即可，不影响底色逻辑。
+
+---
+
 ## 1.6.2（键盘弹出后输入框被遮住：根布局统一消费 IME inset）
 
 > 版本号说明：接上游主线 1.6.1 / 40 之后，本条为 1.6.2 / 41。FIXLOG 下方已有的

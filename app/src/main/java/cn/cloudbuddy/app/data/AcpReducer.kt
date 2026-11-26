@@ -13,12 +13,19 @@ data class AcpSnapshot(
 )
 
 /**
+ * 单个工具输出最多留这么多字符：日志型工具（构建、装包）能吐几万字，
+ * 全量落盘会让会话文件膨胀，而界面上也只是个可滚动的预览框。
+ */
+private const val TOOL_DETAIL_LIMIT = 2000
+
+/**
  * 把 ACP 的 `session/update` 事件流归约成消息列表。
  *
  * 规则（与官方 web 端行为对齐）：
  * - `user_message_chunk` / `agent_message_chunk` / `agent_thought_chunk` 增量拼接，
  *   空白分片不能丢；
  * - `tool_call` / `tool_call_update` 只保留标题与状态，内容里的文件链接同样收集；
+ *   输出正文另存一份到 [ChatMessage.detail]，供界面点开工具行查看（只做展示，不回放给模型）；
  * - 完成信号来自 prompt RPC 的 `stopReason`、`session/endTurn`、`state_update` 或
  *   `session_info_update` 里的 `codebuddy.ai/status`；
  * - 历史回放（`mode=history` / snapshot）不能把新一轮对话提前判成完成。
@@ -361,13 +368,19 @@ class AcpReducer(private val sessionId: String, private val conversationId: Stri
                     status == "pending" || status == "in_progress" -> ToolState.RUNNING
                     else -> ToolState.NONE
                 }
+                // 工具输出：ACP 的 content 是内容块数组，取其中文本（图片/资源链接跳过）。
+                // tool_call_update 的 content 通常是**全量**更新，有新内容就替换；取不到时
+                // （或只有链接）保留上一次的——否则一次状态更新就会把已经拿到的输出擦成空。
+                val output = textOf(update.opt("content")).trim()
+                val previousDetail = index?.let { messages.getOrNull(it)?.detail }.orEmpty()
                 closeStream()
                 val message = ChatMessage(
                     id = index?.let { messages[it].id } ?: "m${seq++}",
                     role = ChatRole.TOOL,
                     text = label,
                     toolState = toolState,
-                    turn = turnSeq.coerceAtLeast(0)
+                    turn = turnSeq.coerceAtLeast(0),
+                    detail = output.ifBlank { previousDetail }.take(TOOL_DETAIL_LIMIT),
                 )
                 if (index != null && index < messages.size) messages[index] = message
                 else {

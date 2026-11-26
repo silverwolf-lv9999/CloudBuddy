@@ -231,6 +231,66 @@ class AcpReducerTest {
             )
         )
 
+    private fun toolCallWithOutput(
+        id: String,
+        title: String,
+        output: String,
+        status: String = "completed"
+    ) = JSONObject()
+        .put("method", "session/update")
+        .put(
+            "params",
+            JSONObject().put(
+                "update",
+                JSONObject().put("sessionUpdate", "tool_call")
+                    .put("toolCallId", id)
+                    .put("title", title)
+                    .put("status", status)
+                    .put(
+                        "content",
+                        JSONArray().put(
+                            JSONObject().put("type", "content")
+                                .put("content", JSONObject().put("type", "text").put("text", output))
+                        )
+                    )
+            )
+        )
+
+    /** 工具输出留下来给界面点开看：工具行默认收成一行，点开才铺出这段正文。 */
+    @Test
+    fun `tool output text is kept for the expandable row`() {
+        val reducer = AcpReducer("session-1")
+        reducer.beginTurn("跑一下")
+        reducer.accept(toolCallWithOutput("t1", "运行 npm install", "added 120 packages"), replaying = false)
+        val tool = reducer.snapshot().messages.first { it.role == ChatRole.TOOL }
+        assertEquals("added 120 packages", tool.detail)
+    }
+
+    /** 收尾的状态更新常常不带 content：不能把已经拿到的输出擦成空。 */
+    @Test
+    fun `status-only update keeps the previous output`() {
+        val reducer = AcpReducer("session-1")
+        reducer.beginTurn("跑一下")
+        reducer.accept(
+            toolCallWithOutput("t1", "运行 npm install", "line1\nline2", status = "in_progress"),
+            replaying = false
+        )
+        reducer.accept(toolCall("t1", "运行 npm install"), replaying = false)
+        val tool = reducer.snapshot().messages.first { it.role == ChatRole.TOOL }
+        assertEquals("line1\nline2", tool.detail)
+        assertEquals(ToolState.DONE, tool.toolState)
+    }
+
+    /** 日志型工具能吐几万字，只留前 2000 字符，别把会话文件撑爆。 */
+    @Test
+    fun `very long tool output is truncated`() {
+        val reducer = AcpReducer("session-1")
+        reducer.beginTurn("构建")
+        reducer.accept(toolCallWithOutput("t1", "运行 gradle build", "x".repeat(5000)), replaying = false)
+        val tool = reducer.snapshot().messages.first { it.role == ChatRole.TOOL }
+        assertEquals(2000, tool.detail.length)
+    }
+
     /** 每次提问开启新的一轮，本轮的思考 / 工具调用都归入同一 turn，界面据此分组折叠。 */
     @Test    fun `each prompt opens a new turn and its steps belong to it`() {
         val reducer = AcpReducer("session-1")

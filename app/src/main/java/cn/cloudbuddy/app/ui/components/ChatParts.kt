@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -45,6 +46,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -60,8 +62,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import cn.cloudbuddy.app.data.ChatMessage
 import cn.cloudbuddy.app.data.ChatRole
 import cn.cloudbuddy.app.data.ToolState
@@ -392,6 +396,10 @@ private fun ThoughtRow(
     ChainOfThought(
         steps = listOf(Unit),
         collapsedAdaptiveWidth = false,
+        // 底色不自己刷：思考卡多数时候嵌在 StepsGroup 的 surfaceVariant 底上，
+        // 再叠一层同色 0.5 会显得比外层深一块（同一块区域被涂了两遍）。
+        // 透明即「跟下层一致」——在分组里露出分组色，单独出现时露出聊天背景。
+        cardColors = CardDefaults.cardColors(containerColor = Color.Transparent),
         // 双重保险：外层（StepsGroup 或流式期）任一情况要关，这里都不再叠动画。
         animate = animate && !streaming,
     ) {
@@ -489,36 +497,81 @@ private fun ThinkingSeconds(streaming: Boolean) {
     }
 }
 
+/**
+ * 工具调用行：默认只占一行（类别图标 + 标题 + 状态 + 箭头），点开才铺输出。
+ *
+ * 直接复用思考卡的 [ChainOfThought] + [ControlledChainOfThoughtStep]，而不是照着
+ * 参数再抄一遍：图标槽 24dp、图标 20dp、间距 8dp、行高 8dp、内容缩进 32dp、
+ * 卡片 12dp 内边距——全部由那套组件给出，两边的图标与文字天然落在同一条竖线上。
+ * 手抄参数那一版差出半个图标宽，正是截图里"左侧没对齐"的原因。
+ *
+ * 图标用 MD3 的类别图标、一律默认前景色；状态只靠尾部一枚小标记表达
+ * （转圈 = 在跑、勾 = 完成、叉 = 失败），整行不再随状态染色。
+ */
 @Composable
 private fun ToolRow(message: ChatMessage) {
-    val tint = when (message.toolState) {
-        ToolState.RUNNING -> MaterialTheme.colorScheme.primary
-        ToolState.DONE -> Color(0xFF17805F)
-        ToolState.FAILED -> MaterialTheme.colorScheme.error
-        ToolState.NONE -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(7.dp),
-        modifier = Modifier.fillMaxWidth()
+    val title = message.text.lineSequence().firstOrNull().orEmpty()
+    val kind = remember(title) { toolKindOf(title) }
+    val detail = message.detail.trim()
+    val hasDetail = detail.isNotBlank()
+    var expanded by rememberSaveable(message.id) { mutableStateOf(false) }
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+
+    ChainOfThought(
+        steps = listOf(Unit),
+        collapsedAdaptiveWidth = false,
+        // 透明底：在分组里露出分组色，单独出现时露出聊天背景，与思考卡同一处理。
+        cardColors = CardDefaults.cardColors(containerColor = Color.Transparent),
+        // 高度动画交给外层 StepsGroup 的 animateContentSize，这里不叠第二层。
+        animate = false,
     ) {
-        Icon(Icons.Filled.Build, contentDescription = null, modifier = Modifier.size(13.dp), tint = tint)
-        Text(
-            text = message.text.lineSequence().firstOrNull().orEmpty().ifBlank { "调用工具" },
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1f)
+        ControlledChainOfThoughtStep(
+            expanded = expanded,
+            onExpandedChange = { expanded = it },
+            icon = chainStepIcon(kind.icon, muted),
+            label = {
+                Text(
+                    text = title.ifBlank { "调用工具" },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            },
+            extra = {
+                when (message.toolState) {
+                    // 转圈保留主色：整行只有这一处还在"动"，一眼能看出没卡住。
+                    ToolState.RUNNING -> CircularProgressIndicator(
+                        modifier = Modifier.size(10.dp),
+                        strokeWidth = 1.4.dp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    ToolState.DONE -> Icon(Icons.Filled.Check, null, Modifier.size(12.dp), tint = muted)
+                    // 失败是唯一保留彩色的终态：一条叉和一条勾在灰底上太难分辨。
+                    ToolState.FAILED -> Icon(
+                        Icons.Filled.Close, null, Modifier.size(12.dp),
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                    ToolState.NONE -> Unit
+                }
+            },
+            // 没有输出就不给内容槽：StepContent 据此不画箭头、也不接点击。
+            content = if (hasDetail) {
+                {
+                    // 与思考正文同一铺法：完整铺开、不限高、不内滚。内容在归约时已截到
+                    // 2000 字符，不会真的无限长；等宽小字更适合命令输出。
+                    Text(
+                        text = detail,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp
+                        ),
+                        color = muted
+                    )
+                }
+            } else null,
         )
-        when (message.toolState) {
-            ToolState.RUNNING -> CircularProgressIndicator(
-                modifier = Modifier.size(10.dp),
-                strokeWidth = 1.4.dp,
-                color = tint
-            )
-            ToolState.DONE -> Icon(Icons.Filled.Check, null, Modifier.size(12.dp), tint = tint)
-            ToolState.FAILED -> Icon(Icons.Filled.Close, null, Modifier.size(12.dp), tint = tint)
-            ToolState.NONE -> Unit
-        }
     }
 }
 

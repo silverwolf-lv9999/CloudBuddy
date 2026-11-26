@@ -32,6 +32,26 @@ class SessionStoreTest {
         failed: Boolean = false,
     ) = StoredMessage(id, role, text, state, turn, at = 1L, failed = failed)
 
+    /** 工具输出要跟着落盘：重进会话后点开工具行，还能看到当时那条命令打印了什么。 */
+    @Test
+    fun `工具输出跟着消息一起落盘`() {
+        val store = store()
+        store.append(
+            "c1",
+            StoredMessage(
+                id = "1",
+                role = ChatRole.TOOL,
+                text = "运行 npm install",
+                toolState = ToolState.DONE,
+                turn = 0,
+                at = 1L,
+                detail = "added 120 packages",
+            )
+        )
+        val back = store.messages("c1").single()
+        assertEquals("added 120 packages", back.detail)
+    }
+
     @Test
     fun `完整消息流原样读回，思考与工具都不丢`() {
         val store = store()

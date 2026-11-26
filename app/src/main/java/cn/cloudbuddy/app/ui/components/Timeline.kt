@@ -149,15 +149,27 @@ fun windowTimeline(
     )
 }
 
-/** 摘要行文案，例如「5 个步骤 · 3 次工具调用 · 2 段思考」。 */
+/** 摘要行文案，例如「5 个步骤 · 3 次工具调用（读 2 · 运行 1） · 2 段思考」。 */
 fun stepsSummary(steps: List<ChatMessage>): String {
     if (steps.isEmpty()) return "过程"
     val tools = steps.count { it.role == ChatRole.TOOL }
     val thoughts = steps.count { it.role == ChatRole.THOUGHT }
     val notes = steps.count { it.role == ChatRole.ASSISTANT }
+    // 折叠状态下看不到组内的工具行，摘要里带上类别才知道这轮干了什么（读文件？跑命令？）。
+    // 按数量降序、最多列三类，再多就只留个数——摘要行只有一行，不能自己变成正文。
+    val kinds = steps.asSequence()
+        .filter { it.role == ChatRole.TOOL }
+        .map { toolKindOf(it.text.lineSequence().firstOrNull().orEmpty()) }
+        .filter { it != ToolKind.OTHER }
+        .groupingBy { it }
+        .eachCount()
+        .entries
+        .sortedByDescending { it.value }
+        .take(3)
+        .joinToString(" · ") { "${it.key.short} ${it.value}" }
     val parts = buildList {
         add("${steps.size} 个步骤")
-        if (tools > 0) add("$tools 次工具调用")
+        if (tools > 0) add(if (kinds.isBlank()) "$tools 次工具调用" else "$tools 次工具调用（$kinds）")
         if (thoughts > 0) add("$thoughts 段思考")
         if (notes > 0) add("$notes 段过程说明")
     }

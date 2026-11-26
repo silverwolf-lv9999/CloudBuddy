@@ -35,9 +35,10 @@ android {
         applicationId = "cn.cloudbuddy.app"
         minSdk = 26
         targetSdk = 35
-        // 1.6.2：修「键盘弹出后输入框被遮住」——根布局统一消费 IME inset（FIXLOG 1.6.2）。
-        versionCode = 41
-        versionName = "1.6.2"
+        // 1.6.3：深度思考卡片不再自己刷底色；工具行按类别换 MD3 图标（读/写/改/运行/搜/联网/删），
+        // 折叠摘要带类别计数（FIXLOG 1.6.3）。
+        versionCode = 42
+        versionName = "1.6.3"
         vectorDrawables { useSupportLibrary = true }
     }
 

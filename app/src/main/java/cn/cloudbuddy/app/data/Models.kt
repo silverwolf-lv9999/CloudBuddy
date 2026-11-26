@@ -38,6 +38,13 @@ data class ChatMessage(
     val display: String = "",
     /** 用户随这条消息发的附件（只有本机会话有，见 [pushLocal]）。 */
     val attachments: List<MsgAttachment> = emptyList(),
+    /**
+     * 工具调用的输出正文（ACP `tool_call` 的 `content` 文本），供界面点开查看。
+     *
+     * 只做展示：回放给模型时不带它——模型不需要重读自己刚才的工具输出，
+     * 那既费 token，也会让上下文里的历史轮次越滚越胖。
+     */
+    val detail: String = "",
 ) {
     val shownText: String get() = display.ifBlank { text }
 }

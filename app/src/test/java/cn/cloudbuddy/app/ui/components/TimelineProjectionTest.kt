@@ -152,6 +152,25 @@ class TimelineProjectionTest {
         assertEquals("1 个步骤 · 1 次工具调用", stepsSummary(steps))
     }
 
+    /**
+     * 折叠状态下组内工具行不可见，摘要必须自己说清「这轮读了什么、跑了什么」。
+     * 认不出类别的（标题是文件名之类）只计入总数，不进括号，免得摘要里出现「工具 2」。
+     */
+    @Test
+    fun `summary names tool kinds by their titles`() {
+        val steps = listOf(
+            msg("t0", ChatRole.THOUGHT, "想了想", turn = 0),
+            msg("c0", ChatRole.TOOL, "读取文件 config.json", turn = 0),
+            msg("c1", ChatRole.TOOL, "运行 npm install", turn = 0),
+            msg("c2", ChatRole.TOOL, "读取文件 README.md", turn = 0),
+            msg("c3", ChatRole.TOOL, "report.md", turn = 0)
+        )
+        assertEquals(
+            "5 个步骤 · 4 次工具调用（读 2 · 运行 1） · 1 段思考",
+            stepsSummary(steps)
+        )
+    }
+
     @Test
     fun `empty input projects to empty list`() {
         assertTrue(projectTimeline(emptyList()).isEmpty())
