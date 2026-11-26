@@ -35,11 +35,11 @@ android {
         applicationId = "cn.cloudbuddy.app"
         minSdk = 26
         targetSdk = 35
-        // 1.6.9：修 tab 页顶部多出一截空白——外层 Scaffold 的 padding 没被消费，
-        // 内层 TopAppBar 又算了一遍状态栏高度（FIXLOG 1.6.9）。
-        // 名字跳过 1.6.4–1.6.6：FIXLOG 里这三个号已被上游旧条目占用，避免撞号。
-        versionCode = 45
-        versionName = "1.6.9"
+        // 版本号是「发布序号」，不是「改了多少次」：上一个正式 release 是 v1.6.1
+        // （versionCode 40，tag 在 8fe3800），所以这一版就是 1.6.2 / 41。
+        // 一次发布里攒多少修复都只前进一位；没打 tag 的提交不算版本。
+        versionCode = 41
+        versionName = "1.6.2"
         vectorDrawables { useSupportLibrary = true }
     }
 

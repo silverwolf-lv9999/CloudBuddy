@@ -185,7 +185,7 @@
 - **19:xx** 改：`AcpReducer.openTurn`（回放悬在工具上则保留 RUNNING 并拦终态上报）；`reconcile`/`reconcileAfterOpen` 拒绝可疑终态；`scheduleResync` 加「本地静默兜底」但本地有流时不重建；`settleIfStale` 遇 openTurn 不自愈（避免 cancel 真任务）。
 - **19:xx** 新增 2 条 reducer 测试，137；版本 1.4.11 / versionCode 35。
 
-## 2026-11-26 · 折叠组展开变卡 / 行距 / 动画（1.6.9）
+## 2026-11-26 · 折叠组展开变卡 / 行距 / 动画（1.6.2）
 
 - **21:10** 用户反馈「用了 PR 的改动折叠内容变卡了」，随后追问「PR 之前挺流畅，改了之后明明元素更少了，为什么不流畅」——这句是本轮的关键线索。
 - **21:20** 对比 `main` 与 PR 分支的单行结构：PR 把工具行从 `Row` 换成 `Card` + `Column`×2 + `Row(clip+clickable)`，每行多两个 RenderNode（阴影 + `clip` 各一层），外加 `detail.trim()`（可达 2000 字）与 `rememberSaveable`。滚动不重组只重绘 → 绘制层数是主因；流式每帧重组 → 行内计算是主因。
@@ -195,4 +195,18 @@
 - **22:10** 再修条件粒度：原来用会话级 `state`，会话在跑时翻历史组也没动画；改为只判本组 `facts.busy`（有工具在跑 / 有消息在流式）。
 - **22:20** 第二轮改动：`ChatMessage` / `ChatItem` 标 `@Immutable`（未变项直接跳过重组，收益最大）、工具行文案 remember、去掉逐行 `clip`、`drawBehind` 按入参 remember、图标槽去掉空盒、缩略图 420px 降采样 + LruCache、流式正文暂不挂 `SelectionContainer`。
 - **22:30** 测试：`compileBaseDebugKotlin` + `testBaseDebugUnitTest`（331）/ `testFullDebugUnitTest`（367）全绿；`TimelineProjectionTest` 新增 3 项分页用例。
-- **22:40** 文档同步：README（功能/目录/更新日志/单测数）、FIXLOG 两条、PERFLOG 追加一节、ARCHITECTURE 加现状注记、AGENTS 补两个坑（75 动画、76 绘制层与 `@Immutable`）。版本沿用 1.6.9 / versionCode 45。
+- **22:40** 文档同步：README（功能/目录/更新日志/单测数）、FIXLOG 两条、PERFLOG 追加一节、ARCHITECTURE 加现状注记、AGENTS 补两个坑（75 动画、76 绘制层与 `@Immutable`）。版本号回到 1.6.2 / versionCode 41（接 v1.6.1）。
+
+## 2026-11-26 · 版本号回正（发现 PR 把 1.6.1 顶到了 1.6.9）
+
+- 用户问「版本号命名不要搞乱了，看一下上一个 release 是什么」。
+- 查 `git ls-remote --tags`：最后一个 tag 是 **v1.6.1**（8fe3800，versionCode 40）。
+- PR 分支上 `versionCode` / `versionName` 被一路递增：1.6.1/40 → 1.6.2/41 → 1.6.3/42 →
+  1.6.7/43 → 1.6.8/44 → 1.6.9/45。递增理由是「FIXLOG 里 1.6.2–1.6.6 已被占用，避免撞号」——
+  那些号其实属于更早的**本地测试线**（构建过、从未打 tag），不是发布序号。
+- 结论：下一个正式版是 **1.6.2 / versionCode 41**，一次发布攒多少修复都只前进一位。
+- 改动：`app/build.gradle.kts` 版本回 1.6.2/41 并把口径写进注释；FIXLOG 把 1.6.7/1.6.8/1.6.9×3
+  与 1.6.2/1.6.3 两条共七项合并成一条 `## 1.6.2`（内部分 #### 子节），删掉作废版本的 SHA 表；
+  README 更新日志三条并一条、旧测试线条目加标注、`git tag` 示例改 v1.6.2；ARCHITECTURE / PERFLOG
+  的版本标记同步；AGENTS「版本号」补第 0 条（用 tag 说话，不数 commit）；新增
+  `docs/releases/v1.6.2.md`（workflow 优先取它当 Release 说明）。

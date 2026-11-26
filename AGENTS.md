@@ -108,12 +108,17 @@ release APK（`verify.sh` 里的证书 DN 校验通过，证明用的是正式�
 
 `app/build.gradle.kts` 里的 `versionCode` / `versionName`。
 
+0. **版本号是发布序号，不是修改次数**。它接在**上一个打过 tag 的 release** 后面：
+   `git tag --sort=-creatordate | head -1` 查到什么，就在它上面 +1（`v1.6.1` → `1.6.2`）。
+   一次发布里攒十个修复也只前进一位。**不要**按自己提了多少次 commit 往上加——
+   也没有「跳过某个号避免撞号」这回事，撞号是因为本地测试线另起了一套序号，不是正式发布。
 1. **只要用户可能装上不同内容，就必须同时升这两个号**，不能复用。
 2. 需求没变也要升——曾经一版内容被否、回退后用同一个 1.0.6 重新构建，
    手机上装了两份内容不同的同号包，无法区分，只能返工。
 3. 产物命名跟版本走：`dist/CloudBuddy-<versionName>-release.apk`，旧的不要删（已经发过 Release 的版本要留着对照）。
-4. 发布走的顺序是：升版本号 → `bash scripts/verify.sh` 全绿 → 提交推送 → `gh release create`
-   带上 APK 资产和 sha256。跳过任何一步都会出现「GitHub 上的包和仓库源码对不上」。
+4. 发布走的顺序是：升版本号 → `bash scripts/verify.sh` 全绿 → 提交推送 → 打 tag 推 tag
+   （CI 会校验 tag 与 `versionName` 一致，不一致直接失败）。跳过任何一步都会出现
+   「GitHub 上的包和仓库源码对不上」。
 
 ### 文档同步
 

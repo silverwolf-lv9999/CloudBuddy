@@ -7,7 +7,7 @@
 > 结论：**分层方向没错（data / ui 两包），但边界的粒度停留在"技术分层"，没有落到"职责分层"**。
 > 三个文件承担了本该由十几个类分担的工作：`BuddyRepository`、`AppUiState`、`ChatScreen`。
 >
-> **现状（1.6.9，2026-11）**：29 384 行 / 115 个 Kotlin 文件 / 367 项单测（base 档 331）。
+> **现状（1.6.2，2026-11）**：29 384 行 / 115 个 Kotlin 文件 / 367 项单测（base 档 331）。
 > `ui/components` 已按职责拆开（`Timeline` 投影、`ChatParts` 气泡、`ChainOfThought` 步骤行、
 > `ToolKind` 分类、`Markdown` 解析），`data/` 从一个文件长到 41 个，但**入口仍是
 > `BuddyRepository` 一个**，`AppUiState` 仍是全屏共用。也就是说下面第三节的目标结构、
