@@ -748,20 +748,6 @@ internal fun AppearanceSettingsPage(ui: AppUiState, repo: BuddyRepository, onBac
                         }
                     }
                     Divider()
-                    ChipSetting(
-                        title = "导航栏样式",
-                        subtitle = "悬浮：底部居中胶囊，列表下滑自动收起；普通：贴底通栏，始终可见。两者视觉一致，只差位置",
-                        options = listOf(
-                            AppSettings.NAV_FLOATING to "悬浮胶囊",
-                            AppSettings.NAV_DOCKED to "普通通栏"
-                        ),
-                        selected = repo.settings.navBarStyle
-                    ) {
-                        repo.settings.navBarStyle = it
-                        // 根布局用普通 getter 读这个值，不会自己重组；递增一次让它重读。
-                        (context.applicationContext as? cn.cloudbuddy.app.BuddyApp)?.notifyUiSettings()
-                    }
-                    Divider()
                     SettingRow(
                         title = "动态取色",
                         subtitle = "跟随系统壁纸生成配色（Android 12+）",
