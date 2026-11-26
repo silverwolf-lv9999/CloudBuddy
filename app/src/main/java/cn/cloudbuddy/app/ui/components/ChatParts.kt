@@ -622,9 +622,11 @@ private fun ThinkingSeconds(streaming: Boolean) {
  */
 @Composable
 private fun ToolRow(message: ChatMessage) {
-    val title = message.text.lineSequence().firstOrNull().orEmpty()
+    // 工具行的文案在流式期间根本不变，但整组每重组一次这一行也跟着重跑：
+    // 取首行要新建一个序列，detail 动辄两千字，trim 一次就是一次字符串拷贝。
+    val title = remember(message.text) { message.text.lineSequence().firstOrNull().orEmpty() }
     val kind = remember(title) { toolKindOf(title) }
-    val detail = message.detail.trim()
+    val detail = remember(message.detail) { message.detail.trim() }
     val hasDetail = detail.isNotBlank()
     var expanded by rememberSaveable(message.id) { mutableStateOf(false) }
     val muted = MaterialTheme.colorScheme.onSurfaceVariant

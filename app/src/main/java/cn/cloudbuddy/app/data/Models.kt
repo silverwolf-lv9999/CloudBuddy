@@ -1,5 +1,7 @@
 package cn.cloudbuddy.app.data
 
+import androidx.compose.runtime.Immutable
+
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -15,6 +17,12 @@ enum class ChatRole { USER, ASSISTANT, THOUGHT, TOOL }
  * 界面靠它把同一轮里的思考 / 工具调用 / 过程叙述收进一个可展开的组，
  * 只留下用户提问与这一轮的最终回答。
  */
+/**
+ * 全部字段都是 val，且没有任何地方原地修改（[attachments] 每次都是新建列表）。
+ * 标 [Immutable] 是给 Compose 看的：它据此把消息当成稳定参数，流式时没变化的那几百条
+ * 消息可以直接跳过重组——否则每个分片都会把可见的每行工具、每段正文重跑一遍。
+ */
+@Immutable
 data class ChatMessage(
     val id: String,
     val role: ChatRole,

@@ -1,5 +1,6 @@
 package cn.cloudbuddy.app.ui.components
 
+import androidx.compose.runtime.Immutable
 import cn.cloudbuddy.app.data.ChatMessage
 import cn.cloudbuddy.app.data.ChatRole
 import cn.cloudbuddy.app.data.FoldMode
@@ -14,6 +15,8 @@ import cn.cloudbuddy.app.data.ToolState
  * 折叠粒度由 [FoldMode] 决定：整轮折叠时一轮只有一个 [Steps]（[ordinal] = 0），
  * 只折过程时一轮会有多个，夹在几段正文之间。
  */
+/** 投影出来的渲染项，字段全不可变：给 Compose 一个稳定的参数类型，未变的项能直接跳过重组。 */
+@Immutable
 sealed interface ChatItem {
     val key: String
 

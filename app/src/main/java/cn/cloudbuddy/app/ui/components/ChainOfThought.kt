@@ -249,23 +249,30 @@ internal fun ChainStep(
 ) {
     val hasContent = content != null
     val shouldFillMaxWidth = !collapsedAdaptiveWidth || contentVisible
+    // 竖线只有多步时才画（单步 isFirst/isLast 都为真，什么都不画）。但 Modifier 每次
+    // 重组都会重建，等于让这一行的绘制节点失效重画一次——按三个入参 remember 住。
+    val lineModifier = remember(isFirst, isLast, lineColor) {
+        Modifier.drawBehind {
+            val x = 12.dp.toPx()
+            val centerY = size.height / 2
+            val gap = 10.dp.toPx()
+            val strokeWidth = 1.dp.toPx()
+            if (!isFirst) drawLine(lineColor, Offset(x, 0f), Offset(x, centerY - gap), strokeWidth)
+            if (!isLast) drawLine(lineColor, Offset(x, centerY + gap), Offset(x, size.height), strokeWidth)
+        }
+    }
 
     Column(modifier = Modifier.then(if (shouldFillMaxWidth) Modifier.fillMaxWidth() else Modifier)) {
         Row(
-            modifier = Modifier
-                .drawBehind {
-                    val x = 12.dp.toPx()
-                    val centerY = size.height / 2
-                    val gap = 10.dp.toPx()
-                    val strokeWidth = 1.dp.toPx()
-                    if (!isFirst) drawLine(lineColor, Offset(x, 0f), Offset(x, centerY - gap), strokeWidth)
-                    if (!isLast) drawLine(lineColor, Offset(x, centerY + gap), Offset(x, size.height), strokeWidth)
-                }
+            modifier = lineModifier
                 .then(if (shouldFillMaxWidth) Modifier.fillMaxWidth() else Modifier)
                 .then(
                     when {
-                        onClick != null -> Modifier.clip(MaterialTheme.shapes.small).clickable { onClick() }
-                        hasContent -> Modifier.clip(MaterialTheme.shapes.small).clickable { onExpandedChange(!expanded) }
+                        // 不套 clip：圆角本来是给水波纹兜的，代价却是每行多一个 RenderNode
+                        // ——clip 走 graphicsLayer。展开后一轮上百行，滚动时全要重画；
+                        // 行本身没有底色，方角也看不出来。
+                        onClick != null -> Modifier.clickable { onClick() }
+                        hasContent -> Modifier.clickable { onExpandedChange(!expanded) }
                         else -> Modifier
                     }
                 )
