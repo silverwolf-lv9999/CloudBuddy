@@ -10,6 +10,63 @@
 
 ---
 
+## 1.6.9（折叠组展开后发沉：每行一层卡片、一次全量铺开、无条件的尺寸动画）
+
+**现象（用户反馈）**：「用了这个 PR 的改动之后变卡了，明明元素更少了」。
+一轮任务里的中间步骤（工具调用往往上百条）点开展开后，滑动发沉；流式输出期间更明显。
+
+**根因**：视觉上工具行从「两行文字」压成了「一行」，但每行背后多了一整套看不见的东西：
+
+| 位置 | 问题 |
+|---|---|
+| `ToolRow` | 每个工具行套一层 `Card`（阴影 + 圆角裁剪）+ 内部 `Column`×2 + `Row`(`clip`+`clickable`) |
+| `ChainStep`（原 `StepContent`） | `clip` 走 `graphicsLayer`，每行一个 RenderNode；展开后上百行 = 上百个离屏节点 |
+| `StepsGroup` | `animateContentSize()` 无条件挂着，流式时内容每个分片都在变高，动画被反复打断并**逐帧重测整棵子树** |
+| 同函数 | 摘要/运行态/失败标记/有无思考各扫一遍，`stepsSummary` 还要 groupBy + 排序——每重组一次跑四遍 |
+| `ChatMessage` | 没标 `@Immutable`，Compose 不认它是稳定参数，每个分片都把可见的整棵树重跑一遍 |
+| `ToolRow` | `detail.trim()`（一条可达 2000 字）每帧重跑 |
+| `LocalImageThumb` | 原图 `decodeFile`，一张手机照片解码后 48MB |
+
+**改法**：
+
+1. 把步骤布局从卡片里抽成顶层 `ChainStep`，工具行不再套 Card（`ChainOfThought` 的
+   `cardElevation` 默认改为 0）；参数只留一份，各处不再各抄一套导致左边差半个图标。
+2. 展开态先铺**最近 24 步**（`pageSteps` 纯函数 + 单测），更早的压成顶部一行按需补出。
+3. 高度动画改由 `AnimatedVisibility` 播。它只在 `visible` 翻转时动画，
+   流式内容变高不再触发；条件只看**这一组自己**是否还在产出（工具在跑 / 消息在流式）。
+4. 摘要信息合并成一次遍历（`stepsFacts`）并 `remember(steps)` 缓存。
+5. 去掉逐行的 `clip`（行没有底色，方角看不出来）；`drawBehind` 的 Modifier 按入参 remember。
+6. `ChatMessage` / `ChatItem` 标 `@Immutable`——没变化的消息直接跳过重组，这条收益最大。
+7. 工具行文案（首行、`toolKindOf`、`detail.trim()`）全部 remember。
+8. 缩略图按 420px 降采样 + `LruCache<String, Bitmap>(16)`。
+9. 流式正文暂不挂 `SelectionContainer`（每个分片都会重建选区注册表），落地后再挂。
+
+**验证**：`compileBaseDebugKotlin`、`testBaseDebugUnitTest`（331 项）、`testFullDebugUnitTest`（367 项）全绿；
+`TimelineProjectionTest` 新增 3 项分页用例。无真机 profiler，收益幅度需真机复核。
+
+## 1.6.9（折叠组行距过大；以及修性能时把展开动画误关了）
+
+**现象（用户反馈）**：①展开后每行之间空得厉害；②紧接着反馈「展开收回的动画怎么全没了」。
+
+**根因**：①行距是「行内留白 8dp + 组内间距 8dp + 行内留白 8dp」三段相加 = 24dp，
+而一行工具调用本身只有 14dp 高——空档比内容还大。
+②上一版为治卡顿给 `animateContentSize` 加了 `steps.size <= 12` 的条件，步骤多的组
+（恰恰是最需要过渡的）全走了无动画分支；条件里还用了会话级的 `state`，
+导致会话在跑时去翻历史组也没有动画。
+
+**改法**：`ChainStep` 增加 `rowPadding` 参数（工具行 8→4dp）、组内 `spacedBy` 8→4dp；
+高度动画交给 `AnimatedVisibility`（见上一条），条件收敛为「本组是否还在产出」，
+与会话整体状态解耦。
+
+**教训**：用 `animateContentSize` 时，它的代价是「对任何高度变化都起动画」。
+想只保留交互那一下，得用 `AnimatedVisibility`；用条件去卡 `animateContentSize`
+会把正常交互一起卡掉。
+
+**验证**：编译 + 单测全绿。
+
+---
+
+
 ## 1.6.9（tab 页顶部多出一截空白：外层 Scaffold 的 padding 没被消费）
 
 **现象**：「云端会话」「工作区」「设置」三个 tab 页的标题栏下面与状态栏之间，多出一段空白，

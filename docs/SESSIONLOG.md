@@ -184,3 +184,15 @@
 - **19:xx** 定位两处：①`finishReplay` 擦掉 running 工具后 `turnActive`/`hasRunningTool` 全假，一条 completed 上报把状态写成 DONE；②`scheduleResync` 只认 `updatedAt` 前进，工具期记录不动 → 不补历史，而重进后的连接早就不推事件。
 - **19:xx** 改：`AcpReducer.openTurn`（回放悬在工具上则保留 RUNNING 并拦终态上报）；`reconcile`/`reconcileAfterOpen` 拒绝可疑终态；`scheduleResync` 加「本地静默兜底」但本地有流时不重建；`settleIfStale` 遇 openTurn 不自愈（避免 cancel 真任务）。
 - **19:xx** 新增 2 条 reducer 测试，137；版本 1.4.11 / versionCode 35。
+
+## 2026-11-26 · 折叠组展开变卡 / 行距 / 动画（1.6.9）
+
+- **21:10** 用户反馈「用了 PR 的改动折叠内容变卡了」，随后追问「PR 之前挺流畅，改了之后明明元素更少了，为什么不流畅」——这句是本轮的关键线索。
+- **21:20** 对比 `main` 与 PR 分支的单行结构：PR 把工具行从 `Row` 换成 `Card` + `Column`×2 + `Row(clip+clickable)`，每行多两个 RenderNode（阴影 + `clip` 各一层），外加 `detail.trim()`（可达 2000 字）与 `rememberSaveable`。滚动不重组只重绘 → 绘制层数是主因；流式每帧重组 → 行内计算是主因。
+- **21:35** 第一轮改动：抽出顶层 `ChainStep`、工具行去掉 Card（`cardElevation` 默认 0）、展开按 24 步分页（`pageSteps` 纯函数）、摘要合并成一次遍历（`stepsFacts`）、`animateContentSize` 加条件。
+- **21:50** 用户反馈「行距太大」：行距是「留白 8 + 间距 8 + 留白 8」三段相加 = 24dp，而行本身只有 14dp 高。改 `ChainStep.rowPadding`（工具行 4dp）+ 组内 `spacedBy` 4dp。
+- **22:00** 用户反馈「展开收回的动画全没了」：上一版把动画条件写成 `steps.size <= 12`，长组全走了无动画分支。改用 `AnimatedVisibility` + `expandVertically/shrinkVertically`——只在 `visible` 翻转时播，流式期间不播。
+- **22:10** 再修条件粒度：原来用会话级 `state`，会话在跑时翻历史组也没动画；改为只判本组 `facts.busy`（有工具在跑 / 有消息在流式）。
+- **22:20** 第二轮改动：`ChatMessage` / `ChatItem` 标 `@Immutable`（未变项直接跳过重组，收益最大）、工具行文案 remember、去掉逐行 `clip`、`drawBehind` 按入参 remember、图标槽去掉空盒、缩略图 420px 降采样 + LruCache、流式正文暂不挂 `SelectionContainer`。
+- **22:30** 测试：`compileBaseDebugKotlin` + `testBaseDebugUnitTest`（331）/ `testFullDebugUnitTest`（367）全绿；`TimelineProjectionTest` 新增 3 项分页用例。
+- **22:40** 文档同步：README（功能/目录/更新日志/单测数）、FIXLOG 两条、PERFLOG 追加一节、ARCHITECTURE 加现状注记、AGENTS 补两个坑（75 动画、76 绘制层与 `@Immutable`）。版本沿用 1.6.9 / versionCode 45。

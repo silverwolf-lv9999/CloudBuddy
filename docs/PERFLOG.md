@@ -119,3 +119,54 @@ projectTimeline(visible.filter { it.turn >= keepFrom }) // 只投影尾部窗口
 - `TimelineProjectionTest` 新增 5 项开窗用例（尾部窗口、步骤组不被切碎、0 = 全部、
   短会话不开窗、空白分片不计数），共 55 项全绿。
 - 仍是**无真机**：窗口轮数、回放合并间隔这两个值需要真实长会话复核。
+
+---
+
+# 追加（1.6.9）：折叠组展开后的开销
+
+> 背景：用户反馈「用了这个 PR 的改动之后变卡了，明明元素更少了」。
+> 这句话本身就是线索——**视觉元素变少 ≠ 绘制元素变少**。1.6.3 把工具行从「两行文字」
+> 压成「一行」，但那一行背后多了一整套看不见的结构。
+
+## 一、逐行清点（一轮任务可达上百行）
+
+| 项 | PR 前 | PR 后 | 代价 |
+|---|---|---|---|
+| 容器 | `Row` | `Card` + `Column`×2 + `Row` | 每行一层阴影 + 两层裁剪 |
+| 裁剪 | 无 | `clip`（走 `graphicsLayer`） | **每行一个 RenderNode** |
+| 文案 | 只显示 `text` | 另算首行、`toolKindOf`、`detail.trim()` | 每帧一次 2000 字字符串拷贝 |
+| 状态 | 无 | `rememberSaveable(message.id)` | 每行一次 registry 注册 |
+| 布局节点 | 3 | 图标槽 3 层 `Box` | 每行多 2 个节点 |
+
+滚动时不重组，只重绘——所以**绘制层数**（RenderNode 数量）是这一档卡顿的主因；
+流式时每帧重组，**每行的计算**（trim / 图标分类）才是主因。两类问题要分开治。
+
+## 二、还有一个与结构无关的放大因素
+
+`ChatMessage` 没标 `@Immutable`。Compose 因此不认为消息是稳定参数，
+每个分片进来都会把可见的整棵树重跑一遍——**这跟「元素多少」无关，只跟消息条数有关**。
+标记之后，没变化的消息（绝大多数）直接跳过重组。这条的收益大于上面所有结构优化。
+
+## 三、尺寸动画的两条路
+
+| 做法 | 什么时候动画 | 问题 |
+|---|---|---|
+| `animateContentSize()` | **任何**高度变化 | 流式内容每分片长高都会触发，动画反复被打断 + 逐帧重测整棵子树 |
+| `AnimatedVisibility` + `expandVertically` | 只在 `visible` 翻转 | 交互那一下才有动画，流式期间完全静止 |
+
+第一版给 `animateContentSize` 加了「步骤 ≤ 12 才动画」的开关，结果长组（最需要过渡的）
+全没了动画——**用条件卡 `animateContentSize` 会把正常交互一起卡掉**，这是这次返工的教训。
+
+## 四、展开态分页
+
+`pageSteps(steps, showAll, 24)`：先铺最近 24 步，更早的压成顶部一行。
+LazyColumn 的单个 item 里没有懒加载，全量铺开 = 一次性组合并测量上百个卡片，
+点开必掉一帧。分页是纯函数，`TimelineProjectionTest` 有 3 项覆盖。
+
+## 五、验证
+
+- `compileBaseDebugKotlin`、`testBaseDebugUnitTest`（331 项）、`testFullDebugUnitTest`（367 项）全绿。
+- **没有真机 profiler**，以上仍是按 Compose 开销模型做的静态归因。若真机上仍不顺，
+  需要区分「点开那一下」与「展开后滚动」——前者是测量问题（继续压低首帧组合量），
+  后者是绘制问题（继续削 RenderNode，例如折叠组背景从 `Surface` 换成 `drawBehind`）。
+

@@ -1,5 +1,9 @@
 # 开发记录
 
+> **这份笔记停留在 1.0.x**（调研结论、构建环境、早期待验证项）。后续版本的结论以
+> `docs/FIXLOG.md`（改了什么、为什么）和 `docs/PERFLOG.md`（性能排查）为准；
+> `docs/ARCHITECTURE.md` 头部有当前代码规模。下面的「待真机验证」多数已经过真机复核。
+
 ## 1. 调研
 
 - 参考仓库 [Wearbuddy](https://github.com/Oride-it/Wearbuddy)（Wear OS 客户端）：`docs/workbuddy-protocol.md` 记录了官方 web 端与 Flutter APK 逆向得到的端点；`data/` 下是完整的云端会话客户端实现（`WorkBuddyCloudClient.kt`、`AcpEvents.kt`、`NativeLogin.kt`、`SandboxFiles.kt`）。
