@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
@@ -225,7 +226,14 @@ private fun AppRoot(repo: BuddyRepository) {
                                 },
                                 containerColor = MaterialTheme.colorScheme.background
                             ) { padding ->
-                                Box(Modifier.fillMaxSize().padding(padding)) {
+                                // consumeWindowInsets 是这里的关键：这一层 Scaffold 的 padding
+                                // 已经把内容整体让到状态栏下方（顶部）和导航栏上方（底部），
+                                // 但 Modifier.padding 只挪位置、**不消费** inset。里面每个页面
+                                // 自带的 TopAppBar 会再读一次 WindowInsets.systemBars，于是状态栏
+                                // 高度被算两遍，页面顶部凭空多出一截空白（导航栏同理，底部多一截）。
+                                // 把用掉的这份 padding 标记成已消费，内层读到的对应 inset 归零。
+                                // 同一个原因也解释了为什么聊天页没有这个空白：它渲染在这一层之外。
+                                Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                                     when (currentTab) {
                                         Tab.SESSIONS -> SessionsScreen(
                                             conversations = ui.conversations,

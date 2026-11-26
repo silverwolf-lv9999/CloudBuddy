@@ -10,6 +10,63 @@
 
 ---
 
+## 1.6.9（tab 页顶部多出一截空白：外层 Scaffold 的 padding 没被消费）
+
+**现象**：「云端会话」「工作区」「设置」三个 tab 页的标题栏下面与状态栏之间，多出一段空白，
+高度和状态栏差不多。聊天页（进入某个会话后）没有这个空白。
+
+**根因**：`MainActivity` 里 tab 是在一层带 `NavigationBar` 的 **Scaffold** 里渲染的：
+
+```kotlin
+Scaffold(bottomBar = { NavigationBar { … } }) { padding ->
+    Box(Modifier.fillMaxSize().padding(padding)) {   // ← 只挪了位置，没消费 inset
+        SessionsScreen(…)   // 里面又是一个 Scaffold + TopAppBar
+    }
+}
+```
+
+外层 Scaffold 没有 topBar，`contentWindowInsets` 默认 `systemBars`，所以它的 `padding.top`
+**等于状态栏高度**；`Modifier.padding` 把内容整体推到状态栏下方，但 `padding(PaddingValues)`
+只改变布局位置，**不会消费窗口 inset**。
+
+内层每个页面自己的 `TopAppBar` 默认 `windowInsets = TopAppBarDefaults.windowInsets`
+（`systemBars.only(Horizontal + Top)`），它再读一次状态栏高度加在自己上方——于是同一段
+状态栏被算了两遍，页面上方凭空多出一截。
+
+聊天页没这个空白，是因为它渲染在这层 nav Scaffold **之外**，只吃到一次 inset。同理，
+`WorkspaceScreen` 的底部、`SessionsScreen` 列表底部此前也多出一截导航栏高度（同一个原因）。
+
+**改法**：在应用外层 padding 的地方同时声明"这份 inset 已经用掉了"：
+
+```kotlin
+Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding))
+```
+
+`consumeWindowInsets(PaddingValues)` 会把用掉的这份高度从 `statusBars` / `navigationBars`
+里扣掉，内层 Scaffold 与 TopAppBar 再读时就归零了。这是官方文档给"Scaffold 套 Scaffold"
+的写法，不是绕路。
+
+一处改动同时覆盖：三个 tab 页、以及设置里的所有二级页（模型 ID、提示词、外观…，它们各自
+也是 `SettingsPageScaffold` + `TopAppBar`）。没有 topBar 的页面不受影响——nav Scaffold 的
+padding 仍把内容让到状态栏下方，视觉结果不变。
+
+### 验证
+
+- 编译：base / full / plus 三包 `BUILD SUCCESSFUL`
+- 单测：full **362 项全绿**；Lint：full **0 error**
+- 签名：三包 `apksigner verify` 通过；版本 1.6.9（versionCode 45）
+
+| 包 | 大小 | SHA-256 |
+| --- | --- | --- |
+| full | 23,440,973 B | `83c1632c78064bd5ee4d494e30f4bb3dfe54e8f5bad8d803590f53630287bcf8` |
+| base | 18,324,200 B | `8989d27d61f53ddea2b61bd8319d3e1d6366fbf5e57f2a859db17d67ca65e5ca` |
+| plus | 23,440,981 B | `1e00a0e82265ec37f08bb3f9818b02a741d2a1d5b1a0ce2af9ea0fdbf7a121df` |
+
+> 这是布局改动，单测覆盖不到，需要真机/模拟器目视确认：三个 tab 页标题紧贴状态栏下方，
+> 列表底部与导航栏之间也不再多一截。
+
+---
+
 ## 1.6.8（复制入口只给回答；「复制全部」改左对齐）
 
 1.6.7 铺得过了头，按反馈收回两处：

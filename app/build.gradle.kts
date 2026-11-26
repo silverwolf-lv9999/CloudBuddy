@@ -35,10 +35,11 @@ android {
         applicationId = "cn.cloudbuddy.app"
         minSdk = 26
         targetSdk = 35
-        // 1.6.8：回答正文可长按选中，底部加分隔线与左对齐的「复制全部」（FIXLOG 1.6.8）。
+        // 1.6.9：修 tab 页顶部多出一截空白——外层 Scaffold 的 padding 没被消费，
+        // 内层 TopAppBar 又算了一遍状态栏高度（FIXLOG 1.6.9）。
         // 名字跳过 1.6.4–1.6.6：FIXLOG 里这三个号已被上游旧条目占用，避免撞号。
-        versionCode = 44
-        versionName = "1.6.8"
+        versionCode = 45
+        versionName = "1.6.9"
         vectorDrawables { useSupportLibrary = true }
     }
 
