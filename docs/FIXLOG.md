@@ -10,6 +10,68 @@
 
 ---
 
+## 1.6.2（键盘弹出后输入框被遮住：根布局统一消费 IME inset）
+
+> 版本号说明：接上游主线 1.6.1 / 40 之后，本条为 1.6.2 / 41。FIXLOG 下方已有的
+> 1.6.2–1.6.6 属于 1.4.12 章节里声明作废的本地测试线，与本条没有继承关系。
+
+### 现象
+
+用户反馈：一点输入框、键盘弹起来，界面底部就被盖住一块；聊天页的输入框也在这个范围里
+（键盘压住输入框，只能凭感觉打字）。旧机型上看着正常，新机型明显。
+
+### 根因
+
+`MainActivity.onCreate` 调了 `enableEdgeToEdge()`，窗口变成 `decorFitsSystemWindows=false`。
+从 API 30 起，这种模式下清单里的 `android:windowSoftInputMode="adjustResize"`
+**不再缩放窗口**，键盘高度只以 `WindowInsets.ime` 下发，必须由 Compose 自己消费。
+
+代码里有人知道这件事，但只做了三处：`LoginScreen.kt:86`、`ChatScreen.kt:361/771`、
+`TerminalScreen.kt:451`。其余全漏了——`SettingsPageScaffold`、设置首页的 `LazyColumn`、
+`WorkspaceScreen`、完整版的 `ProviderManager` 一个 `imePadding` 都没有。
+
+而 `Scaffold` 的 `padding` 只含 systemBars、**不含 ime**，所以 `Modifier.padding(padding)`
+在键盘弹出时底边距不会变大：列表底部就停在键盘下面，还滚不到。
+
+聊天页看似"有 `imePadding` 却仍被挡"，原因是那个 `imePadding` 挂在 `Scaffold` 的
+`content` 列上，而输入框是 `Scaffold` 的 `bottomBar`——两者是兄弟节点，兄弟的 inset
+消费不到彼此身上，底栏从来没被抬起来过。
+
+### 改法
+
+在 `AppRoot` 最外层 `Box` 上加一次 `.imePadding()`（`MainActivity.kt:128`），
+等价于恢复旧的 `adjustResize` 行为，一次覆盖所有页面：
+
+- 子树整体让位，`Scaffold` 底栏（聊天输入框）自然落到键盘上方；
+- 设置、工作区、提供商页不用逐页改；
+- 子页已有的 `imePadding()` 不会重复留白：inset 被父级消费后，子级读到的是 0。
+
+没动 `enableEdgeToEdge()`：状态栏/导航栏透明沉浸是产品要的效果，代价只是 inset 得自己管。
+
+**已知未覆盖**：`AlertDialog` / `BasicAlertDialog`（重命名会话、新建文件夹、添加提供商）
+是独立窗口，不在这棵 Compose 树里，根布局管不到。它们走对话框窗口自己的
+`decorFitsSystemWindows`，多数机型由系统缩放；若某些 ROM 仍遮挡，再单独给弹窗补
+`DialogProperties` + 内容 `imePadding`。
+
+### 验证
+
+- 编译：base / full / plus 三个 debug 包 `BUILD SUCCESSFUL`（157 tasks）
+- 单测：316 + 352 + 352 = **1020 项，0 失败 0 错误**
+- lint：三份报告均 **0 error**
+- 签名：`apksigner verify` 三包通过；版本 1.6.2（versionCode 41）
+
+| 包 | 大小 | sha256 |
+|---|---|---|
+| full | 23,424,589 B | `ded20e50a09dd4e5c725053ae140dfcd4e28d65fd167cca0d504601912b2ee2c` |
+| base | 18,307,816 B | `70d81277608da711879fb1886333568d566f085c5e94d84a5f6dd40d2af52afe` |
+| plus | 23,424,597 B | `88721aa771e504e3e0ffc5a9b1957370d6bab4938abdee2f0e9527d5cc9b99c1` |
+
+**待真机确认**：聊天页输入框是否随键盘上移；若某机型仍被挡，说明该 ROM 在
+`decorFitsSystemWindows=false` 时既不准窗口缩放也不下发 ime inset，需要再加一层
+`ViewCompat.setOnApplyWindowInsetsListener` 兜底。
+
+---
+
 ## 1.4.12（同步上游；一份代码出三个包）
 
 > 版本号说明：`origin/main` 停在 1.4.11 / 35，所以本版接着是 **1.4.12 / 36**。

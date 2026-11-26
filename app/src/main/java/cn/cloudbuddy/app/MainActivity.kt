@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -124,7 +125,16 @@ private fun AppRoot(repo: BuddyRepository) {
         repo.events.collect { message -> snackbar.showSnackbar(message) }
     }
 
-    Box(Modifier.fillMaxSize()) {
+    // 键盘让位放在最外层，只处理一次。
+    //
+    // enableEdgeToEdge() 把窗口设成 decorFitsSystemWindows=false 之后，清单里的
+    // adjustResize 在 API 30+ 不再缩放窗口，键盘高度只以 WindowInsets.ime 的形式下发，
+    // 必须由 Compose 自己消费。此前只有登录页/聊天页/终端页各自加了 imePadding()，
+    // 设置、工作区、提供商等页面全都漏了——键盘一弹就把底部输入框盖住。
+    // 放在这里等于恢复旧的 adjustResize 行为，一次覆盖所有页面。
+    //
+    // 子页面上已有的 imePadding() 不会重复留白：insets 被父级消费后，子级读到的是 0。
+    Box(Modifier.fillMaxSize().imePadding()) {
         when {
             ui.booting -> SplashScreen()
 

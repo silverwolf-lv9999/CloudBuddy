@@ -35,10 +35,9 @@ android {
         applicationId = "cn.cloudbuddy.app"
         minSdk = 26
         targetSdk = 35
-        // 1.6.1：设置首页改显示套餐余额、回退胶囊导航栏、修「新会话首条消息后
-        // 模型被云端默认值（auto）顶掉」（FIXLOG 1.6.1）。
-        versionCode = 40
-        versionName = "1.6.1"
+        // 1.6.2：修「键盘弹出后输入框被遮住」——根布局统一消费 IME inset（FIXLOG 1.6.2）。
+        versionCode = 41
+        versionName = "1.6.2"
         vectorDrawables { useSupportLibrary = true }
     }
 
