@@ -592,6 +592,16 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean("dynamic_color", true)
         set(value) = prefs.edit().putBoolean("dynamic_color", value).apply()
 
+    /**
+     * 底部导航栏形态：[NAV_FLOATING] 悬浮胶囊（默认）或 [NAV_DOCKED] 通栏。
+     *
+     * 悬浮态会在列表下滑时自动收起，多留一行内容高度；通栏始终可见。
+     * 两者共用同一套胶囊选中视觉，切换只影响位置与收起行为。
+     */
+    var navBarStyle: String
+        get() = prefs.getString("nav_bar_style", NAV_FLOATING).orEmpty()
+        set(value) = prefs.edit().putString("nav_bar_style", value).apply()
+
     /** 是否默认展开模型思考过程。 */
     var showThoughts: Boolean
         get() = prefs.getBoolean("show_thoughts", false)
@@ -751,6 +761,12 @@ class AppSettings(context: Context) {
         const val THEME_SYSTEM = "system"
         const val THEME_LIGHT = "light"
         const val THEME_DARK = "dark"
+
+        /** 底部导航：悬浮胶囊（默认，下滑自动收起）。 */
+        const val NAV_FLOATING = "floating"
+
+        /** 底部导航：贴底通栏。两种形态视觉语言相同，只差位置与是否自动收起。 */
+        const val NAV_DOCKED = "docked"
 
         /** 推理引擎：走云端会话协议（默认，扣积分）。 */
         const val ENGINE_WB = "wb"

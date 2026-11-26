@@ -6,6 +6,24 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalLayoutDirection
+import cn.cloudbuddy.app.ui.components.AppNavBar
+import cn.cloudbuddy.app.ui.components.NavBarItem
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -17,6 +35,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -30,8 +49,6 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -83,7 +100,9 @@ class MainActivity : ComponentActivity() {
         val app = application as BuddyApp
         setContent {
             val tick by app.themeTick.collectAsState()
-            val settings = remember(tick) { app.settings }
+            // 导航栏形态这类本机外观设置不走主题流，单独一个计数触发重读。
+            val uiTick by app.uiTick.collectAsState()
+            val settings = remember(tick, uiTick) { app.settings }
             val dark = when (settings.themeMode) {
                 AppSettings.THEME_LIGHT -> false
                 AppSettings.THEME_DARK -> true
@@ -115,6 +134,8 @@ private fun AppRoot(repo: BuddyRepository) {
     val scope = rememberCoroutineScope()
 
     var tab by remember { mutableStateOf(Tab.SESSIONS) }
+    // 导航项只建一次：每次重组都新建列表会让导航栏的边界测量失效、指示器闪一下。
+    val navItems = remember { Tab.entries.map { NavBarItem(it.label, it.icon) } }
     var preview by remember { mutableStateOf<PreviewTarget?>(null) }
     // 命令行窗口是盖在上面的一层：它在两种引擎下都能用（沙箱是同一个），
     // 所以不做成 Tab，免得用户以为"只有自定义模式才有终端"。
@@ -200,22 +221,70 @@ private fun AppRoot(repo: BuddyRepository) {
                                 onOpenSettings = { tab = Tab.SETTINGS }
                             )
                         } else {
+                            // 悬浮形态：列表下滑时收起、上滑或触顶浮出（照 PR #1 的
+                            // NestedScrollConnection 做法）。通栏形态始终可见，不参与收起。
+                            val floatingBar = repo.settings.navBarStyle != AppSettings.NAV_DOCKED
+                            var barVisible by remember { mutableStateOf(true) }
+                            val hideOnScroll = remember {
+                                object : NestedScrollConnection {
+                                    override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                                        if (source == NestedScrollSource.UserInput) {
+                                            if (available.y < -2f) barVisible = false
+                                            else if (available.y > 2f) barVisible = true
+                                        }
+                                        return Offset.Zero
+                                    }
+                                }
+                            }
                             Scaffold(
                                 bottomBar = {
-                                    NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                                        Tab.entries.forEach { item ->
-                                            NavigationBarItem(
-                                                selected = tab == item,
-                                                onClick = { tab = item },
-                                                icon = { Icon(item.icon, item.label) },
-                                                label = { Text(item.label) }
-                                            )
+                                    if (floatingBar) {
+                                        Box(Modifier.fillMaxWidth()) {
+                                            AnimatedVisibility(
+                                                visible = barVisible,
+                                                enter = slideInVertically { it } + fadeIn(),
+                                                exit = slideOutVertically { it } + fadeOut(),
+                                                modifier = Modifier.align(Alignment.BottomCenter)
+                                            ) {
+                                                AppNavBar(
+                                                    items = navItems,
+                                                    selectedIndex = Tab.entries.indexOf(currentTab),
+                                                    onSelect = { tab = Tab.entries[it] },
+                                                    floating = true
+                                                )
+                                            }
                                         }
+                                    } else {
+                                        AppNavBar(
+                                            items = navItems,
+                                            selectedIndex = Tab.entries.indexOf(currentTab),
+                                            onSelect = { tab = Tab.entries[it] },
+                                            floating = false
+                                        )
                                     }
                                 },
                                 containerColor = MaterialTheme.colorScheme.background
                             ) { padding ->
-                                Box(Modifier.fillMaxSize().padding(padding)) {
+                                // 胶囊收起后 bottomBar 高度归零，只按 innerPadding 排会把内容
+                                // 顶到系统导航栏下面；取两者较大值，收起态仍保留 navigationBars 避让。
+                                val navInset = WindowInsets.navigationBars
+                                    .asPaddingValues()
+                                    .calculateBottomPadding()
+                                val contentBottom = maxOf(padding.calculateBottomPadding(), navInset)
+                                val layoutDir = LocalLayoutDirection.current
+                                Box(
+                                    Modifier
+                                        .fillMaxSize()
+                                        .nestedScroll(hideOnScroll)
+                                        .padding(
+                                            PaddingValues(
+                                                start = padding.calculateStartPadding(layoutDir),
+                                                top = padding.calculateTopPadding(),
+                                                end = padding.calculateEndPadding(layoutDir),
+                                                bottom = contentBottom
+                                            )
+                                        )
+                                ) {
                                     when (currentTab) {
                                         Tab.SESSIONS -> SessionsScreen(
                                             conversations = ui.conversations,
