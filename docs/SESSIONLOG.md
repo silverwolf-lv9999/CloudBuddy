@@ -210,3 +210,9 @@
   README 更新日志三条并一条、旧测试线条目加标注、`git tag` 示例改 v1.6.2；ARCHITECTURE / PERFLOG
   的版本标记同步；AGENTS「版本号」补第 0 条（用 tag 说话，不数 commit）；新增
   `docs/releases/v1.6.2.md`（workflow 优先取它当 Release 说明）。
+- **23:14** 打 tag `v1.6.2` 推送（首次 `git push origin v1.6.2` 超时，重试一次成功），CI run
+  45847110016 触发；**23:27** 完成，`success`。Release 三个包：base 1,769,215 B / full 2,867,652 B /
+  plus 2,867,660 B，body 取自 `docs/releases/v1.6.2.md`。
+- **23:28** 下载校验：`aapt2 dump badging` 两个包均为 `versionCode='41' versionName='1.6.2'`、
+  包名 `cn.cloudbuddy.app`；`apksigner verify --print-certs` 的 SHA-256 为
+  `5929b6f4…468f90`，与 README 记录的正式密钥指纹一致。本地 `testFullDebugUnitTest` 367 项全绿。
