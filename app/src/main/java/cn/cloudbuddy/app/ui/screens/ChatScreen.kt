@@ -456,6 +456,7 @@ fun ChatScreen(
                                         expanded = expanded,
                                         state = ui.state,
                                         showThoughts = repo.settings.showThoughts,
+                                        groupKey = item.key,
                                         onToggle = { repo.toggleSteps(item.key, !expanded) }
                                     )
                                 }

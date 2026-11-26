@@ -162,6 +162,32 @@ fun windowTimeline(
     )
 }
 
+/** 展开态一次最多铺多少条明细。 */
+const val STEPS_PAGE_SIZE = 24
+
+/** 展开态的分页结果：[rows] 是这一屏要铺的明细，[hidden] 是被压在上面的条数。 */
+data class StepsPage(val rows: List<ChatMessage>, val hidden: Int) {
+    val hasMore: Boolean get() = hidden > 0
+}
+
+/**
+ * 折叠组展开时按页取尾部。
+ *
+ * 一轮长任务能攒上百步（读一个文件、跑一条命令都各算一步）。LazyColumn 的单个 item
+ * 里没有懒加载，全量铺开等于一次性组合几十上百个卡片，首帧测量必然掉一帧；
+ * 先铺最近的一页，更早的压进顶部一行里按需补出来。
+ */
+fun pageSteps(
+    steps: List<ChatMessage>,
+    showAll: Boolean,
+    size: Int = STEPS_PAGE_SIZE
+): StepsPage =
+    if (showAll || size <= 0 || steps.size <= size) {
+        StepsPage(steps, 0)
+    } else {
+        StepsPage(steps.subList(steps.size - size, steps.size), steps.size - size)
+    }
+
 /** 摘要行文案，例如「5 个步骤 · 3 次工具调用（读 2 · 运行 1） · 2 段思考」。 */
 fun stepsSummary(steps: List<ChatMessage>): String {
     if (steps.isEmpty()) return "过程"

@@ -343,4 +343,39 @@ class TimelineProjectionTest {
         // 空白分片本来就不渲染，也不该被算进「还有 N 条未加载」。
         assertEquals(3, window.hiddenMessages)
     }
+
+    @Test
+    fun `steps page keeps the tail and reports what is hidden`() {
+        val steps = (0 until 30).map { msg("t$it", ChatRole.TOOL, "Read $it", toolState = ToolState.DONE) }
+
+        val page = pageSteps(steps, showAll = false, size = 24)
+
+        assertEquals(24, page.rows.size)
+        assertEquals(6, page.hidden)
+        assertTrue(page.hasMore)
+        // 铺的是最近的一页：最新的那条必须在，最旧的那条被压住。
+        assertEquals("t29", page.rows.last().id)
+        assertEquals("t6", page.rows.first().id)
+    }
+
+    @Test
+    fun `short steps list is not paged`() {
+        val steps = (0 until 5).map { msg("t$it", ChatRole.TOOL, "Read $it", toolState = ToolState.DONE) }
+
+        val page = pageSteps(steps, showAll = false, size = 24)
+
+        assertEquals(5, page.rows.size)
+        assertEquals(0, page.hidden)
+        assertTrue(!page.hasMore)
+    }
+
+    @Test
+    fun `asking for all steps drops the page boundary`() {
+        val steps = (0 until 30).map { msg("t$it", ChatRole.TOOL, "Read $it", toolState = ToolState.DONE) }
+
+        val page = pageSteps(steps, showAll = true, size = 24)
+
+        assertEquals(30, page.rows.size)
+        assertEquals(0, page.hidden)
+    }
 }

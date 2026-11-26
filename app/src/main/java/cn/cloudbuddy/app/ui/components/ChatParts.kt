@@ -183,19 +183,23 @@ fun MessageRow(message: ChatMessage, showThoughts: Boolean, finalAnswer: Boolean
                         color = MaterialTheme.colorScheme.onErrorContainer
                     )
                 }
+            } else if (message.streaming) {
+                // 流式期间不接选区：内容每个分片都在重排，SelectionContainer 会跟着重建
+                // 整棵选区注册表，纯亏。等这一轮落地再挂上——用户要选也是读完了才选。
+                Column {
+                    MarkdownText(markdown = message.text, baseSize = 15f)
+                    TypingCursor()
+                }
             } else {
                 // 正文本身可长按选中（跨段落、跨表格一起选）；
                 // 代码块自带一个内层 SelectionContainer 和「复制」按钮，各管一段。
                 SelectionContainer {
-                    Column {
-                        MarkdownText(markdown = message.text, baseSize = 15f)
-                        if (message.streaming) TypingCursor()
-                    }
+                    Column { MarkdownText(markdown = message.text, baseSize = 15f) }
                 }
                 // 底栏只给这一轮的最终回答：过程中陆续输出的段落也是独立消息，
                 // 每段都挂一条分隔线 + 「复制全部」会把回答切成一截一截，复制入口
-                // 也跟着重复。流式期间同样不铺——内容还在长，分隔线会一路往下跳。
-                if (!message.streaming && finalAnswer) MessageFooter(message.shownText)
+                // 也跟着重复。
+                if (finalAnswer) MessageFooter(message.shownText)
             }
         }
 
@@ -224,23 +228,32 @@ fun StepsGroup(
     expanded: Boolean,
     state: TurnState,
     showThoughts: Boolean,
+    groupKey: String,
     onToggle: () -> Unit
 ) {
-    val running = stepsRunning(steps)
-    val failed = stepsFailed(steps)
+    // 摘要、运行态、失败标记一次算完并缓存：流式期间每来一个分片这一组都会重组，
+    // 逐帧跑几遍全量遍历 + groupBy + 排序，一轮上百步时就是实打实的掉帧。
+    val facts = remember(steps) { stepsFacts(steps) }
+    val running = facts.running
+    val failed = facts.failed
     val accent = when {
         failed -> MaterialTheme.colorScheme.error
         running || state == TurnState.RUNNING -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    val current = steps.lastOrNull { it.role == ChatRole.TOOL && it.toolState == ToolState.RUNNING }
-    val label = when {
-        current != null -> "正在 " + current.text.lineSequence().firstOrNull().orEmpty().take(28)
-        else -> stepsSummary(steps)
-    }
-    val hasThought = steps.any { it.role == ChatRole.THOUGHT }
-    // 箭头旋转 + 卡片高度动画：抄 rikkahub 的 Details / ChainOfThought 过渡，展开收回都有动画。
+    val label = facts.current
+        ?.let { "正在 " + it.text.lineSequence().firstOrNull().orEmpty().take(28) }
+        ?: facts.summary
+    // 箭头旋转只动 graphicsLayer，很便宜；高度动画要逐帧重测整棵子树，得挑场合开。
     val rotation by animateFloatAsState(targetValue = if (expanded) 180f else 0f, label = "steps-arrow")
+
+    // 展开态先铺最近一页，余下的压在顶部一行里：一轮长任务能攒上百步，
+    // 一次性组合并测量几十张卡片，点开就会先卡一下。
+    var showAll by rememberSaveable(groupKey) { mutableStateOf(false) }
+    val page = remember(steps, showAll) { pageSteps(steps, showAll) }
+    // 高度动画只在步骤不多、且这一轮已经跑完时开：流式期间内容每个分片都在变高，
+    // animateContentSize 会被反复打断，并逐帧重测量整棵树（含 Markdown 和卡片）。
+    val animateHeight = steps.size <= 12 && !running && state != TurnState.RUNNING
 
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -250,7 +263,7 @@ fun StepsGroup(
         Column(
             modifier = Modifier
                 .padding(horizontal = 12.dp, vertical = 6.dp)
-                .animateContentSize()
+                .then(if (animateHeight) Modifier.animateContentSize() else Modifier)
         ) {
             Row(
                 modifier = Modifier
@@ -270,7 +283,7 @@ fun StepsGroup(
                     )
                 }
                 Icon(
-                    imageVector = if (hasThought) Icons.Filled.Psychology else Icons.Filled.Build,
+                    imageVector = if (facts.hasThought) Icons.Filled.Psychology else Icons.Filled.Build,
                     contentDescription = null,
                     modifier = Modifier.size(14.dp),
                     tint = accent
@@ -295,7 +308,20 @@ fun StepsGroup(
                     modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 2.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    steps.forEach { step ->
+                    if (page.hidden > 0) {
+                        // 这一行本身就在说「还有多少没铺出来」，点一下补齐。
+                        TextButton(
+                            onClick = { showAll = true },
+                            contentPadding = PaddingValues(horizontal = 0.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                "展开更早的 ${page.hidden} 个步骤",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                    page.rows.forEach { step ->
                         when (step.role) {
                             // 组外壳自己有 animateContentSize：内层思考卡不再叠一层
                             // 高度动画，否则展开/收起时双层逐帧重测量，是实测的卡顿源。
@@ -313,6 +339,44 @@ fun StepsGroup(
             }
         }
     }
+}
+
+/** 折叠组摘要行需要的全部信息，一次遍历算完。 */
+private class StepsFacts(
+    val running: Boolean,
+    val failed: Boolean,
+    val hasThought: Boolean,
+    /** 还在跑的那条工具调用：摘要行拿它显示「正在做什么」。 */
+    val current: ChatMessage?,
+    val summary: String
+)
+
+/**
+ * 扫一遍步骤收集摘要信息。
+ *
+ * 以前是运行态、失败态、有无思考、摘要各扫一遍，摘要还要 groupBy + 排序——
+ * 折叠组每重组一次就跑四遍，流式期间每个分片都重组一次。
+ */
+private fun stepsFacts(steps: List<ChatMessage>): StepsFacts {
+    var running = false
+    var failed = false
+    var hasThought = false
+    var current: ChatMessage? = null
+    for (step in steps) {
+        when (step.role) {
+            ChatRole.TOOL -> when (step.toolState) {
+                ToolState.RUNNING -> {
+                    running = true
+                    current = step
+                }
+                ToolState.FAILED -> failed = true
+                else -> Unit
+            }
+            ChatRole.THOUGHT -> hasThought = true
+            else -> Unit
+        }
+    }
+    return StepsFacts(running, failed, hasThought, current, stepsSummary(steps))
 }
 
 /**
@@ -550,18 +614,13 @@ private fun ToolRow(message: ChatMessage) {
     var expanded by rememberSaveable(message.id) { mutableStateOf(false) }
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
 
-    ChainOfThought(
-        steps = listOf(Unit),
-        collapsedAdaptiveWidth = false,
-        // 透明底：在分组里露出分组色，单独出现时露出聊天背景，与思考卡同一处理。
-        cardColors = CardDefaults.cardColors(containerColor = Color.Transparent),
-        // 高度动画交给外层 StepsGroup 的 animateContentSize，这里不叠第二层。
-        animate = false,
-    ) {
-        ControlledChainOfThoughtStep(
+    // 一行工具调用只铺一行字，不再套 Card：一轮里上百条时，每条多一层阴影加一层
+    // 圆角裁剪，纯属白画（分组本身已经有底色，行直接贴在它上面就行）。
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+        ChainStep(
+            icon = chainStepIcon(kind.icon, muted),
             expanded = expanded,
             onExpandedChange = { expanded = it },
-            icon = chainStepIcon(kind.icon, muted),
             label = {
                 Text(
                     text = title.ifBlank { "调用工具" },
@@ -626,14 +685,40 @@ fun TypingCursor() {
     )
 }
 
+/** 缩略图目标边长（px）：140dp 在 3x 屏约 420px，再多出来的像素纯粹是白占内存。 */
+private const val THUMB_MAX_PX = 420
+
+/** 缩略图缓存，够一屏来回滑就行；滑出去再滑回来不用重新解码。 */
+private val thumbCache = android.util.LruCache<String, android.graphics.Bitmap>(16)
+
+/**
+ * 按目标边长降采样解码。
+ *
+ * 手机拍的图动辄 4000×3000，decodeFile 出来一张就是 48MB，直接拿去显示 140dp 的
+ * 缩略图，几张就把堆顶上去；列表滚动时还要反复解码，卡的另一半原因在这里。
+ */
+private fun decodeThumb(path: String, maxPx: Int): android.graphics.Bitmap? {
+    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    android.graphics.BitmapFactory.decodeFile(path, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    var sample = 1
+    while (bounds.outWidth / (sample * 2) >= maxPx || bounds.outHeight / (sample * 2) >= maxPx) {
+        sample *= 2
+    }
+    val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+    return android.graphics.BitmapFactory.decodeFile(path, opts)
+}
+
 /** 用户消息里的图片缩略图（本机副本，filesDir/attachments/<会话>/）。 */
 @Composable
 fun LocalImageThumb(path: String, modifier: Modifier = Modifier) {
-    var bitmap by remember(path) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var bitmap by remember(path) { mutableStateOf(thumbCache.get(path)) }
     LaunchedEffect(path) {
-        bitmap = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            android.graphics.BitmapFactory.decodeFile(path)
+        if (bitmap != null) return@LaunchedEffect
+        val loaded = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            decodeThumb(path, THUMB_MAX_PX)?.also { thumbCache.put(path, it) }
         }
+        bitmap = loaded
     }
     bitmap?.let { bmp ->
         androidx.compose.foundation.Image(
