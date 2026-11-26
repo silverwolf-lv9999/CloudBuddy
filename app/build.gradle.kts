@@ -35,10 +35,10 @@ android {
         applicationId = "cn.cloudbuddy.app"
         minSdk = 26
         targetSdk = 35
-        // 1.6.7：消息正文可长按选中，底部加分隔线与「复制全部」（FIXLOG 1.6.7）。
+        // 1.6.8：回答正文可长按选中，底部加分隔线与左对齐的「复制全部」（FIXLOG 1.6.8）。
         // 名字跳过 1.6.4–1.6.6：FIXLOG 里这三个号已被上游旧条目占用，避免撞号。
-        versionCode = 43
-        versionName = "1.6.7"
+        versionCode = 44
+        versionName = "1.6.8"
         vectorDrawables { useSupportLibrary = true }
     }
 

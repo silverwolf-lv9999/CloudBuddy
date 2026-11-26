@@ -157,18 +157,14 @@ fun MessageRow(message: ChatMessage, showThoughts: Boolean) {
                     shape = RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp),
                     modifier = Modifier.widthIn(max = 320.dp)
                 ) {
-                    // 长按可选中局部文字；整条一次拿全走下面的「复制全部」。
-                    SelectionContainer {
-                        Text(
-                            text = message.shownText,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    }
+                    Text(
+                        text = message.shownText,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
                 }
             }
-            MessageFooter(message.shownText)
         }
 
         ChatRole.ASSISTANT -> Column(modifier = Modifier.fillMaxWidth()) {
@@ -318,11 +314,14 @@ fun StepsGroup(
 }
 
 /**
- * 消息底部的操作区：一条贯穿的分隔线，线下放「复制全部」。
+ * 回答底部的操作区：一条贯穿的分隔线，线下靠左放「复制全部」。
  *
- * 分隔线把「这条消息到这儿结束」画清楚——一轮里回答常常紧跟下一轮的用户提问，
+ * 分隔线把「这条回答到这儿结束」画清楚——一轮回答常常紧跟下一轮的用户提问，
  * 没有边界时读起来是连成一片的。复制入口固定在这一行，不再按长度阈值出现
- * （短回答想复制时反而找不到）。
+ * （短回答想复制时反而找不到）。左对齐是为了让它与正文左边缘同一条竖线：
+ * 靠右时会落在回答末尾的空白里，看着像另一条消息的控件。
+ *
+ * 只铺在回答下：用户消息是自己刚写的，不需要再复制一遍。
  */
 @Composable
 private fun MessageFooter(text: String) {
@@ -331,12 +330,13 @@ private fun MessageFooter(text: String) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
+            horizontalArrangement = Arrangement.Start,
             verticalAlignment = Alignment.CenterVertically
         ) {
             TextButton(
                 onClick = { clipboard.setText(AnnotatedString(text)) },
-                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                // 左侧不留白：图标要贴着正文左边缘，与上面的段落对齐。
+                contentPadding = PaddingValues(start = 0.dp, end = 8.dp, top = 0.dp, bottom = 0.dp)
             ) {
                 Icon(
                     Icons.Filled.ContentCopy,

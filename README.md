@@ -126,7 +126,7 @@ bash scripts/verify.sh --debug   # 需要 debug 包时
 bash scripts/verify.sh --base    # 只出基础版，另支持 --full / --plus
 ```
 
-当前版本 **1.6.7**（versionCode 43，接上游 1.6.1）。同一份代码出三个包，
+当前版本 **1.6.8**（versionCode 44，接上游 1.6.1）。同一份代码出三个包，
 三个桌面上都叫「云伴 WorkBuddy」：
 
 | 包 | 包名 | 包含 | 装法 |
