@@ -24,16 +24,19 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -125,15 +128,8 @@ fun CloudBadge(text: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** 超过这个长度才值得提供「复制」，短消息不显示操作区。 */
-private const val COPY_THRESHOLD = 240
-
 @Composable
 fun MessageRow(message: ChatMessage, showThoughts: Boolean) {
-    val clipboard = LocalClipboardManager.current
-    val copy = { clipboard.setText(AnnotatedString(message.shownText)) }
-    val longText = message.shownText.length > COPY_THRESHOLD || message.shownText.count { it == '\n' } > 8
-
     when (message.role) {
         ChatRole.USER -> Column(
             modifier = Modifier.fillMaxWidth(),
@@ -161,15 +157,18 @@ fun MessageRow(message: ChatMessage, showThoughts: Boolean) {
                     shape = RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp),
                     modifier = Modifier.widthIn(max = 320.dp)
                 ) {
-                    Text(
-                        text = message.shownText,
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
+                    // 长按可选中局部文字；整条一次拿全走下面的「复制全部」。
+                    SelectionContainer {
+                        Text(
+                            text = message.shownText,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
                 }
             }
-            if (longText) ActionText("复制", copy)
+            MessageFooter(message.shownText)
         }
 
         ChatRole.ASSISTANT -> Column(modifier = Modifier.fillMaxWidth()) {
@@ -189,9 +188,16 @@ fun MessageRow(message: ChatMessage, showThoughts: Boolean) {
                     )
                 }
             } else {
-                MarkdownText(markdown = message.text, baseSize = 15f)
-                if (message.streaming) TypingCursor()
-                if (longText && !message.streaming) ActionText("复制", copy)
+                // 正文本身可长按选中（跨段落、跨表格一起选）；
+                // 代码块自带一个内层 SelectionContainer 和「复制」按钮，各管一段。
+                SelectionContainer {
+                    Column {
+                        MarkdownText(markdown = message.text, baseSize = 15f)
+                        if (message.streaming) TypingCursor()
+                    }
+                }
+                // 流式期间不铺底栏：内容还在长，分隔线会一路往下跳。
+                if (!message.streaming) MessageFooter(message.shownText)
             }
         }
 
@@ -311,17 +317,41 @@ fun StepsGroup(
     }
 }
 
+/**
+ * 消息底部的操作区：一条贯穿的分隔线，线下放「复制全部」。
+ *
+ * 分隔线把「这条消息到这儿结束」画清楚——一轮里回答常常紧跟下一轮的用户提问，
+ * 没有边界时读起来是连成一片的。复制入口固定在这一行，不再按长度阈值出现
+ * （短回答想复制时反而找不到）。
+ */
 @Composable
-private fun ActionText(label: String, onClick: () -> Unit) {
-    TextButton(
-        onClick = onClick,
-        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.primary
-        )
+private fun MessageFooter(text: String) {
+    val clipboard = LocalClipboardManager.current
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(
+                onClick = { clipboard.setText(AnnotatedString(text)) },
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+            ) {
+                Icon(
+                    Icons.Filled.ContentCopy,
+                    contentDescription = null,
+                    modifier = Modifier.size(13.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = "复制全部",
+                    modifier = Modifier.padding(start = 5.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
     }
 }
 

@@ -35,10 +35,10 @@ android {
         applicationId = "cn.cloudbuddy.app"
         minSdk = 26
         targetSdk = 35
-        // 1.6.3：深度思考卡片不再自己刷底色；工具行按类别换 MD3 图标（读/写/改/运行/搜/联网/删），
-        // 折叠摘要带类别计数（FIXLOG 1.6.3）。
-        versionCode = 42
-        versionName = "1.6.3"
+        // 1.6.7：消息正文可长按选中，底部加分隔线与「复制全部」（FIXLOG 1.6.7）。
+        // 名字跳过 1.6.4–1.6.6：FIXLOG 里这三个号已被上游旧条目占用，避免撞号。
+        versionCode = 43
+        versionName = "1.6.7"
         vectorDrawables { useSupportLibrary = true }
     }
 
