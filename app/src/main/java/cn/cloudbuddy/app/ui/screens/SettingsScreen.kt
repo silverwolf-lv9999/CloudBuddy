@@ -66,7 +66,6 @@ import cn.cloudbuddy.app.ui.screens.settings.checkinHint
 import cn.cloudbuddy.app.ui.screens.settings.SettingCard
 import cn.cloudbuddy.app.ui.screens.settings.SettingsEntryRow
 import cn.cloudbuddy.app.ui.screens.settings.title
-import cn.cloudbuddy.app.ui.screens.settings.balanceText
 import cn.cloudbuddy.app.ui.screens.settings.customApiSummary
 import cn.cloudbuddy.app.ui.screens.settings.promptSummary
 import kotlinx.coroutines.launch
@@ -156,9 +155,9 @@ private fun SettingsHome(
         ) {
             title("账号与额度", Icons.Filled.AccountCircle)
 
-            // 账号、积分、签到合成一栏：它们本来就是同一件事——「我的账号还剩多少」。
-            // 卡片只放摘要和每天要点的签到，套餐明细与账号管理在二级页；账号行本身就是
-            // 那个入口（尾部箭头），不再另起一行「账号与额度」——那会和组标题同名。
+            // 账号、套餐余额、签到合成一栏：都在回答「我的账号还剩多少」。
+            // 首页给的是真正会被扣掉的东西——套餐额度；积分余额只在成长体系里有意义，
+            // 放这里纯占地方，已去掉（账号管理仍在二级页，账号行本身就是入口）。
             item {
                 SettingCard {
                     AccountHeaderRow(
@@ -167,7 +166,7 @@ private fun SettingsHome(
                         onOpen = { onOpen(SettingsPage.Account) }
                     )
                     Divider()
-                    CreditRow(ui = ui, repo = repo)
+                    QuotaRow(ui = ui, repo = repo)
                 }
             }
 
@@ -181,7 +180,7 @@ private fun SettingsHome(
                 item { EngineCard(repo) }
             }
 
-            title("云端会话", Icons.Filled.Cloud, hint = "扣账号积分，任务在云端 agent 里执行")
+            title("云端会话", Icons.Filled.Cloud, hint = "扣套餐额度，任务在云端 agent 里执行")
             item {
                 SettingCard {
                     // 行名用具体的三样东西，不用「云端能力」这种抽象词：用户找的是
@@ -195,7 +194,7 @@ private fun SettingsHome(
             }
 
             if (Edition.full) {
-                title("本机模型", Icons.Filled.Psychology, hint = "多提供商 + 模型管理，走你自己的 API，不扣积分")
+                title("本机模型", Icons.Filled.Psychology, hint = "多提供商 + 模型管理，走你自己的 API，不扣套餐额度")
                 item {
                     SettingCard {
                         SettingsEntryRow(
@@ -380,20 +379,47 @@ private fun AccountHeaderRow(ui: AppUiState, repo: BuddyRepository, onOpen: () -
     }
 }
 
-/** 积分余额 + 连续签到 + 签到按钮。放在首页而不是二级页——这是天天要点的东西。 */
+/**
+ * 套餐余额 + 连续签到 + 签到按钮。
+ *
+ * 显示的是**套餐额度**（真正会被云端扣减的那个数），不是积分与等级：积分只属于
+ * 成长体系，看了也做不了决定。额度包从二级页搬到这里——它是天天要看的信息。
+ */
 @Composable
-private fun CreditRow(ui: AppUiState, repo: BuddyRepository) {
+private fun QuotaRow(ui: AppUiState, repo: BuddyRepository) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.weight(1f)) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
             Text(
-                "积分余额",
+                "套餐余额",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Text(balanceText(ui), style = MaterialTheme.typography.titleMedium)
+            if (ui.usage.isEmpty()) {
+                Text("没有查到额度包", style = MaterialTheme.typography.titleMedium)
+            } else {
+                ui.usage.forEach { pack ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            pack.name,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "剩 ${pack.left.toInt()} / ${pack.total.toInt()}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
             checkinHint(ui)?.let { hint ->
                 Text(
                     hint,

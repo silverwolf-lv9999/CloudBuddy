@@ -83,13 +83,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-// ============================ 账号与额度 ============================
+// ============================ 账号 ============================
 
 @Composable
 internal fun AccountSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack: () -> Unit) {
     var pendingDelete by remember { mutableStateOf<Account?>(null) }
 
-    SettingsPageScaffold("账号与额度", onBack) { padding ->
+    SettingsPageScaffold("账号", onBack) { padding ->
         SettingsList(padding) {
             title("账号", Icons.Filled.Person)
             item {
@@ -116,48 +116,6 @@ internal fun AccountSettingsPage(ui: AppUiState, repo: BuddyRepository, onBack: 
                             }
                         }
                     )
-                }
-            }
-
-            title("套餐额度", Icons.Filled.Star)
-            item {
-                SettingCard {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        // 余额和签到留在设置首页：这一页只放首页放不下的明细，
-                        // 两处都写同一句话不叫"更完整"，叫重复。
-                        if (ui.usage.isEmpty()) {
-                            Text(
-                                "没有查到额度包。可能是账号本来就没配额，或这次拉取失败——" +
-                                    "回设置首页点右上角刷新再试。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        } else {
-                            ui.usage.forEach { pack ->
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(pack.name, style = MaterialTheme.typography.bodyMedium)
-                                        pack.expireAt?.takeIf { it.isNotBlank() }?.let { date ->
-                                            Text(
-                                                "有效期至 " + date.take(10),
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                    }
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(
-                                        "剩 ${pack.left.toInt()} / ${pack.total.toInt()}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                    }
                 }
             }
 

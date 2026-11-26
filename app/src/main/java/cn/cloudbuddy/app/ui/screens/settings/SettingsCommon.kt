@@ -281,17 +281,6 @@ internal fun openUrl(context: Context, url: String) {
  * 应用内更新按 `Edition.name` 匹配资产，不再有「哪一版不能自查更新」的分支。
  */
 
-/** 余额文案：有等级时一起展示，避免再多一行。 */
-internal fun balanceText(ui: AppUiState): String {
-    val growth = ui.growth ?: return "正在获取…"
-    val level = if (growth.level > 0) {
-        " · Lv.${growth.level}" + if (growth.levelName.isNotBlank()) " ${growth.levelName}" else ""
-    } else {
-        ""
-    }
-    return "${growth.balance} 积分$level"
-}
-
 /** 自定义端点的一句话摘要：首页入口与推理引擎页共用，避免两处说法不一致。 */
 internal fun customApiSummary(repo: BuddyRepository, ui: AppUiState): String {
     val providers = ui.llmProviders
