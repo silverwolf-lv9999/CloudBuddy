@@ -306,7 +306,8 @@ fun StepsGroup(
             if (expanded) {
                 Column(
                     modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 2.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    // 组内相邻行只隔 4dp：它们属于同一次连续动作，行距一大就散了。
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     if (page.hidden > 0) {
                         // 这一行本身就在说「还有多少没铺出来」，点一下补齐。
@@ -616,9 +617,12 @@ private fun ToolRow(message: ChatMessage) {
 
     // 一行工具调用只铺一行字，不再套 Card：一轮里上百条时，每条多一层阴影加一层
     // 圆角裁剪，纯属白画（分组本身已经有底色，行直接贴在它上面就行）。
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp)) {
         ChainStep(
             icon = chainStepIcon(kind.icon, muted),
+            // 一行工具调用本身只有 14dp 高，行内留白再给 8dp 就比正文还占地方；
+            // 分组里连着几十行时，行距是「留白 + 组间距 + 留白」三段相加的。
+            rowPadding = 4.dp,
             expanded = expanded,
             onExpandedChange = { expanded = it },
             label = {

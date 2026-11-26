@@ -37,6 +37,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastForEachIndexed
 
@@ -221,7 +222,7 @@ fun chainStepIcon(vector: ImageVector, tint: Color, modifier: Modifier = Modifie
  * 抽成裸布局后，分组内直接铺行，只有真正需要的场合（思考卡）才由
  * [ChainOfThought] 套上卡片。
  *
- * 参数只有这一份：图标槽 24dp、图标 20dp、行距 8dp、内容缩进 32dp。
+ * 参数只有这一份：图标槽 24dp、图标 14dp、行内留白 [rowPadding]、内容缩进 32dp。
  * 各处不用照着再抄一遍——手抄差出半个图标宽，正是之前「左边没对齐」的原因。
  */
 @Composable
@@ -234,6 +235,13 @@ internal fun ChainStep(
     expanded: Boolean = false,
     onExpandedChange: (Boolean) -> Unit = {},
     contentVisible: Boolean = expanded,
+    /**
+     * 行内上下留白，也就是点击热区比文字多出来的部分。
+     *
+     * 分组里连着几十行时用它收窄行距：行距是「留白 + 组间距 + 留白」三段相加，
+     * 每段各 8dp 就会拉出 24dp 的空档，一行工具调用看着比正文还占地方。
+     */
+    rowPadding: Dp = 8.dp,
     isFirst: Boolean = true,
     isLast: Boolean = true,
     lineColor: Color = MaterialTheme.colorScheme.outlineVariant,
@@ -261,7 +269,7 @@ internal fun ChainStep(
                         else -> Modifier
                     }
                 )
-                .padding(vertical = 8.dp),
+                .padding(vertical = rowPadding),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
