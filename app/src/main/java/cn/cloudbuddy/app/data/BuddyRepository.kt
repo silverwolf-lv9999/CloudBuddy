@@ -343,6 +343,20 @@ class BuddyRepository(val settings: AppSettings) {
      */
     private val acpCurrentModels = ConcurrentHashMap<String, String>()
 
+    /**
+     * 「本机刚替这条会话选定、但云端还没接住」的模型。
+     *
+     * 新建会话时我们把模型随创建请求发出去，云端却先按它自己的默认值开一条
+     * （实测是 `auto` 路由），紧接着 `session/load` 把那个默认值当「该会话当前
+     * 模型」报回来——[publishModels] 又以云端为准，于是用户在草稿态精心选的模型
+     * 被一句 `auto` 顶掉，界面上看就是「发第一条消息后模型变成 auto」。
+     *
+     * 这里的规矩：本进程刚建出的会话，在 `session/set_model` 成功之前，云端报的
+     * 当前模型一律不采信；等 [syncPinnedModel] 把选择真正写到云端后标记才释放，
+     * 之后照旧以云端为权威（用户在官方端改模型仍然能同步过来）。
+     */
+    private val pinnedModels = ConcurrentHashMap<String, String>()
+
     private val _ui = MutableStateFlow(
         AppUiState(
             loggedIn = settings.loggedIn && settings.cookies.hasAny(),
@@ -944,6 +958,7 @@ class BuddyRepository(val settings: AppSettings) {
         sessions.clear()
         acpModels.clear()
         acpCurrentModels.clear()
+        pinnedModels.clear()
         settings.signOut()
         // 折叠开关是界面偏好，不随登录态清空——重置成全量默认值会和偏好对不上。
         _ui.value = AppUiState(
@@ -1290,6 +1305,7 @@ class BuddyRepository(val settings: AppSettings) {
         sessions.clear()
         acpModels.clear()
         acpCurrentModels.clear()
+        pinnedModels.clear()
         _ui.value = AppUiState(
             booting = false,
             loggedIn = settings.loggedIn && settings.cookies.hasAny(),
@@ -1362,7 +1378,8 @@ class BuddyRepository(val settings: AppSettings) {
         val selected = if (localNow) {
             _ui.value.selectedModel
         } else {
-            active?.let { acpCurrentModels[it] ?: settings.modelFor(it) }
+            // 待对齐的本机选择优先于云端报的当前值，理由见 [pinnedModels]。
+            active?.let { pinnedModels[it] ?: acpCurrentModels[it] ?: settings.modelFor(it) }
                 ?.takeIf { it.isNotBlank() }
                 ?: merged.firstOrNull { it.isDefault }?.id
                 ?: merged.firstOrNull()?.id
@@ -1570,9 +1587,14 @@ class BuddyRepository(val settings: AppSettings) {
         if (isLocalConv(conversationId)) return
         if (models.isNotEmpty()) acpModels[conversationId] = models
         val cloud = current?.takeIf { it.isNotBlank() }
-        if (cloud != null) {
+        // 本进程刚建出这条会话：云端的值是服务端默认值（auto 路由），不是用户的
+        // 选择。[syncPinnedModel] 会对齐过去，在那之前别拿它冲掉本机的选择。
+        val pinned = pinnedModels[conversationId]
+        if (cloud != null && (pinned == null || cloud == pinned)) {
             acpCurrentModels[conversationId] = cloud
             settings.setModelFor(conversationId, cloud)
+            // 云端已经和我们选的一致：对齐目标达成，标记可以释放了。
+            if (pinned != null) pinnedModels.remove(conversationId, pinned)
         }
         val merged = mergeModels(_ui.value.models)
         // 后台对账连上的会话不要改当前页显示的模型（否则切走的那条会把这条覆盖掉）。
@@ -1580,7 +1602,7 @@ class BuddyRepository(val settings: AppSettings) {
             _ui.value = _ui.value.copy(models = merged, modelError = null)
             return
         }
-        val effective = cloud ?: settings.modelFor(conversationId)
+        val effective = pinned ?: cloud ?: settings.modelFor(conversationId)
         _ui.value = _ui.value.copy(models = merged, selectedModel = effective, modelError = null)
     }
 
@@ -2870,6 +2892,7 @@ class BuddyRepository(val settings: AppSettings) {
                 .onSuccess {
                     connections.remove(id)?.close()
                     sessions.remove(id)
+                    pinnedModels.remove(id)
                     // 会话级选择（模型/引擎）与本地历史一起清掉，别留下孤儿记录。
                     settings.clearConversationPrefs(id)
                     // 本机会话的对话内容只在本机，不跟着清就会一直躺在 prefs 里，
@@ -3078,6 +3101,10 @@ class BuddyRepository(val settings: AppSettings) {
         session?.let { sessions[id] = it }
         // 新会话把开局用的模型固化到它自己名下，之后改「默认模型」不影响它。
         settings.setModelFor(id, model)
+        // 创建请求里的 model 云端不一定照抄（新会话常先落在自己的默认值上），
+        // 先记成「待对齐」：连接建立后 [syncPinnedModel] 用 session/set_model 落实，
+        // 中间云端 load 回来的默认值也不会冲掉这里的用户选择。
+        pinnedModels[id] = model
         settings.setEngineFor(id, AppSettings.ENGINE_WB)
         _ui.value = _ui.value.copy(
             activeId = id,
@@ -3139,7 +3166,43 @@ class BuddyRepository(val settings: AppSettings) {
             conn.close()
             throw e
         }
+        // 历史已经回放完，云端会话这时才「可写」：把新会话的模型落进去。
+        // 不阻塞发送——本轮 prompt 的 _meta.model 已经带着同一个模型。
+        syncPinnedModel(id, conn)
         return conn
+    }
+
+    /**
+     * 把「本机刚为新会话选定的模型」真正写到云端（`session/set_model`）。
+     *
+     * 只对 [pinnedModels] 里的会话做，也就是仅限本进程刚建出来的那一条：那时云端
+     * 的值是服务端默认值，覆盖它不会动到用户在官方 App 里的选择。已有会话不这么
+     * 做——每轮都同步会把用户在网页端的改动画回去（见 [send] 里的注释）。
+     */
+    private fun syncPinnedModel(id: String, conn: AcpConnection) {
+        val want = pinnedModels[id] ?: return
+        if (acpCurrentModels[id] == want) {
+            pinnedModels.remove(id, want)
+            return
+        }
+        scope.launch {
+            // 期间用户在会话里又换过模型：以新选择为准，这次不再覆盖。
+            if (settings.modelFor(id) != want && pinnedModels[id] == want) {
+                // 会话级选择已被改掉，标记没有意义了（新的选择有自己的同步路径）。
+                pinnedModels.remove(id, want)
+                return@launch
+            }
+            val ok = runCatching {
+                withContext(Dispatchers.IO) { conn.setModel(want) }
+            }.isSuccess
+            // 失败就保留标记：后续 load 回来的默认值不会顶掉本机选择，本轮以及之后
+            // 每轮的 prompt 仍会带 _meta.model，用户看到的模型与实际请求保持一致。
+            if (!ok) return@launch
+            acpCurrentModels[id] = want
+            settings.setModelFor(id, want)
+            pinnedModels.remove(id, want)
+            if (_ui.value.activeId == id) _ui.value = _ui.value.copy(selectedModel = want)
+        }
     }
 
     /**

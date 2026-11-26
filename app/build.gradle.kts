@@ -35,10 +35,10 @@ android {
         applicationId = "cn.cloudbuddy.app"
         minSdk = 26
         targetSdk = 35
-        // 1.6.0：模型能力指示图标、读图直发修复、附件显示与图片/文件入口、
-        // 主页列表性能与风格统一、release 开 R8（FIXLOG 1.6.0）。
-        versionCode = 39
-        versionName = "1.6.0"
+        // 1.6.1：设置首页改显示套餐余额、回退胶囊导航栏、修「新会话首条消息后
+        // 模型被云端默认值（auto）顶掉」（FIXLOG 1.6.1）。
+        versionCode = 40
+        versionName = "1.6.1"
         vectorDrawables { useSupportLibrary = true }
     }
 
