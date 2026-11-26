@@ -17,7 +17,17 @@ import cn.cloudbuddy.app.data.ToolState
 sealed interface ChatItem {
     val key: String
 
-    data class Single(val message: ChatMessage) : ChatItem {
+    data class Single(
+        val message: ChatMessage,
+        /**
+         * 这一轮的**最终回答**（[FoldMode.BODY] 下即该轮最后一段正文）。
+         *
+         * 只有它带底部操作区（分隔线 + 「复制全部」）：过程中陆续输出的段落也算
+         * [Single]，若每段都挂一条分隔线和复制入口，一条回答会被切成一截一截，
+         * 复制入口也会重复出现。
+         */
+        val finalAnswer: Boolean = false,
+    ) : ChatItem {
         override val key: String = "msg:${message.id}"
     }
 
@@ -68,7 +78,7 @@ private fun projectWholeTurn(turnMessages: List<ChatMessage>, items: MutableList
     turnMessages.forEachIndexed { index, message ->
         when {
             message.role == ChatRole.USER -> items += ChatItem.Single(message)
-            index == finalIndex -> items += ChatItem.Single(message)
+            index == finalIndex -> items += ChatItem.Single(message, finalAnswer = true)
             stepsEmitted -> Unit
             else -> {
                 val steps = turnMessages.filterIndexed { i, m ->
@@ -82,6 +92,9 @@ private fun projectWholeTurn(turnMessages: List<ChatMessage>, items: MutableList
 }
 
 private fun projectBodyPreservingTurn(turnMessages: List<ChatMessage>, items: MutableList<ChatItem>) {
+    // 这一轮的最后一段正文才是「最终回答」：底部操作区只给它，中间段落照常显示
+    // 但不挂分隔线与复制入口，否则一条回答被切成好几截。
+    val finalIndex = turnMessages.indexOfLast { it.isFinalAnswer() }
     var buffer = mutableListOf<ChatMessage>()
     var ordinal = 0
     fun flush() {
@@ -89,12 +102,12 @@ private fun projectBodyPreservingTurn(turnMessages: List<ChatMessage>, items: Mu
         items += ChatItem.Steps(turnMessages.first().turn, buffer.toList(), ordinal++)
         buffer = mutableListOf()
     }
-    for (message in turnMessages) {
+    turnMessages.forEachIndexed { index, message ->
         when (message.role) {
             // 用户消息与正文都要露出来；正文之前的思考/工具先结算成一条折叠条。
             ChatRole.USER, ChatRole.ASSISTANT -> {
                 flush()
-                items += ChatItem.Single(message)
+                items += ChatItem.Single(message, finalAnswer = index == finalIndex)
             }
             ChatRole.THOUGHT, ChatRole.TOOL -> buffer += message
         }

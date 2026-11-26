@@ -444,7 +444,8 @@ fun ChatScreen(
                             when (item) {
                                 is ChatItem.Single -> MessageRow(
                                     message = item.message,
-                                    showThoughts = repo.settings.showThoughts
+                                    showThoughts = repo.settings.showThoughts,
+                                    finalAnswer = item.finalAnswer
                                 )
 
                                 is ChatItem.Steps -> {

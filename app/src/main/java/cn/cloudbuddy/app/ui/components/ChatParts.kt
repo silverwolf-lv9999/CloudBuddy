@@ -129,7 +129,7 @@ fun CloudBadge(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun MessageRow(message: ChatMessage, showThoughts: Boolean) {
+fun MessageRow(message: ChatMessage, showThoughts: Boolean, finalAnswer: Boolean = false) {
     when (message.role) {
         ChatRole.USER -> Column(
             modifier = Modifier.fillMaxWidth(),
@@ -192,8 +192,10 @@ fun MessageRow(message: ChatMessage, showThoughts: Boolean) {
                         if (message.streaming) TypingCursor()
                     }
                 }
-                // 流式期间不铺底栏：内容还在长，分隔线会一路往下跳。
-                if (!message.streaming) MessageFooter(message.shownText)
+                // 底栏只给这一轮的最终回答：过程中陆续输出的段落也是独立消息，
+                // 每段都挂一条分隔线 + 「复制全部」会把回答切成一截一截，复制入口
+                // 也跟着重复。流式期间同样不铺——内容还在长，分隔线会一路往下跳。
+                if (!message.streaming && finalAnswer) MessageFooter(message.shownText)
             }
         }
 
@@ -321,7 +323,8 @@ fun StepsGroup(
  * （短回答想复制时反而找不到）。左对齐是为了让它与正文左边缘同一条竖线：
  * 靠右时会落在回答末尾的空白里，看着像另一条消息的控件。
  *
- * 只铺在回答下：用户消息是自己刚写的，不需要再复制一遍。
+ * 只铺在**最终回答**下：过程中的段落、以及用户自己刚发的话都不铺——前者会把一条
+ * 回答切成几截，后者本来也没有回头复制的场景。
  */
 @Composable
 private fun MessageFooter(text: String) {

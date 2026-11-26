@@ -157,6 +157,43 @@ class TimelineProjectionTest {
      * 认不出类别的（标题是文件名之类）只计入总数，不进括号，免得摘要里出现「工具 2」。
      */
     @Test
+    fun `整轮折叠只有最终回答带底栏标记`() {
+        val messages = listOf(
+            msg("u0", ChatRole.USER, "问题", turn = 0),
+            msg("c0", ChatRole.TOOL, "读取文件 a.txt", turn = 0),
+            msg("a0", ChatRole.ASSISTANT, "过程中说一句", turn = 0),
+            msg("a1", ChatRole.ASSISTANT, "最终回答", turn = 0)
+        )
+
+        val items = projectTimeline(messages, FoldMode.WHOLE)
+        val singles = items.filterIsInstance<ChatItem.Single>()
+
+        // 过程中的段落进了折叠组，只有最后那条正文是独立项且带标记
+        assertTrue(singles.none { it.message.id == "a0" })
+        assertEquals(listOf("a1"), singles.filter { it.finalAnswer }.map { it.message.id })
+        // 用户提问永远不铺底栏
+        assertTrue(singles.first { it.message.role == ChatRole.USER }.finalAnswer.not())
+    }
+
+    @Test
+    fun `只折过程时中间段落独立显示但不带底栏标记`() {
+        val messages = listOf(
+            msg("u0", ChatRole.USER, "问题", turn = 0),
+            msg("c0", ChatRole.TOOL, "运行 npm install", turn = 0),
+            msg("a0", ChatRole.ASSISTANT, "先装依赖", turn = 0),
+            msg("c1", ChatRole.TOOL, "运行 npm test", turn = 0),
+            msg("a1", ChatRole.ASSISTANT, "都通过了", turn = 0)
+        )
+
+        val items = projectTimeline(messages, FoldMode.BODY)
+        val singles = items.filterIsInstance<ChatItem.Single>()
+
+        // 两段正文都露出来（这是 BODY 模式的意义），但只有最后一段挂底栏
+        assertEquals(listOf("u0", "a0", "a1"), singles.map { it.message.id })
+        assertEquals(listOf("a1"), singles.filter { it.finalAnswer }.map { it.message.id })
+    }
+
+    @Test
     fun `summary names tool kinds by their titles`() {
         val steps = listOf(
             msg("t0", ChatRole.THOUGHT, "想了想", turn = 0),
