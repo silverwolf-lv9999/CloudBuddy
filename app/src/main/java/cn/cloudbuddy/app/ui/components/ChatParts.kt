@@ -255,9 +255,10 @@ fun StepsGroup(
     // 一次性组合并测量几十张卡片，点开就会先卡一下。
     var showAll by rememberSaveable(groupKey) { mutableStateOf(false) }
     val page = remember(steps, showAll) { pageSteps(steps, showAll) }
-    // 展开/收回的动画只在这一轮跑完之后给：流式期间内容每个分片都在长高，
-    // 高度动画会被反复打断并逐帧重测整棵树，播出来只是抖。
-    val animateToggle = !running && state != TurnState.RUNNING
+    // 展开/收回的动画看这一组自己有没有在长：组里还有工具在跑、或还有消息在流式，
+    // 明细每个分片都在变高，高度动画会被反复打断并逐帧重测整棵树，播出来只是抖。
+    // 与会话整体状态无关——会话在跑的时候去翻上面的历史组，照样该有动画。
+    val animateToggle = !facts.busy
 
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -358,6 +359,8 @@ private class StepsFacts(
     val hasThought: Boolean,
     /** 还在跑的那条工具调用：摘要行拿它显示「正在做什么」。 */
     val current: ChatMessage?,
+    /** 组里还有内容在产出（工具在跑 / 消息在流式）：这时候不该播展开动画。 */
+    val busy: Boolean,
     val summary: String
 )
 
@@ -371,8 +374,10 @@ private fun stepsFacts(steps: List<ChatMessage>): StepsFacts {
     var running = false
     var failed = false
     var hasThought = false
+    var streaming = false
     var current: ChatMessage? = null
     for (step in steps) {
+        if (step.streaming) streaming = true
         when (step.role) {
             ChatRole.TOOL -> when (step.toolState) {
                 ToolState.RUNNING -> {
@@ -386,7 +391,7 @@ private fun stepsFacts(steps: List<ChatMessage>): StepsFacts {
             else -> Unit
         }
     }
-    return StepsFacts(running, failed, hasThought, current, stepsSummary(steps))
+    return StepsFacts(running, failed, hasThought, current, running || streaming, stepsSummary(steps))
 }
 
 /**
