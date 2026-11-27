@@ -216,3 +216,20 @@
 - **23:28** 下载校验：`aapt2 dump badging` 两个包均为 `versionCode='41' versionName='1.6.2'`、
   包名 `cn.cloudbuddy.app`；`apksigner verify --print-certs` 的 SHA-256 为
   `5929b6f4…468f90`，与 README 记录的正式密钥指纹一致。本地 `testFullDebugUnitTest` 367 项全绿。
+
+## 2026-11-27 · 九个提交署到了别人名下（contributors 多出一个 Silverwolf）
+
+- 用户问「仓库里现在有三个 contributors，我只合过一个 PR」。查 contributors API：除了
+  `silverwolf-lv9999`（63）与 PR 作者 `xiaoyangtao55`（5），多出一个 **`Silverwolf`（9）**。
+- 根因：在 `/tmp/cb-pr2` worktree 里提交时图省事写了
+  `-c user.email="silverwolf@users.noreply.github.com"`。GitHub 的 noreply 地址格式是
+  `<username>@users.noreply.github.com`，**字符串匹配即归属，不做验证**——这个地址属于
+  另一个真实账号 `Silverwolf`，于是 9 个提交的 commit 头像与贡献统计全记在了他身上。
+- 修法：`git filter-branch --env-filter` 限定 `v1.6.1..HEAD`（正好 9 个），把
+  author/committer 换成 `silverwolf-lv9999@users.noreply.github.com`；`git diff
+  backup/pre-email-fix HEAD` 为空，树内容一字未变；`--force-with-lease` 推 main，
+  删 tag 重打 `v1.6.2` 指向新 SHA（583ce83）后强推，CI 重跑一次（run 45914608047，success），
+  Release 三个包体积与改前完全一致（1769215 / 2867660 / 2867652）。
+- 线上核对：`GET /commits/bb4426c|583ce83|1504e23` 的 `author.login` 全部为
+  `silverwolf-lv9999`。contributors 列表仍是旧值，属 GitHub 侧缓存，需等刷新。
+- 固化：AGENTS 补坑 77（提交身份不许 `-c` 覆盖），README 坑数同步为 77。

@@ -194,7 +194,7 @@ release APK（`verify.sh` 里的证书 DN 校验通过，证明用的是正式�
 - 单测用真的 `org.json`，不要 mock；不引 Robolectric，不写依赖 Android framework 的测试。
 - 新增行为至少配 1 个用例；改协议解析必须同时覆盖旧载荷。
 
-## 七十六个坑（都真踩过）
+## 七十七个坑（都真踩过）
 
 1. **KDoc 里不要写 `/root/*`**。`/*` 会开启嵌套块注释，一直吞到后面的 `*/`，
    编译器报错位置会离谱到完全不相干的行。同理避免 `/** ... /path/* ... */` 这种。
@@ -656,6 +656,17 @@ release APK（`verify.sh` 里的证书 DN 校验通过，证明用的是正式�
     重跑一遍——这条比所有结构优化都关键。改 Compose 列表性能时按这个顺序看：
     ①参数稳不稳定（`@Immutable` / lambda 捕获）→ ②每行的 RenderNode 数 → ③每帧的字符串活
     （`trim()`、`lineSequence()`、正则）→ ④高度动画。
+
+77. **提交身份别用 `-c user.email=...` 临时覆盖**。有一次在 worktree 里连着提交，图省事写成
+    `-c user.name="silverwolf" -c user.email="silverwolf@users.noreply.github.com"`，
+    九个提交全署到了**别人**头上——`<username>@users.noreply.github.com` 是 GitHub 给每个
+    账号分配的 noreply 地址，只要字符串匹配就直接认，**不需要任何验证**。结果是仓库多出一个
+    contributor「Silverwolf」，commit 头像、贡献统计全错，代码却还是自己的。
+    正确写法就是仓库里配好的那份（`silverwolf-lv9999@users.noreply.github.com`），
+    **不要传 `-c`**：`git config --local user.email` 已经是它。想核对身份：
+    `git log -1 --format='%an <%ae>'`，或线上 `GET /repos/{o}/{r}/commits/{sha}` 看
+    `author.login` 是不是自己。已经写错的只能改写历史（`git filter-branch --env-filter`
+    限定 `上一个tag..HEAD`）+ 强推 + 重指 tag，越早改代价越小。
 
 ## 协议速查
 

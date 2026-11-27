@@ -31,7 +31,7 @@
 ![界面结构线框](docs/ui-wireframe.svg)
 
 > 用 AI 编码工具打开这个仓库时，先读 **[AGENTS.md](AGENTS.md)**：里面有构建命令、
-> 版本号规则、以及七十六个踩过的坑。各工具的适配文件（`CLAUDE.md`、`.github/copilot-instructions.md`、
+> 版本号规则、以及七十七个踩过的坑。各工具的适配文件（`CLAUDE.md`、`.github/copilot-instructions.md`、
 > `.cursor/rules/`）都指向它这一份真源。
 
 ## 功能
